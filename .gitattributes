@@ -1,0 +1,13 @@
+# Normalize line endings across platforms.
+#
+# gradlew is a POSIX shell script: if git rewrites it to CRLF the wrapper fails
+# on Linux and macOS with a confusing "bad interpreter" error. The wrapper jar is
+# a binary and must never be touched.
+
+* text=auto
+*.bat text eol=crlf
+gradlew text eol=lf
+*.jar binary
+*.png binary
+*.jpg binary
+*.ttf binary
