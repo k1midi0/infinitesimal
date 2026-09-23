@@ -141,6 +141,15 @@ class Judge(
     var viewWidenings = 0
         private set
 
+    /**
+     * 最近一次判定里，模型每次扩大填的方向，按调用顺序。
+     *
+     * **`null` 表示整体扩大**，空列表表示一次都没扩。这是"模型会不会填方向"唯一的答案来源——
+     * 它是新加的一只可选参数值不值，全看这里。
+     */
+    var viewDirections: List<Direction?> = emptyList()
+        private set
+
     // ── 第一步：对齐指向对象 ────────────────────────────────────────────────────────
 
     suspend fun alignTargets(
@@ -252,6 +261,7 @@ class Judge(
         } finally {
             // 提前返回的几条路也要记上——驳回的那一次同样扩过，那也是成本。
             viewWidenings = view.widenings
+            viewDirections = view.asked
         }
     }
 

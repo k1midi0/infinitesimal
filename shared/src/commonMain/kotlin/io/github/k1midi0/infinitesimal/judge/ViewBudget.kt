@@ -50,6 +50,16 @@ class ViewBudget(
     var widenings: Int = 0
         private set
 
+    private val askedLog = mutableListOf<Direction?>()
+
+    /**
+     * 每一次扩大的方向，按调用顺序。**`null` 表示整体扩大。**
+     *
+     * 必须能被看见：「模型到底会不会填方向」没有别的办法回答，而这个答案决定了那个可选参数值不值。
+     * 与 [widenings] 是同一条理由——**没有上限的东西必须能被观测**。
+     */
+    val asked: List<Direction?> get() = askedLog
+
     fun region(): Region = RegionBuilder.of(world, centers, levels)
 
     fun text(): String = RegionView.render(world, region(), actorId)
@@ -64,6 +74,7 @@ class ViewBudget(
     fun widen(): String {
         for (i in levels.indices) levels[i]++
         widenings++
+        askedLog += null
         return text()
     }
 
@@ -71,6 +82,7 @@ class ViewBudget(
     fun widen(direction: Direction): String {
         levels[direction.ordinal]++
         widenings++
+        askedLog += direction
         return text()
     }
 

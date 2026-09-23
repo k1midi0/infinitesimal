@@ -45,6 +45,8 @@ class JudgeWidenProbe {
         val round: Int,
         val requests: Int,
         val widenings: Int,
+        /** 模型填了哪些方向。`—` 表示一次都没扩。 */
+        val asked: String,
         val outcome: String,
         val ms: Long,
         val detail: String,
@@ -91,8 +93,8 @@ class JudgeWidenProbe {
             println("「看大一点」重复采样：${scenarios.size} 个场景 × $rounds 轮，每轮开新世界")
             println("═".repeat(112))
             println(
-                "%-22s %-4s %-6s %-6s %-14s %-8s %s".format(
-                    "场景", "轮", "请求", "看大", "结果", "耗时", "细节",
+                "%-22s %-4s %-6s %-6s %-16s %-14s %-8s %s".format(
+                    "场景", "轮", "请求", "看大", "填的方向", "结果", "耗时", "细节",
                 ),
             )
             println("─".repeat(112))
@@ -119,14 +121,15 @@ class JudgeWidenProbe {
                         round = r + 1,
                         requests = judge.requestCount - requestsBefore,
                         widenings = judge.viewWidenings,
+                        asked = askedOf(judge),
                         outcome = outcomeOf(judgment),
                         ms = ms,
                         detail = detailOf(judgment),
                     )
                     rows += row
                     println(
-                        "%-22s %-4d %-6d %-6d %-14s %-8s %s".format(
-                            row.scenario, row.round, row.requests, row.widenings,
+                        "%-22s %-4d %-6d %-6d %-16s %-14s %-8s %s".format(
+                            row.scenario, row.round, row.requests, row.widenings, row.asked,
                             row.outcome, "${row.ms}ms", row.detail,
                         ),
                     )
@@ -137,6 +140,10 @@ class JudgeWidenProbe {
 
         aggregate(rows)
     }
+
+    /** 这一次判定里模型填了哪些方向。**`—` 是一次都没扩。** */
+    private fun askedOf(judge: Judge): String =
+        judge.viewDirections.joinToString("、") { it?.label ?: "整体" }.ifEmpty { "—" }
 
     private fun outcomeOf(j: Judgment): String = when (j) {
         is Judgment.Applied -> "成立"
@@ -157,19 +164,20 @@ class JudgeWidenProbe {
         println("汇总（每个场景 $rounds 次）")
         println("═".repeat(112))
         println(
-            "%-22s %-10s %-12s %-12s %-10s %s".format(
-                "场景", "扩过", "驳回@ALIGN", "驳回@EFFECT", "成立", "耗时中位/最大",
+            "%-22s %-10s %-12s %-12s %-10s %-10s %s".format(
+                "场景", "扩过", "填报了方向", "驳回@ALIGN", "驳回@EFFECT", "成立", "耗时中位/最大",
             ),
         )
-        println("─".repeat(112))
+        println("─".repeat(118))
         for (s in scenarios) {
             val mine = rows.filter { it.scenario == s.name }
             val sorted = mine.map { it.ms }.sorted()
             val median = sorted[sorted.size / 2]
             println(
-                "%-22s %-10s %-12s %-12s %-10s %s".format(
+                "%-22s %-10s %-12s %-12s %-10s %-10s %s".format(
                     s.name,
                     "${mine.count { it.widenings > 0 }}/${mine.size}",
+                    "${mine.count { it.asked != "—" }}/${mine.size}",
                     mine.count { it.outcome == "驳回@ALIGN" },
                     mine.count { it.outcome == "驳回@EFFECT" },
                     mine.count { it.outcome == "成立" },
@@ -177,12 +185,21 @@ class JudgeWidenProbe {
                 ),
             )
         }
-        println("─".repeat(112))
+        println("─".repeat(118))
         val all = rows.map { it.ms }.sorted()
         val widenTotal = rows.sumOf { it.widenings }
-        println("全部 ${rows.size} 次：扩过 ${rows.count { it.widenings > 0 }} 次｜累计看大 $widenTotal 次｜" +
-            "总耗时 ${all.sum() / 1000} 秒｜单次 ${all.first()}–${all.last()} ms")
-        println("═".repeat(112))
+        val asked = rows.flatMap { it.asked.split("、") }.filter { it != "—" }
+        println(
+            "全部 ${rows.size} 次：扩过 ${rows.count { it.widenings > 0 }} 次｜累计看大 $widenTotal 次｜" +
+                "总耗时 ${all.sum() / 1000} 秒｜单次 ${all.first()}–${all.last()} ms",
+        )
+        println("模型这 $widenTotal 次扩大里填了方向的：${asked.size} 次" + if (asked.isEmpty()) {
+            "——**一个都没填**"
+        } else {
+            "（${asked.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }
+                .joinToString("、") { "${it.key} ${it.value} 次" }}）"
+        })
+        println("═".repeat(118))
     }
 
     /** 与世界其余探针同一份种子，好让读数能横向比。 */
