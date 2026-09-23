@@ -219,23 +219,8 @@ class LlmClient(
         throw LlmError.Parse("流式分片不是预期的结构：${payload.take(200)}", cause)
     }
 
-    private fun extractApiMessage(body: String?): String? {
-        if (body.isNullOrBlank()) return null
-        val parsed = try {
-            JSON.decodeFromString(ApiErrorEnvelope.serializer(), body)
-        } catch (cause: Throwable) {
-            // Not every endpoint returns the documented error envelope. Showing the
-            // raw body is more useful to whoever has to diagnose this than showing
-            // nothing, so the text is passed through truncated rather than dropped.
-            return body.take(MAX_DETAIL_LENGTH)
-        }
-        return parsed.error?.message?.take(MAX_DETAIL_LENGTH)
-            ?: body.take(MAX_DETAIL_LENGTH)
-    }
-
     companion object {
         private const val READ_BUFFER_SIZE = 8192
-        private const val MAX_DETAIL_LENGTH = 300
 
         /**
          * Request bodies must carry fields that happen to equal their defaults —
@@ -271,4 +256,32 @@ class LlmClient(
         private const val SOCKET_TIMEOUT_MILLIS = 180_000L
         private const val CONNECT_TIMEOUT_MILLIS = 30_000L
     }
+}
+
+private const val MAX_DETAIL_LENGTH = 300
+
+@OptIn(ExperimentalSerializationApi::class)
+private val ERROR_JSON: Json = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+    explicitNulls = false
+}
+
+/**
+ * 从错误响应体里取出人能读的那一句。
+ *
+ * **它在文件级，不在任何一个客户端里**：聊天与 FIM 是两条协议、两个客户端，但端点的错误信封只有
+ * 一种形状。写成某个客户端的成员，第二个客户端就只能要么复制一份、要么绕道拿到第一个客户端的
+ * 实例——前者迟早与后者漂移，而漂移的症状是"同一个 429，一条路说是限流、另一条路说是未知"。
+ */
+internal fun extractApiMessage(body: String?): String? {
+    if (body.isNullOrBlank()) return null
+    val parsed = try {
+        ERROR_JSON.decodeFromString(ApiErrorEnvelope.serializer(), body)
+    } catch (cause: Throwable) {
+        // 不是每个端点都返回文档里那个错误信封。把原文截断后交出去，比什么都不给更有用于诊断。
+        return body.take(MAX_DETAIL_LENGTH)
+    }
+    return parsed.error?.message?.take(MAX_DETAIL_LENGTH)
+        ?: body.take(MAX_DETAIL_LENGTH)
 }

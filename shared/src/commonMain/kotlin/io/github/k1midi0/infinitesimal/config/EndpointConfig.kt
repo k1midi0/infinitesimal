@@ -66,6 +66,15 @@ data class EndpointConfig(
     val chatCompletionsUrl: String
         get() = "${baseUrl.trimEnd('/')}/chat/completions"
 
+    /**
+     * FIM 补全那一页（`/beta/completions`）。
+     *
+     * `/beta` 由这里加上，**不让使用者配第二个 baseUrl**：配置里出现两个 baseUrl，迟早有一个是旧的，
+     * 而症状是"聊天好用、补全忽然 404"——两件事都对，只是说的不是同一个地方。
+     */
+    val fimCompletionsUrl: String
+        get() = "${baseUrl.trimEnd('/')}/beta/completions"
+
     companion object {
 
         /**

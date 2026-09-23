@@ -7,9 +7,8 @@ import java.io.File
 /**
  * spike 用的最小世界：一张实体表 + 一个 JSON 文件。
  *
- * 它**不是**要成为产品里的 `world/`——这里只放验那个循环所必需的字段。设计里那些（体素形状表、
- * 关系、时间轴、覆盖层）一律没有，因为 spike 要回答的问题不含它们：**"渲染即固化"这个循环跑不跑
- * 得动，延迟和成本是多少。**
+ * 它**不是**产品里的 `world/`——体素形状表、关系、时间轴、覆盖层一律没有，因为 spike 要回答的问题
+ * 不含它们。
  */
 @Serializable
 data class SpikeEntity(
@@ -21,11 +20,18 @@ data class SpikeEntity(
     val z: Int,
     val parent: String? = null,
     val attributes: Map<String, String> = emptyMap(),
-    /** 固化下来的描述。null = 从没被观察过，或者已经失效。 */
-    val description: String? = null,
-    /** 观察精度。0 = 粗略，每细化一次 +1。 */
-    val detailLevel: Int = 0,
-)
+    /**
+     * 固化下来的描述，**按句存**。
+     *
+     * 存成一整段文本的话，"只增不改"只能靠提示词去求——而实测证明求不到（见 README 记的那次
+     * spike）。存成句子的列表，它就变成数据模型的性质：**唯一的写操作是在两句之间插入**，已有的
+     * 句子根本没有被改的机会。
+     */
+    val sentences: List<String> = emptyList(),
+) {
+    /** 展示用的整段文字。句子里带着各自的句末标点，所以直接相连即可。 */
+    fun text(): String = sentences.joinToString("")
+}
 
 @Serializable
 data class SpikeWorldFile(val entities: List<SpikeEntity>)
@@ -73,9 +79,9 @@ class SpikeWorld(private val file: File) {
      * 物体变了、或者被摧毁了：固化作废。
      *
      * 设计里的失效有三个条件（变化 / 摧毁 / 要求更精细），这条覆盖前两个——它们在"要不要重新
-     * 渲染"这件事上是同一件事。第三个条件是调用方带着 refine = true，不走这里。
+     * 渲染"这件事上是同一件事。第三个条件走的是 [SentenceWriter]，不在这里。
      */
     fun invalidate(id: String) {
-        byId(id)?.let { put(it.copy(description = null, detailLevel = 0)) }
+        byId(id)?.let { put(it.copy(sentences = emptyList())) }
     }
 }
