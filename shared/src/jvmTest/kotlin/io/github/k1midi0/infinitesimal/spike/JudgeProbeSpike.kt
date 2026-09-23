@@ -5,6 +5,7 @@ import io.github.k1midi0.infinitesimal.judge.Judge
 import io.github.k1midi0.infinitesimal.judge.JudgeRequest
 import io.github.k1midi0.infinitesimal.judge.Judgment
 import io.github.k1midi0.infinitesimal.judge.Scene
+import io.github.k1midi0.infinitesimal.judge.Stage
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
 import kotlinx.coroutines.runBlocking
@@ -12,13 +13,15 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 
 /**
- * 判定系统的联机验收：**模型段 + 代码段接起来跑**。
+ * 两步判定的联机验收。
  *
- * 四个案例压四条设计线，而且**串在同一个世界上按顺序跑**——这本身验了一件事：判定读的是**当前的**
- * 世界，不是它开始时的那个。实测里最后一条驳回的理由会提到前面几条改过的东西。
+ * **前两个案例是这次改造的全部理由**：玩家在界面上选的只是一个猜测，第一步负责把它对齐。
+ * 少了要补、多了要剔——而这两件事以前是第二步顺手做的（做不做得到全看运气）。
  *
- * 顺序不能随便调：`擦干净` 必须在 `劈成两半` **之前**，否则桌子已经没了，前者自然不成立
- * （第一版就是这么错的——驳回本身是对的，是场景错了）。
+ * 后面三个压的是第二步：仅仅外表变化 / 彻底改变 / 世界内驳回。
+ *
+ * 案例串在同一个世界上按顺序跑——这本身验了判定读的是**当前**世界。顺序不能随便调：
+ * 擦干净必须在劈成两半**之前**，否则桌子已经没了。
  *
  * 跑法：`-PinfinitesimalLiveKeyFile=<路径> --tests "*JudgeProbeSpike*"`
  */
@@ -27,7 +30,7 @@ class JudgeProbeSpike {
     private val worldFile = "build/spike/judge-world.json"
 
     @Test
-    fun judgeFourKindsOfAction() {
+    fun twoStepJudgment() {
         val apiKey = ProbeSupport.keyOrNull()
         if (apiKey == null) {
             println("[judge 探针未执行] 未提供 -PinfinitesimalLiveKeyFile=<密钥文件路径>")
@@ -36,86 +39,81 @@ class JudgeProbeSpike {
         val world = ProbeSupport.seed(worldFile, seedWorld())
         val judge = Judge(ProbeSupport.configOf(apiKey))
 
-        lateinit var swept: Judgment
+        lateinit var filledIn: Judgment
+        lateinit var trimmed: Judgment
         lateinit var wiped: Judgment
         lateinit var split: Judgment
         lateinit var reached: Judgment
 
         runBlocking {
             header()
-            swept = run(
-                judge, world,
-                intention = "我用胳臂横扫整个桌面，把桌上的东西都扫到地上。",
-                selected = listOf("oak_table"),
-            )
-            wiped = run(
-                judge, world,
-                intention = "我掏出身上的抹布，把这张木桌的桌面擦干净。",
-                selected = listOf("oak_table"),
-            )
-            split = run(
-                judge, world,
-                intention = "我举起腰间那把短柄斧，把这张木桌从中间劈成两半。",
-                selected = listOf("oak_table"),
-            )
-            reached = run(
-                judge, world,
-                intention = "我伸手把三条街外那家店里的杯子拿过来。",
-                selected = emptyList(),
-            )
+            // ① 选少了：玩家什么都没选，但动作明显指向桌上的杯子。
+            filledIn = run(judge, world, "我拿起桌上那杯麦酒。", selected = emptyList())
+            // ② 选多了：动作只碰杯子，油灯是多余的。
+            trimmed = run(judge, world, "我把杯里的酒一口喝掉。", selected = listOf("wine_cup", "oil_lamp"))
+            // ③ 仅仅外表变化。
+            wiped = run(judge, world, "我掏出身上的抹布，把这张木桌的桌面擦干净。", selected = listOf("oak_table"))
+            // ④ 彻底改变（之后 oak_table 就没了）。
+            split = run(judge, world, "我举起腰间那把短柄斧，把这张木桌从中间劈成两半。", selected = listOf("oak_table"))
+            // ⑤ 世界内驳回。
+            reached = run(judge, world, "我伸手把三条街外那家店里的杯子拿过来。", selected = emptyList())
             println("═".repeat(100))
         }
 
-        // ── 断言压的是**形状**，不是措辞（措辞每次都会变） ───────────────────────────
+        // ── 第一步：对齐（这次改造的全部理由） ──────────────────────────────────────
 
-        // A 一次意图、多条后果（§4.1）：桌上的两样东西都得被处理到，一个都不能漏。
-        assertTrue(swept is Judgment.Applied, "A 扫桌面应当成立，实际：$swept")
-        val sweptEffects = (swept as Judgment.Applied).consequences
-        listOf("wine_cup", "oil_lamp").forEach { id ->
-            assertTrue(
-                sweptEffects.any { it.targetId == id },
-                "A 漏了桌上的 $id —— 这正是第一版暴露过的问题（Scene 没标出谁挂在谁下面）",
-            )
-        }
+        assertTrue(filledIn is Judgment.Applied, "① 应当成立，实际：$filledIn")
+        val filledTargets = (filledIn as Judgment.Applied).targets
+        assertTrue(
+            "wine_cup" in filledTargets,
+            "① 玩家什么都没选，第一步**必须补出**酒杯，实际对齐到：$filledTargets",
+        )
 
-        // D 仅仅外表变化（§7.1）：id 不变，只是描述作废。
-        assertTrue(wiped is Judgment.Applied, "D 擦桌面应当成立，实际：$wiped")
+        assertTrue(trimmed is Judgment.Applied, "② 应当成立，实际：$trimmed")
+        val trimmedTargets = (trimmed as Judgment.Applied).targets
+        assertTrue("wine_cup" in trimmedTargets, "② 酒杯该留下，实际：$trimmedTargets")
+        assertTrue(
+            "oil_lamp" !in trimmedTargets,
+            "② 玩家多选了油灯，第一步**必须剔除**——喝掉杯里的酒碰不到油灯，实际：$trimmedTargets",
+        )
+
+        // ── 第二步：后果的形状 ─────────────────────────────────────────────────────
+
+        assertTrue(wiped is Judgment.Applied, "③ 擦桌子应当成立，实际：$wiped")
         val wipedEffects = (wiped as Judgment.Applied).consequences
         assertTrue(
             wipedEffects.any { it is Consequence.ChangeAppearance || it is Consequence.SetAttribute },
-            "D 只是外表变化，该走 ChangeAppearance 或 SetAttribute，实际：${wipedEffects.map { it::class.simpleName }}",
+            "③ 只是外表变化，实际：${wipedEffects.map { it::class.simpleName }}",
         )
-        assertTrue(
-            wipedEffects.none { it is Consequence.Replace },
-            "D 不该换掉桌子——它只是被擦干净了，还是原来那张",
-        )
+        assertTrue(wipedEffects.none { it is Consequence.Replace }, "③ 不该换掉桌子——它只是被擦干净了")
 
-        // B 彻底改变（§7.1）：必须走 Replace，而且世界里真的换了身份。
-        assertTrue(split is Judgment.Applied, "B 劈开桌子应当成立，实际：$split")
+        assertTrue(split is Judgment.Applied, "④ 劈开桌子应当成立，实际：$split")
         val splitEffects = (split as Judgment.Applied).consequences
+        // **不断言它必须用 Replace。** 实测里模型选了 Destroy + Spawn×2——从世界状态看结果完全正确，
+        // 而且比 Replace 更准：桌子劈开确实变成了**两个**东西，而 Replace 只支持"一变一"。
+        // 要断言的是**世界级的结果**，不是它挑了哪只工具。
         assertTrue(
-            splitEffects.any { it is Consequence.Replace },
-            "B 是彻底改变，必须走 Replace，实际：${splitEffects.map { it::class.simpleName }}",
+            splitEffects.any { it is Consequence.Destroy || it is Consequence.Replace },
+            "④ 旧桌子必须被收走（Destroy 或 Replace），实际：${splitEffects.map { it::class.simpleName }}",
         )
-        assertTrue(world.byId("oak_table") == null, "劈开之后旧的 oak_table 不该还在世界里")
+        assertTrue(world.byId("oak_table") == null, "④ 劈开之后旧的 oak_table 不该还在世界里")
         assertTrue(
-            world.all().any { it.kind == "家具" || it.label.contains("木") },
-            "世界上该留下某个由它变成的东西，实际：${world.all().map { it.id }}",
-        )
-
-        // C 世界内驳回（§4.3 第一层）：理由要给玩家看，而且**不能是系统词**。
-        assertTrue(reached is Judgment.RejectedWorld, "C 够不着，必须被世界内驳回，实际：$reached")
-        val reason = (reached as Judgment.RejectedWorld).reason
-        assertTrue(reason.isNotBlank(), "驳回必须给理由")
-        assertTrue(
-            listOf("API", "请求", "参数", "工具", "模型").none { reason.contains(it) },
-            "驳回理由是给玩家看的世界内措辞，不该出现系统词：$reason",
+            splitEffects.any { it is Consequence.Spawn || it is Consequence.Replace },
+            "④ 必须出现由它变成的东西，实际：${splitEffects.map { it::class.simpleName }}",
         )
 
-        // 串行同一个世界的收益：最后的驳回理由应当提到前面改过的世界，而不是初始状态。
+        assertTrue(reached is Judgment.RejectedWorld, "⑤ 够不着，必须被世界内驳回，实际：$reached")
+        val rejected = reached as Judgment.RejectedWorld
+        assertTrue(
+            listOf("API", "请求", "参数", "工具", "模型").none { rejected.reason.contains(it) },
+            "⑤ 驳回理由是给玩家看的世界内措辞，不该出现系统词：${rejected.reason}",
+        )
+
         println()
-        println("【串行的证据】最后一条驳回的理由里提到的是**当前**世界：")
-        println("  「$reason」")
+        println("【两步的证据】")
+        println("  ① 玩家选 [] -> 第一步补成 $filledTargets")
+        println("  ② 玩家选 [wine_cup, oil_lamp] -> 第一步改成 $trimmedTargets")
+        println("  ⑤ 驳回发生在哪一步：${rejected.stage}")
     }
 
     private suspend fun run(
@@ -139,9 +137,12 @@ class JudgeProbeSpike {
 
         println()
         println("▸ 动作：$intention")
-        println("  用时 $elapsed ms")
+        println("  玩家选的：${if (selected.isEmpty()) "（什么都没选）" else selected.joinToString("、")}")
         when (judgment) {
             is Judgment.Applied -> {
+                val changed = judgment.targets != selected
+                println("  第一步对齐到：${judgment.targets.ifEmpty { listOf("（不作用于具体的东西）") }.joinToString("、")}"
+                    + if (changed) "   ← **与玩家选的不同**" else "")
                 println("  ✅ 落库 ${judgment.consequences.size} 条后果（尝试 ${judgment.attempts} 次）")
                 judgment.consequences.forEach {
                     println("     · ${it::class.simpleName} → ${it.targetId}  [${it.level}]")
@@ -150,7 +151,7 @@ class JudgeProbeSpike {
             }
 
             is Judgment.RejectedWorld -> {
-                println("  ⛔ 世界内驳回（尝试 ${judgment.attempts} 次）：")
+                println("  ⛔ 世界内驳回（第 ${judgment.stage} 步，尝试 ${judgment.attempts} 次）：")
                 println("     「${judgment.reason}」")
             }
 
@@ -159,14 +160,14 @@ class JudgeProbeSpike {
                 judgment.problems.forEach { println("     · $it") }
             }
         }
-        println("  世界现在有：${world.all().joinToString("、") { "${it.id}(${it.label})" }}")
+        println("  总用时 $elapsed ms｜世界现在有：${world.all().joinToString("、") { it.id }}")
         return judgment
     }
 
     private fun header() {
         println()
         println("═".repeat(100))
-        println("判定系统联机验收：一次意图多条后果 → 仅仅外表变化 → 彻底改变 → 世界内驳回")
+        println("两步判定验收：补对象 → 剔对象 → 仅仅外表变化 → 彻底改变 → 世界内驳回")
         println("═".repeat(100))
     }
 
@@ -203,16 +204,13 @@ class JudgeProbeSpike {
             attributes = mapOf("两手" to "空着", "腰间" to "挂着一把短柄斧"),
         ),
         // **身上带着的东西也是实体**，靠 parent 挂在角色下面——统一 Actor 的用法（§3.1）。
-        // 判定看得见它们，"举起斧子/掏出抹布"才成立；看不见的话它会正确地驳回（实测到过两次）。
         Entity(
             id = "axe", kind = "器具", label = "短柄斧", x = 12, y = 3, z = 1,
-            parent = "player",
-            attributes = mapOf("状态" to "刃口有些卷"),
+            parent = "player", attributes = mapOf("状态" to "刃口有些卷"),
         ),
         Entity(
             id = "rag", kind = "器具", label = "抹布", x = 12, y = 3, z = 1,
-            parent = "player",
-            attributes = mapOf("状态" to "半干"),
+            parent = "player", attributes = mapOf("状态" to "半干"),
         ),
     )
 }

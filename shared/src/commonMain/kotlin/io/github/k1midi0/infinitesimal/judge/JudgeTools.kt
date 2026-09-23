@@ -8,14 +8,24 @@ import io.github.k1midi0.infinitesimal.llm.ToolDefinition
 /**
  * 判定系统交给模型的那几只"手"。
  *
- * **每一只都是"提议改世界"或"提议不改"。** 模型不能直接写字数——它只能调工具，就像说话必须是一个
- * 动作（§1.2）。
+ * **分成两组，对应两步。** 第一步只对齐"这次动作作用于哪些东西"，所以它只有两只手；第二步才谈后果。
+ * 两组不混用：第一步拿到后果工具，它就会顺手把第二步的活干了——而那正是"两步"要避免的事。
+ *
+ * 每只手都是"提议改世界"或"提议不改"。模型不能直接写字数——它只能调工具，就像说话必须是一个动作
+ * （§1.2）。
  *
  * 参数刻意保持扁平（只有 string / integer），因为移植过来的 [JsonSchema] 不支持嵌套对象与数组。
- * 需要复数的东西一律"一条一个"：多处受影响就多调几次 `affect`，多个属性就多调几次 `set_attribute`
+ * 需要复数的东西一律"一条一个"：多个目标就多调几次 `target`，多个属性就多调几次 `set_attribute`
  * ——而一次提交本来就是多条后果一起裁、一起提交的（§4.1）。
  */
 object JudgeTools {
+
+    // ── 第一步：对齐指向对象 ──────────────────────────────────────────────────────
+
+    const val TARGET = "target"
+    const val REJECT_TARGETS = "reject_targets"
+
+    // ── 第二步：列出后果 ──────────────────────────────────────────────────────────
 
     const val MOVE = "move"
     const val REPARENT = "reparent"
@@ -42,7 +52,24 @@ object JudgeTools {
     private fun int(name: String, description: String) = name to PropertySchema("integer", description)
     private fun text(name: String, description: String) = name to PropertySchema("string", description)
 
-    val ALL: List<ToolDefinition> = listOf(
+    /** 第一步能用的手：**只有这两只**。 */
+    val TARGETING: List<ToolDefinition> = listOf(
+        tool(
+            TARGET,
+            "报出一个这次动作**实际作用到**的东西。每确定一个就调一次。",
+            text("id", "那个东西的 id"),
+        ),
+        tool(
+            REJECT_TARGETS,
+            "只有当你**完全看不出这次动作要对什么做**、或者被选中的东西与动作毫无关系且无法推断时才用它。" +
+                "如果这个动作确实不作用在任何东西上（例如「我环顾四周」「我打了个哈欠」），那是一个 target 都不报，" +
+                "而**不是**驳回。理由会原样告诉玩家，所以要写成这个世界在说话。",
+            text("reason", "一句话，向玩家解释为什么看不出这次动作指着什么"),
+        ),
+    )
+
+    /** 第二步能用的手。 */
+    val EFFECTS: List<ToolDefinition> = listOf(
         tool(
             MOVE,
             "把一个东西挪到新的体素坐标。**只讲它自身的位置变化，不改变它的外表**，所以不会让它重新被描述。",
