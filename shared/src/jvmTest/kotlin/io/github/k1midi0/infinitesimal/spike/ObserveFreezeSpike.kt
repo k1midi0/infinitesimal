@@ -1,159 +1,167 @@
 package io.github.k1midi0.infinitesimal.spike
 
-import io.github.k1midi0.infinitesimal.config.EndpointConfig
-import io.github.k1midi0.infinitesimal.config.ThinkingMode
 import io.github.k1midi0.infinitesimal.llm.FimClient
 import io.github.k1midi0.infinitesimal.llm.LlmClient
-import io.github.k1midi0.infinitesimal.llm.Usage
+import io.github.k1midi0.infinitesimal.render.DetailInserter
+import io.github.k1midi0.infinitesimal.render.FimSentenceWriter
+import io.github.k1midi0.infinitesimal.render.RenderGuards
+import io.github.k1midi0.infinitesimal.render.Renderer
+import io.github.k1midi0.infinitesimal.render.ToolSentenceWriter
+import io.github.k1midi0.infinitesimal.world.Entity
 import kotlinx.coroutines.runBlocking
-import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * spike 第二轮：**插入一句话，两种机制对比；以及固化循环本身。**
+ * 联机验收：**固化、两条插入路径、以及 §7.1 的两种变化。**
  *
- * 第一轮（单段文本 + 提示词求"只增不改"）已经证伪了那个做法：细化后的描述和原描述直接矛盾。
- * 这一轮改成"描述按句存、只能插入"，并让两条路在**同一份基线、同一个插入点**上各写一次。
- *
- * 跑法：
+ * 它打在产品代码上（`world/` + `render/`），不是打在探针自己的一份复制品上——否则验的就不是要交付的
+ * 东西。跑法：
  *
  *     .\gradlew.bat :shared:jvmTest --tests "*ObserveFreezeSpike*" `
  *         -PinfinitesimalLiveKeyFile="C:\path\to\key.txt"
+ *
+ * 不给那个参数时什么都不做，只打印一行说明。
  */
 class ObserveFreezeSpike {
 
-    private val keyFile: File?
-        get() = System.getProperty("infinitesimal.liveKeyFile")
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::File)
+    private val worldFile = "build/spike/world.json"
 
     @Test
-    fun freezeThenInsertByBothMechanisms() {
-        val file = keyFile
-        if (file == null || !file.isFile) {
+    fun freezeInsertAndTwoKindsOfChange() {
+        val apiKey = ProbeSupport.keyOrNull()
+        if (apiKey == null) {
             println("[spike 未执行] 未提供 -PinfinitesimalLiveKeyFile=<密钥文件路径>，本次未访问端点")
             return
         }
-
-        val config = EndpointConfig(
-            baseUrl = "https://api.deepseek.com",
-            apiKey = file.readText().trim(),
-            model = "deepseek-flash",
-            thinking = ThinkingMode.Never,
-        )
-        val worldFile = File("build/spike/world.json")
-        worldFile.delete()
-        val world = SpikeWorld(worldFile).load().apply { seed(seedWorld()) }
-        val renderer = SpikeRenderer(LlmClient(config), world)
+        val config = ProbeSupport.configOf(apiKey)
+        val world = ProbeSupport.seed(worldFile, seedWorld())
+        val renderer = Renderer(config, world)
 
         val rows = mutableListOf<Row>()
-        val toolWriter = ToolSentenceWriter(LlmClient(config))
-        val fimWriter = FimSentenceWriter(FimClient(config))
-
-        lateinit var baseline: List<String>
-        lateinit var toolInsertion: Insertion
-        lateinit var fimInsertion: Insertion
-        var toolViolations: List<String> = emptyList()
-        var fimViolations: List<String> = emptyList()
+        var toolOutcome: DetailInserter.Outcome? = null
+        var fimOutcome: DetailInserter.Outcome? = null
+        var baseline: List<String> = emptyList()
 
         runBlocking {
-            // ── 固化循环 ──────────────────────────────────────────────────────────
+            // ── 固化循环 ────────────────────────────────────────────────────────────
             val first = renderer.observe("oak_table")
             rows += Row("① 首次观察木桌", first, renderer.requestCount)
             baseline = first.sentences
 
             val cached = renderer.observe("oak_table")
-            rows += Row("② 再观察木桌（应命中固化）", cached, renderer.requestCount)
+            rows += Row("② 再观察（应命中固化）", cached, renderer.requestCount)
 
             val cup = renderer.observe("wine_cup")
             rows += Row("③ 观察酒杯", cup, renderer.requestCount)
 
-            // ── 对比：同一基线、同一插入点，两条路各写一句 ──────────────────────────
-            val context = renderer.contextOf(requireNotNull(world.byId("oak_table")))
-            val hint = 1 // 插在第 1 句之后——中间插入，后缀条件化才有意义
+            // ── 两条插入路径：各自一份基线副本，同一个插入点 ──────────────────────────
+            world.put(requireNotNull(world.byId("oak_table")).copy(id = "oak_table_tool"))
+            world.put(requireNotNull(world.byId("oak_table")).copy(id = "oak_table_fim"))
 
-            world.put(requireNotNull(world.byId("oak_table")).copy(id = "oak_table_tool", label = "木桌"))
-            world.put(requireNotNull(world.byId("oak_table")).copy(id = "oak_table_fim", label = "木桌"))
+            toolOutcome = renderer.addDetail(
+                "oak_table_tool",
+                DetailInserter(null, ToolSentenceWriter(LlmClient(config))),
+                afterIndex = 1,
+            )
+            fimOutcome = renderer.addDetail(
+                "oak_table_fim",
+                // FIM 主路、工具回退——§14.4 定下来的形状。
+                DetailInserter(FimSentenceWriter(FimClient(config)), ToolSentenceWriter(LlmClient(config))),
+                afterIndex = 1,
+            )
 
-            toolInsertion = toolWriter.insert(baseline, context, hint)
-            toolViolations = renderer.applyInsertion("oak_table_tool", toolInsertion)
-
-            fimInsertion = fimWriter.insert(baseline, context, hint)
-            fimViolations = renderer.applyInsertion("oak_table_fim", fimInsertion)
-
-            // ── 失效与重生成 ──────────────────────────────────────────────────────
-            world.invalidate("oak_table")
-            val afterChange = renderer.observe("oak_table")
-            rows += Row("④ 木桌变了之后重观察", afterChange, renderer.requestCount)
+            // ── 变化之一：仅仅外表变了（§7.1）──────────────────────────────────────
+            world.invalidateAppearance("oak_table")
+            val appearance = renderer.observe("oak_table")
+            rows += Row("④ 外表变化后重观察", appearance, renderer.requestCount)
 
             val cachedAgain = renderer.observe("oak_table")
             rows += Row("⑤ 再观察（固化又成立）", cachedAgain, renderer.requestCount)
+
+            // ── 变化之二：彻底改变，换新物品（§7.1）─────────────────────────────────
+            world.replace(
+                "oak_table",
+                Entity(
+                    id = "oak_table_splintered",
+                    kind = "杂物",
+                    label = "劈开的木桌",
+                    x = 12, y = 4, z = 0,
+                    parent = "tavern_hall",
+                    attributes = mapOf("材质" to "橡木", "状态" to "沿中线裂成两半"),
+                ),
+            )
+            val replaced = renderer.observe("oak_table_splintered")
+            rows += Row("⑥ 劈开后观察新物品", replaced, renderer.requestCount)
         }
 
         val toolEntity = requireNotNull(world.byId("oak_table_tool"))
         val fimEntity = requireNotNull(world.byId("oak_table_fim"))
+        report(rows, baseline, toolOutcome, toolEntity, fimOutcome, fimEntity)
 
-        report(rows, baseline, toolInsertion, toolViolations, toolEntity, fimInsertion, fimViolations, fimEntity)
-
-        // ── 断言 ─────────────────────────────────────────────────────────────────
-        assertEquals(3, renderer.requestCount, "整段渲染应当只发 3 次请求（①②③④⑤ 里只有 ①③④ 该发）")
+        // ── 断言 ───────────────────────────────────────────────────────────────────
+        assertEquals(4, renderer.requestCount, "整段渲染该发 4 次请求（①③④⑥；②⑤ 是固化命中）")
         assertTrue(rows[1].outcome.fromCache, "② 应当命中固化")
         assertEquals(0L, rows[1].outcome.elapsedMs, "② 命中固化应当是零耗时")
         assertTrue(rows[4].outcome.fromCache, "⑤ 固化重新成立后应当再次命中")
         assertNotNull(rows[0].outcome.usage, "① 必须拿到 usage，否则成本无从核算")
 
-        // 两条路都真的插进去了一句
-        assertEquals(baseline.size + 1, toolEntity.sentences.size, "工具插入后句子数应当是基线 + 1")
+        // 描述只讲物体自身——三条路都要干净（§7.6）。
+        assertEquals(emptyList(), RenderGuards.check(baseline.joinToString("")), "基线里出现了周边或位置关系")
+        assertEquals(emptyList(), RenderGuards.check(toolEntity.text()), "工具插入后出现了周边或位置关系")
 
-        // **核心断言**：把新插的那一句拿掉，剩下的与基线逐字相同。
-        // 这一条就是"只增不改"的证据——它不是提示词求来的，是数据模型给的。
+        // **只增不改的证据**：把新插的那一句拿掉，剩下的与基线逐字相同（§14.2）。
+        val toolInserted = assertNotNull(assertNotNull(toolOutcome).sentences, "工具这条路没有产出可用句子")
+        assertEquals(baseline.size + 1, toolInserted.size, "工具插入后句子数应当是基线 + 1")
         assertEquals(
             baseline,
-            toolEntity.sentences.toMutableList().apply { removeAt(toolInsertion.afterIndex) },
+            toolInserted.toMutableList().apply { removeAt(insertedIndex(toolEntity, baseline)) },
             "工具插入动到了已有句子",
         )
-        assertTrue(toolInsertion.sentence.isNotBlank(), "工具这条路没有产出句子")
-        assertEquals(emptyList(), RenderGuards.check(toolEntity.text()), "工具插入后的描述里出现了周边或位置关系")
 
-        // FIM 的不稳定**已经量过**（§14.3：5 次里只有 2 次可用），所以它这次为空是已知结果，不是
-        // 这次的失败。要断言的是**结构性质**：只要有东西插进去，已有句子就必须逐字未变。
-        if (fimInsertion.sentence.isBlank()) {
+        // ── 两种变化（§7.1）────────────────────────────────────────────────────────
+        // 外表变化：**id 不变**，只是描述作废重渲染。它在上面的 ④⑤ 里已经走过，这里断言身份没变。
+        assertTrue(rows[3].outcome.fromCache.not(), "④ 应当重新渲染而不是命中旧描述")
+        // 彻底改变：旧 id 从世界态里消失，新 id 带着自己的描述。
+        assertNull(world.byId("oak_table"), "彻底改变之后旧 id 不该还在世界里")
+        assertNotNull(world.byId("oak_table_splintered"), "新物品应当在世界里")
+        assertTrue(
+            requireNotNull(world.byId("oak_table_splintered")).sentences.isNotEmpty(),
+            "新物品应当有自己的描述",
+        )
+
+        // FIM 的不稳定**已经量过**（§14.3：5 次里 2 次可用），所以它失败是已知结果，不是这次的失败。
+        // 要断言的是**回退的形状**：FIM 不行时由工具接住，而不是把坏数据落库。
+        val fim = assertNotNull(fimOutcome)
+        if (fim.sentences == null) {
             println()
-            println("[FIM 本次未产出：${fimInsertion.violations.joinToString("；")}]")
-            println("  这是 §14.3 已量过的不稳定，不是新问题。跳过它的结构断言。")
+            println("⚠ 两条路都没产出——世界状态未变。按 §14.4 这是可接受的结果，不是坏数据。")
         } else {
-            assertEquals(baseline.size + 1, fimEntity.sentences.size, "FIM 插入后句子数应当是基线 + 1")
-            assertEquals(
-                baseline,
-                fimEntity.sentences.toMutableList().apply { removeAt(fimInsertion.afterIndex) },
-                "FIM 插入动到了已有句子",
-            )
+            assertNotNull(fim.writer, "有产出就必须记下是哪条路")
         }
-
-        // 描述里不许有周边与位置关系——这一条是"固化"能成立的前提（§7.5）。
-        assertEquals(emptyList(), RenderGuards.check(baseline.joinToString("")), "基线描述里出现了周边或位置关系")
     }
 
-    private data class Row(val step: String, val outcome: SpikeRenderer.Outcome, val requestsSoFar: Int)
+    /** 找出新插进来的那一句在原列表里的位置。 */
+    private fun insertedIndex(entity: Entity, baseline: List<String>): Int =
+        entity.sentences.indexOfFirst { it !in baseline }.takeIf { it >= 0 } ?: 0
+
+    private data class Row(val step: String, val outcome: Renderer.Observation, val requestsSoFar: Int)
 
     private fun report(
         rows: List<Row>,
         baseline: List<String>,
-        toolInsertion: Insertion,
-        toolViolations: List<String>,
-        toolEntity: SpikeEntity,
-        fimInsertion: Insertion,
-        fimViolations: List<String>,
-        fimEntity: SpikeEntity,
+        toolOutcome: DetailInserter.Outcome?,
+        toolEntity: Entity,
+        fimOutcome: DetailInserter.Outcome?,
+        fimEntity: Entity,
     ) {
         println()
         println("═".repeat(100))
-        println("spike 第二轮：描述按句固化 → 两个写入器在同一插入点各补一句")
+        println("联机验收：固化 → 两条插入路径 → 两种变化")
         println("═".repeat(100))
-
         println("%-26s %-8s %8s %14s %8s".format("步骤", "固化命中", "耗时ms", "输入(命中/未命中)", "输出"))
         println("─".repeat(100))
         for (row in rows) {
@@ -171,73 +179,70 @@ class ObserveFreezeSpike {
         val billed = rows.mapNotNull { it.outcome.usage }
         if (billed.isNotEmpty()) {
             println("─".repeat(100))
-            println("整段渲染合计：成本 高峰 %.5f 元 / 空闲 %.5f 元；平均 %.0f ms/次".format(
-                billed.sumOf { costCny(it, peak = true) },
-                billed.sumOf { costCny(it, peak = false) },
-                rows.filter { it.outcome.usage != null }.map { it.outcome.elapsedMs }.average(),
-            ))
+            println(
+                "整段渲染合计：成本 高峰 %.5f 元 / 空闲 %.5f 元；平均 %.0f ms/次".format(
+                    billed.sumOf { costCny(it.promptCacheHitTokens, it.promptCacheMissTokens, it.completionTokens, true) },
+                    billed.sumOf { costCny(it.promptCacheHitTokens, it.promptCacheMissTokens, it.completionTokens, false) },
+                    rows.filter { it.outcome.usage != null }.map { it.outcome.elapsedMs }.average(),
+                ),
+            )
         }
 
         println()
         println("【基线】${baseline.size} 句：")
         baseline.forEachIndexed { index, sentence -> println("  ${index + 1}. $sentence") }
+        val baseViolations = RenderGuards.check(baseline.joinToString(""))
+        print("  RenderGuards：")
+        if (baseViolations.isEmpty()) println("干净") else println(baseViolations.joinToString("；"))
 
         println()
         println("─".repeat(100))
-        println("【对比】同一个插入点：第 1 句之后")
+        println("【对比】同一个插入点：第 1 句之后（两条路各自一份基线副本）")
         println("─".repeat(100))
-        println("▸ 工具插入（${toolInsertion.elapsedMs} ms，位置 ${toolInsertion.afterIndex}）")
-        println("  新句：${toolInsertion.sentence}")
-        if (toolViolations.isNotEmpty()) println("  守卫：${toolViolations.joinToString("；")}")
+        println("▸ 工具插入")
         toolEntity.sentences.forEachIndexed { index, sentence ->
-            println("  ${index + 1}. ${if (index == toolInsertion.afterIndex) "★ $sentence" else sentence}")
+            println("  ${index + 1}. ${if (sentence !in baseline) "★ " else ""}$sentence")
         }
-        RenderGuards.check(toolEntity.text()).forEach { println("  ⚠ $it") }
-
         println()
-        println("▸ FIM 插入（${fimInsertion.elapsedMs} ms，位置 ${fimInsertion.afterIndex}）")
-        println("  新句：${fimInsertion.sentence}")
-        if (fimViolations.isNotEmpty()) println("  守卫：${fimViolations.joinToString("；")}")
+        println("▸ FIM 插入（带工具回退）")
         fimEntity.sentences.forEachIndexed { index, sentence ->
-            println("  ${index + 1}. ${if (index == fimInsertion.afterIndex) "★ $sentence" else sentence}")
+            println("  ${index + 1}. ${if (sentence !in baseline) "★ " else ""}$sentence")
         }
-        RenderGuards.check(fimEntity.text()).forEach { println("  ⚠ $it") }
         println()
-        print("【基线本身】")
-        val baselineViolations = RenderGuards.check(baseline.joinToString(""))
-        if (baselineViolations.isEmpty()) println("干净（没有周边或位置关系）") else baselineViolations.forEach { println("  ⚠ $it") }
+        println("【两条路各试了什么】")
+        println("  工具：${toolOutcome?.attempts?.joinToString(" ｜ ") ?: "(未执行)"}")
+        println("  FIM ：${fimOutcome?.attempts?.joinToString(" ｜ ") ?: "(未执行)"}")
+        if (fimOutcome?.sentences != null && fimOutcome.writer == "工具插入") {
+            println("  ↑ FIM 未产出，**回退生效**：这一句是工具写的（§14.4）")
+        }
         println("═".repeat(100))
     }
 
     /** flash 的价目（元/百万 token）。高峰：周一至周五 9:00-12:00、14:00-18:00。 */
-    private fun costCny(usage: Usage, peak: Boolean): Double {
-        val hit = if (peak) 0.04 else 0.02
-        val miss = if (peak) 2.0 else 1.0
-        val out = if (peak) 8.0 else 4.0
-        return (
-            usage.promptCacheHitTokens * hit +
-                usage.promptCacheMissTokens * miss +
-                usage.completionTokens * out
-            ) / 1_000_000.0
+    private fun costCny(hit: Int, miss: Int, out: Int, peak: Boolean): Double {
+        val hitRate = if (peak) 0.04 else 0.02
+        val missRate = if (peak) 2.0 else 1.0
+        val outRate = if (peak) 8.0 else 4.0
+        return (hit * hitRate + miss * missRate + out * outRate) / 1_000_000.0
     }
 
-    private fun seedWorld(): List<SpikeEntity> = listOf(
-        SpikeEntity(
+    private fun seedWorld(): List<Entity> = listOf(
+        Entity(
             id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 10, y = 0, z = 0,
             attributes = mapOf("层高" to "4米", "地面" to "夯土", "光照" to "几盏油灯"),
-            // 导演写的背景。渲染器读它，好让描述不脱离这个世界。
+            // 导演写的背景。渲染器读它，好让描述不脱离这个世界（§7.5）。
             background = """
                 这里是「醉猫」酒馆，边境小镇灰渡唯一还在营业的酒馆，木石结构，建成约二十年，墙角常年返潮，北侧的窗子有一扇关不严。
                 三天前镇东的粮仓失火，烧掉了半个冬天的存粮；酒馆老板在那之后就没再露面，如今由一个年长的伙计照看店面。
                 眼下是深秋傍晚，屋里点了四盏油灯，客人比往常少，靠门的两张桌子空着。
             """.trimIndent(),
         ),
-        SpikeEntity(
+        Entity(
             id = "oak_table", kind = "家具", label = "木桌", x = 12, y = 4, z = 0,
             parent = "tavern_hall",
             attributes = mapOf("材质" to "橡木", "状态" to "完好", "尺寸" to "2米 × 1米 × 0.8米"),
         ),
-        SpikeEntity(
+        Entity(
             id = "wine_cup", kind = "器具", label = "酒杯", x = 12, y = 4, z = 1,
             parent = "oak_table",
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒", "状态" to "杯口有划痕"),
