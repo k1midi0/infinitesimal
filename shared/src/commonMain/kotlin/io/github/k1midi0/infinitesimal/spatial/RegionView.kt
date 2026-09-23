@@ -53,8 +53,7 @@ object RegionView {
             appendLine(
                 "范围 x ${region.minX}..${region.maxX}（${region.width} 格），" +
                     "y ${region.minY}..${region.maxY}（${region.height} 格）；" +
-                    "层 ${region.minZ}..${region.maxZ}；射线长 ${region.rayLen}；" +
-                    if (region.widenings == 0) "未扩大" else "已扩大 ${region.widenings} 次",
+                    "层 ${region.minZ}..${region.maxZ}；${reachLine(region)}",
             )
             appendLine()
 
@@ -114,28 +113,57 @@ object RegionView {
         }
     }
 
+    /**
+     * 各方向看得多远。
+     *
+     * 定向扩大之后各扇区档位不同，所以这一行可能不是一句话。**它必须说出来**：模型得知道自己上一眼
+     * 往哪边看过了，否则它会一遍遍要求看同一个方向，而每一次都是一整趟往返。
+     */
+    private fun reachLine(region: Region): String {
+        val byLevel = Direction.ALL.groupBy { region.levels[it.ordinal] }
+        if (byLevel.size == 1) {
+            val k = byLevel.keys.first()
+            val note = if (k == 1) "未扩大" else "各方向一致，已扩大 ${k - 1} 次"
+            return "射线长 ${RegionBuilder.DEFAULT_RAY * k}（$note）"
+        }
+        val parts = byLevel.entries.sortedByDescending { it.key }.map { (k, dirs) ->
+            "${dirs.joinToString("、") { it.label }} ${RegionBuilder.DEFAULT_RAY * k}"
+        }
+        return "射线长：" + parts.joinToString("；")
+    }
+
     private fun farLine(world: World, region: Region, actor: Entity?): String? {
         if (actor == null) return null
         val outside = world.all().filter { !region.covers(it) && it.id != actor.id }
         if (outside.isEmpty()) return null
-        val nearest = outside.minByOrNull { maxOf(kotlin.math.abs(it.x - actor.x), kotlin.math.abs(it.y - actor.y)) }!!
-        val d = maxOf(kotlin.math.abs(nearest.x - actor.x), kotlin.math.abs(nearest.y - actor.y))
-        return "框外还有 ${outside.size} 样东西；最近的是「${nearest.label}」，在${direction(nearest.x - actor.x, nearest.y - actor.y)} $d 格外。"
+        val nearest = outside.minByOrNull {
+            maxOf(
+                kotlin.math.abs(it.x - actor.x),
+                kotlin.math.abs(it.y - actor.y),
+                kotlin.math.abs(it.z - actor.z),
+            )
+        }!!
+        return "框外还有 ${outside.size} 样东西；最近的是「${nearest.label}」，" +
+            "${wherePhrase(nearest.x - actor.x, nearest.y - actor.y, nearest.z - actor.z)}。"
     }
 
-    private fun direction(dx: Int, dy: Int): String {
-        val ns = when {
-            dy <= -1 -> "北"
-            dy >= 1 -> "南"
-            else -> ""
+    /**
+     * 「在东南 8 格外」「在正上方 2 格」。
+     *
+     * **词表必须和 `widen_view` 收的那十个方向完全一致**（[Direction]）：模型在这里读到哪个词，
+     * 就应该能拿同一个词要求往那边看。两张词表不重合，等于让它翻译一次——而它翻译错的时候没人
+     * 会发现。
+     */
+    private fun wherePhrase(dx: Int, dy: Int, dz: Int): String {
+        val flat = maxOf(kotlin.math.abs(dx), kotlin.math.abs(dy))
+        val sector = Direction.of(dx, dy, dz)
+        // 层差比水平距离还大时用「正上方/正下方」——「在东南 0 格外、上 3 层」不是人话。
+        if (sector == Direction.UP || sector == Direction.DOWN) {
+            val side = if (flat == 0) "" else "偏${Direction.of(dx, dy, 0).label}"
+            return "在正${sector.label}方$side ${kotlin.math.abs(dz)} 格"
         }
-        val ew = when {
-            dx <= -1 -> "西"
-            dx >= 1 -> "东"
-            else -> ""
-        }
-        // 汉语说「东北」，不说「北东」——所以东西在前、南北在后。
-        return (ew + ns).ifEmpty { "原处" }
+        val tail = if (dz == 0) "" else "、${if (dz > 0) "上" else "下"} ${kotlin.math.abs(dz)} 层"
+        return "在${sector.label} $flat 格外$tail"
     }
 
     private fun pad(s: String): String = " " + s.padEnd(2)

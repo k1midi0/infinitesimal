@@ -48,11 +48,21 @@ class Region internal constructor(
     val maxY: Int,
     val minZ: Int,
     val maxZ: Int,
-    /** 这一次用的射线长度，等于 `3k`（k = widenings + 1）。扩大一次加 3。 */
-    val rayLen: Int,
-    /** 已经被要求扩大过几次。0 表示这是第一眼。 */
-    val widenings: Int,
+    /**
+     * 每个扇区各自的档位，顺序同 [Direction.ALL]。
+     *
+     * **它取代了原来那个单一的 k。** 定向扩大之后东南可以比西边远一档，而框的凸包自然就是偏的
+     * ——那正是"往那边看"的意思。
+     */
+    val levels: IntArray,
 ) {
+    private val maxLevel: Int get() = levels.maxOrNull() ?: 1
+
+    /** 最远的那个扇区用的射线长。各方向不同时它只是个上界。 */
+    val rayLen: Int get() = RegionBuilder.DEFAULT_RAY * maxLevel
+
+    /** 比第一档高出的最大档数。0 表示这是第一眼。 */
+    val widenings: Int get() = maxLevel - 1
     val width: Int get() = maxX - minX + 1
     val height: Int get() = maxY - minY + 1
     val cellCount: Int get() = cells().size
@@ -162,41 +172,12 @@ class Region internal constructor(
 object RegionBuilder {
 
     /**
-     * 第 k 档的射线数：`24k² − 6`。
+     * 十个扇区都在第 k 档时，射线一共几条。
      *
-     * k=1 是 18 条——**条数和改之前那个手写的 18 向一样**，但方向不是同一批。
+     * **定向扩大之后各扇区档位不同，总数只能逐个问 [Direction.rayCount]。** 这一条只是"整体扩大
+     * 一次要多少条"的那个数。
      */
-    internal fun rayCount(k: Int): Int = 24 * k * k - 6
-
-    /** 黄金角 `2π/φ²`。斐波那契球面就是靠它把点铺匀的。 */
-    private const val GOLDEN_ANGLE: Double = 2.399963229728653
-
-    /**
-     * 第 k 档的方向：球面上**均匀铺开**的 [rayCount] 个单位向量（斐波那契球面）。
-     *
-     * ## 为什么不用整数方向
-     *
-     * 原来那 18 条是整数向量（`x = cx + dx * t`），落在**切比雪夫立方体**上。整数方向有个看不见的
-     * 代价：射线一长，相邻两条端点之间的空隙就按距离线性变大——**扩得越远，缝越大**，远的东西
-     * 反而比近的更容易从缝里漏掉。实测的密度是 2.5 → 5.0 → 10.0 → 20.0 格。
-     *
-     * 球面均匀采样把这件事摁住了：每一条射线摊到的球面面积恒定，相邻间距在 k=1 时 2.5 格、
-     * k=4 时 2.2 格。这就是"保持空间密度大体相同"。
-     *
-     * ## 取整不会跳格，所以不需要 DDA
-     *
-     * 方向不再是整数，每一步都要取整。但 `|u| = 1`，所以每步每个坐标的变化都不超过 1，取整之后
-     * 不可能越过一整格——逐格判等就够了。（同一个格子可能被两条射线重复检查，那是浪费，不是错。）
-     */
-    internal fun directions(k: Int): List<Triple<Double, Double, Double>> {
-        val n = rayCount(k)
-        return List(n) { i ->
-            val z = 1.0 - 2.0 * (i + 0.5) / n
-            val r = sqrt((1.0 - z * z).coerceAtLeast(0.0))
-            val theta = GOLDEN_ANGLE * i
-            Triple(cos(theta) * r, sin(theta) * r, z)
-        }
-    }
+    internal fun rayCount(k: Int): Int = Direction.ALL.sumOf { it.rayCount(k) }
 
     /**
      * 打不到东西时，射线走多远。
@@ -214,63 +195,63 @@ object RegionBuilder {
         world: World,
         centers: List<String>,
         widenings: Int = 0,
-    ): Region {
+    ): Region = of(world, centers, IntArray(Direction.ALL.size) { widenings + 1 })
+
+    /**
+     * 各扇区档位不同时的入口。数组顺序就是 [Direction.ALL]。
+     *
+     * 定向扩大（`widen_view("东南")`）走的就是这一条：只把那一个扇区抬高，射线数只多那一个扇区的
+     * 那几条（[Direction.rayCount]）——整体抬一档是 24 → 92 条，只抬东南一档是 24 → 30 条。
+     */
+    fun of(world: World, centers: List<String>, levels: IntArray): Region {
+        require(levels.size == Direction.ALL.size) {
+            "档位数组该有 ${Direction.ALL.size} 项（一个扇区一项），实际 ${levels.size}"
+        }
         val entities = world.all()
         val centerEntities = centers.mapNotNull { world.byId(it) }
         require(centerEntities.isNotEmpty()) { "一个中心都没有，框无处可谈" }
-
-        var region = trace(entities, centerEntities, k = 1, widenings = 0, reach = 0)
-        repeat(widenings) {
-            // **上一眼够得着的距离之内的东西，这一眼不再算阻挡。**
-            //
-            // 这条一开始写的是"上一个框的格子集合"，跑出来是错的：参差凸包的边界格子有一半落在框
-            // 外，而卡在边界上的那堵墙正好就在那些格子上，于是射线还是被同一堵墙拦下——**扩大一次
-            // maxX 纹丝不动**。改成按"离中心的距离"之后就对了，而且它才是本来想说的那句话。
-            region = trace(
-                entities,
-                centerEntities,
-                k = region.rayLen / DEFAULT_RAY + 1,
-                widenings = region.widenings + 1,
-                reach = region.rayLen,
-            )
-        }
-        return region
+        return trace(entities, centerEntities, levels)
     }
 
     private fun trace(
         entities: List<Entity>,
         centers: List<Entity>,
-        /** 第几档。射线长 `3k`，方向取 [directions]`(k)`，条数 `24k² − 6`。 */
-        k: Int,
-        widenings: Int,
-        /** 离中心没超过这个距离的东西不算阻挡。第一眼是 0，也就是什么都算阻挡。 */
-        reach: Int,
+        /** 一个扇区一项的档位。同一档的射线长 `3k`。 */
+        levels: IntArray,
     ): Region {
-        val rayLen = DEFAULT_RAY * k
-        val directions = directions(k)
         val points = mutableListOf<RayPoint>()
         for (c in centers) {
-            for ((ux, uy, uz) in directions) {
-                var landed: RayPoint? = null
-                for (t in 1..rayLen) {
-                    val x = c.x + (ux * t).roundToInt()
-                    val y = c.y + (uy * t).roundToInt()
-                    val z = c.z + (uz * t).roundToInt()
-                    val blocker = entities.firstOrNull { e ->
-                        e.id != c.id && e.x == x && e.y == y && e.z == z &&
-                            maxOf(abs(e.x - c.x), abs(e.y - c.y), abs(e.z - c.z)) > reach
+            for (sector in Direction.ALL.indices) {
+                val k = levels[sector]
+                val rayLen = DEFAULT_RAY * k
+                // **上一档够得着的距离之内的东西，这一档不再算阻挡。**
+                //
+                // 这条一开始写的是"上一个框的格子集合"，跑出来是错的：参差凸包的边界格子有一半落在框
+                // 外，而卡在边界上的那堵墙正好就在那些格子上，于是射线还是被同一堵墙拦下——**扩大一次
+                // maxX 纹丝不动**。改成按"离中心的距离"之后就对了，而且它才是本来想说的那句话。
+                val reach = DEFAULT_RAY * (k - 1)
+                for ((ux, uy, uz) in Direction.ALL[sector].directions(k)) {
+                    var landed: RayPoint? = null
+                    for (t in 1..rayLen) {
+                        val x = c.x + (ux * t).roundToInt()
+                        val y = c.y + (uy * t).roundToInt()
+                        val z = c.z + (uz * t).roundToInt()
+                        val blocker = entities.firstOrNull { e ->
+                            e.id != c.id && e.x == x && e.y == y && e.z == z &&
+                                maxOf(abs(e.x - c.x), abs(e.y - c.y), abs(e.z - c.z)) > reach
+                        }
+                        if (blocker != null) {
+                            landed = RayPoint(x, y, z, hit = true, blockerId = blocker.id)
+                            break
+                        }
                     }
-                    if (blocker != null) {
-                        landed = RayPoint(x, y, z, hit = true, blockerId = blocker.id)
-                        break
-                    }
+                    points += landed ?: RayPoint(
+                        c.x + (ux * rayLen).roundToInt(),
+                        c.y + (uy * rayLen).roundToInt(),
+                        c.z + (uz * rayLen).roundToInt(),
+                        hit = false,
+                    )
                 }
-                points += landed ?: RayPoint(
-                    c.x + (ux * rayLen).roundToInt(),
-                    c.y + (uy * rayLen).roundToInt(),
-                    c.z + (uz * rayLen).roundToInt(),
-                    hit = false,
-                )
             }
         }
 
@@ -289,8 +270,7 @@ object RegionBuilder {
             maxY = projected.maxOf { it.y },
             minZ = points.minOf { it.z },
             maxZ = points.maxOf { it.z },
-            rayLen = rayLen,
-            widenings = widenings,
+            levels = levels,
         )
     }
 

@@ -10,6 +10,7 @@ import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.llm.LlmEvent
 import io.github.k1midi0.infinitesimal.llm.ThinkingRequest
 import io.github.k1midi0.infinitesimal.llm.ToolCall
+import io.github.k1midi0.infinitesimal.spatial.Direction
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
 import kotlinx.coroutines.flow.toList
@@ -331,7 +332,12 @@ class Judge(
                 messages += ChatMessage.toolResult(
                     c.id,
                     if (c.name == JudgeTools.WIDEN_VIEW) {
-                        view.widen()
+                        // 方向是**可选**的。认不出来的词就整体扩——不退回让模型重说：它"想看得更远"
+                        // 这个愿望是明确的，只有"哪边"没表达清楚，为这个多烧一整轮不值得。
+                        val wanted = decode(WidenArgs.serializer(), c)
+                            ?.direction
+                            ?.let(Direction::byLabel)
+                        if (wanted != null) view.widen(wanted) else view.widen()
                     } else {
                         // 同一轮里既报了东西又要看更大范围。**不能把这个报的东西丢掉**——它是模型
                         // 已经做出的判断，而这一轮之后它没有理由再报一次。
@@ -467,6 +473,10 @@ class Judge(
             }
         }
     }
+
+    /** `widen_view` 的参数。**`direction` 是可选的**——这是这个项目里第一只真正带可选参数的工具。 */
+    @Serializable
+    private data class WidenArgs(val direction: String? = null)
 
     private fun <T> decode(serializer: KSerializer<T>, call: RawCall): T? = try {
         JSON.decodeFromString(serializer, call.arguments)

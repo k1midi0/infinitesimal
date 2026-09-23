@@ -45,17 +45,28 @@ object JudgeTools {
     const val AFFECT = "affect"
     const val REJECT = "reject"
 
-    private fun tool(name: String, description: String, vararg properties: Pair<String, PropertySchema>) =
-        ToolDefinition(
-            function = FunctionSpec(
-                name = name,
-                description = description,
-                parameters = JsonSchema(
-                    properties = properties.toMap(),
-                    required = properties.map { it.first },
-                ),
+    /**
+     * 造一只工具。
+     *
+     * `optional` 里的名字**不进 `required`**。这是后加的一个口子：原先这里把所有属性一股脑塞进
+     * `required`，于是"可选参数"根本表达不出来。`widen_view` 的 `direction` 就是第一个真正可选的
+     * 参数——填了只往那边看，不填是整体看远一圈，两种都是合法的调用。
+     */
+    private fun tool(
+        name: String,
+        description: String,
+        vararg properties: Pair<String, PropertySchema>,
+        optional: List<String> = emptyList(),
+    ) = ToolDefinition(
+        function = FunctionSpec(
+            name = name,
+            description = description,
+            parameters = JsonSchema(
+                properties = properties.toMap(),
+                required = properties.map { it.first } - optional.toSet(),
             ),
-        )
+        ),
+    )
 
     private fun int(name: String, description: String) = name to PropertySchema("integer", description)
     private fun text(name: String, description: String) = name to PropertySchema("string", description)
@@ -63,8 +74,16 @@ object JudgeTools {
     private val WIDEN = tool(
         WIDEN_VIEW,
         "你现在手上这一片范围不够用的时候调它（要看的东西在框外、或者你拿不准两样东西隔多远）。" +
-            "它会朝外扩一圈，扩完你**立刻**会收到一份新的范围，然后接着干你原来的活。" +
+            "它会扩完**立刻**给你一份新的范围，然后你接着干原来的活。" +
+            "框外那句话会告诉你东西在哪个方向、隔多远——**读到方向就填 direction**，只往那边看一档，" +
+            "射线只多几条；不填 direction 是四面八方一起再看远一圈，射线要多三倍多。拿不准在哪边时才不填。" +
             "**不调就是「现在这些够了」**——因为你也许还想要别的就随手调它，只会白多花一趟，而那一趟里你什么也没做。",
+        text(
+            "direction",
+            "只把这一个方向再看远一档。可填：东、东南、南、西南、西、西北、北、东北、上、下。" +
+                "**就用框外那句话里的那个词。** 不填这个参数表示四面八方一起再看远一圈。",
+        ),
+        optional = listOf("direction"),
     )
 
     /** 第一步能用的手：**只有这几只**。 */

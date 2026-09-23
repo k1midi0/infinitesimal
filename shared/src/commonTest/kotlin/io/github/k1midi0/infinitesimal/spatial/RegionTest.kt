@@ -5,6 +5,7 @@ import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -72,45 +73,98 @@ class RegionTest {
     }
 
     @Test
-    fun aSingleLayerWallAlsoTightensTheFootprint() {
-        // **这一条以前记的是相反的行为。** 老的 18 条是整数方向，能逃过单层障碍的是竖直棱对角
-        // （每步同时走 x 和 z，z 很快离开 0），于是单摆一件家具挡不住射线，俯视图跨度一点不变。
+    fun aSingleLayerWallTightensOnlyPartOfTheWay() {
+        // 这一条量过三次，每次数字都不一样，所以三个都记下来：
         //
-        // 换成球面均匀采样之后，赤道附近那一圈点的 uz 很小，它们**留在 z=0 那一层**，撞上单层的
-        // 墙。所以框现在贴得住了——这正是当初写这条测试时想要而没得到的东西。
+        // | 方向集 | maxX |
+        // |---|---|
+        // | 整数 18 向（6 轴向 + 12 棱对角） | 15（一点没挡住） |
+        // | 全局斐波那契 18 条 | 13（完全挡住） |
+        // | 十个扇区 × 各 2 条 | **14**（挡住一半） |
+        //
+        // 原因很清楚：EAST 扇区在第 1 档只有 **2 条**射线。第一条正好落在 (1,0,0)，撞在墙上；
+        // 第二条仰角 32.7°，从单层的墙上方飞了过去。要挡住它得有贴着地面走的射线，那是密度问题，
+        // 不是算法问题——**跨层的东西（墙、地形）才挡得住全部方向**，探针 ⑦ 里 maxX 是 13。
         val wall = (0..6).map { thing("w$it", 13, it) }
         val w = world(thing("a", 12, 3), *wall.toTypedArray())
         val r = RegionBuilder.of(w, listOf("a"))
-        assertEquals(13, r.maxX, "单层的墙现在该收紧俯视图跨度：$r")
+        assertEquals(14, r.maxX, "单层的墙只收紧到一半：$r")
         assertEquals(9, r.minX, "西边没东西，该走满长度")
     }
 
     @Test
-    fun rayCountAndSpacingFollowTheDensityRule() {
-        // 条数按 k² 长，长度按 k 长——**两件事一起动，每一条射线摊到的球面面积才恒定**。
-        // 这条是这次改动的全部理由：老的 18 条固定，射线一长缝就跟着大（2.5 → 5.0 → 10.0 → 20.0）。
-        assertEquals(18, RegionBuilder.rayCount(1))
-        assertEquals(90, RegionBuilder.rayCount(2))
-        assertEquals(210, RegionBuilder.rayCount(3))
+    fun everySectorIsCountedAndSpacedByTheSameRule() {
+        // 十个扇区的立体角加起来正好是 4π——不重不漏。这是下面所有条数式子的前提。
+        val total = Direction.ALL.sumOf { it.solidAngle }
+        assertTrue(abs(total - 4 * PI) < 1e-9, "十个扇区的立体角之和该是 4π，实际 $total")
+        assertEquals(10, Direction.ALL.size)
 
-        for (k in 1..4) {
-            val dirs = RegionBuilder.directions(k)
-            assertEquals(RegionBuilder.rayCount(k), dirs.size, "k=$k 的条数不对")
-            for ((x, y, z) in dirs) {
-                val len = sqrt(x * x + y * y + z * z)
-                assertTrue(abs(len - 1.0) < 1e-9, "k=$k 里有个不是单位向量：($x, $y, $z) 长度 $len")
+        // 条数按 k² 长。整体抬一档：24 → 92 → 216 条。
+        assertEquals(24, RegionBuilder.rayCount(1))
+        assertEquals(92, RegionBuilder.rayCount(2))
+        assertEquals(216, RegionBuilder.rayCount(3))
+
+        for (d in Direction.ALL) {
+            for (k in 1..3) {
+                val dirs = d.directions(k)
+                assertEquals(d.rayCount(k), dirs.size, "$d 在第 $k 档的条数不对")
+                for ((x, y, z) in dirs) {
+                    val len = sqrt(x * x + y * y + z * z)
+                    assertTrue(abs(len - 1.0) < 1e-9, "$d 第 $k 档里有个不是单位向量：($x, $y, $z) 长度 $len")
+                }
             }
         }
 
-        // 相邻间距 ≈ sqrt(4πR²/N)。**它必须在每一档上都差不多**，否则"保持空间密度"就是空话。
-        val spacing = (1..5).map { k ->
-            val r = RegionBuilder.DEFAULT_RAY.toDouble() * k
-            sqrt(4.0 * PI * r * r / RegionBuilder.rayCount(k))
+        // 每一条射线摊到的球面面积 ≈ 4.71 格²（间距 2.17 格）。**它必须在每一档、每个扇区上都差不多**
+        // ——那正是这次改动的全部目的：老的 18 条固定，射线一长缝就跟着大（2.5 → 5.0 → 10.0 → 20.0）。
+        val spacing = (1..5).flatMap { k ->
+            Direction.ALL.map { d ->
+                val r = RegionBuilder.DEFAULT_RAY.toDouble() * k
+                sqrt(d.solidAngle * r * r / d.rayCount(k))
+            }
         }
         assertTrue(
             spacing.max() / spacing.min() < 1.2,
-            "每一档的密度散得太开了：${spacing.map { "%.2f".format(it) }}",
+            "每一档的密度散得太开了：最小 ${spacing.min()}，最大 ${spacing.max()}",
         )
+    }
+
+    @Test
+    fun sampledDirectionsAgreeWithTheSectorTheyAreNamedAfter() {
+        // **这两件事必须一致。** 模型读到框外那句「在东南 8 格外」，拿「东南」要求看远一档，
+        // 而东南那一档的射线必须真的铺在东南——否则它花了钱、多等一趟，拿回来的还是原来那一片，
+        // 而这件事没有任何地方会报错。
+        assertEquals(Direction.EAST, Direction.of(5, 0, 0))
+        assertEquals(Direction.SOUTHEAST, Direction.of(5, 5, 0))
+        assertEquals(Direction.SOUTH, Direction.of(0, 5, 0))
+        assertEquals(Direction.SOUTHWEST, Direction.of(-5, 5, 0))
+        assertEquals(Direction.WEST, Direction.of(-5, 0, 0))
+        assertEquals(Direction.NORTHWEST, Direction.of(-5, -5, 0))
+        assertEquals(Direction.NORTH, Direction.of(0, -5, 0))
+        assertEquals(Direction.NORTHEAST, Direction.of(5, -5, 0))
+        assertEquals(Direction.UP, Direction.of(0, 0, 5))
+        assertEquals(Direction.DOWN, Direction.of(0, 0, -5))
+
+        for (d in Direction.ALL) {
+            for (k in 1..3) {
+                for ((x, y, z) in d.directions(k)) {
+                    val near = Direction.of(
+                        (x * 1000).roundToInt(),
+                        (y * 1000).roundToInt(),
+                        (z * 1000).roundToInt(),
+                    )
+                    assertEquals(d, near, "$d 第 $k 档采样出一个会被划到 $near 的方向：($x, $y, $z)")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun wideningOneSectorCostsFarLessThanWideningAll() {
+        // 这是"指定方向"存在的理由，所以把它钉住：只抬一个扇区要加的射线，是整体抬一档的零头。
+        val all = RegionBuilder.rayCount(2)
+        val one = RegionBuilder.rayCount(1) - Direction.SOUTHEAST.rayCount(1) + Direction.SOUTHEAST.rayCount(2)
+        assertTrue(one * 3 < all, "只抬东南一档要 $one 条，整体抬一档是 $all 条——便宜得不够明显")
     }
 
     @Test
