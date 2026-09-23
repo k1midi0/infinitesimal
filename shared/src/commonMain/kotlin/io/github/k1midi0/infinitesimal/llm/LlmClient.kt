@@ -89,6 +89,7 @@ class LlmClient(
         messages: List<ChatMessage>,
         tools: List<ToolDefinition>? = null,
         thinking: ThinkingRequest? = null,
+        maxTokens: Int? = null,
     ): Flow<LlmEvent> = flow {
         val config = configuration()
         val missing = config.missingFields()
@@ -124,6 +125,7 @@ class LlmClient(
             reasoningEffort = thinking?.effort,
             // 分层：这一路请求属于哪个系统，它就用哪个缓存池。null 时整项不发。
             userId = config.userId?.userId,
+            maxTokens = maxTokens,
         )
 
         val response = try {

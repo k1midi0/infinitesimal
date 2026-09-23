@@ -135,6 +135,13 @@ data class ChatRequest(
      * `user_id`——平铺在请求体里，与 `thinking` 无关。约束：`[a-zA-Z0-9\-_]+`，最长 512。
      */
     @SerialName("user_id") val userId: String? = null,
+    /**
+     * 输出上限。`null` 表示不设——**而那时端点的默认是思考模式 64K**。
+     *
+     * 这不是省钱用的（只按实际生成计费），是**给延迟设一个上限**：一次判定只该吐出几条工具调用，
+     * 给它 64K 的余地，只会让偶发的长篇大论拖住整轮。
+     */
+    @SerialName("max_tokens") val maxTokens: Int? = null,
 )
 
 /**
