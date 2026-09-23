@@ -56,3 +56,12 @@ kotlin {
 dependencies {
     androidRuntimeClasspath(libs.compose.uiTooling)
 }
+
+// 联机 spike 是按次开启的：它要一个真凭据和一次网络访问，所以密钥文件由命令行传入，既不进仓库
+// 也不进任何配置。不带这个参数时 spike 什么都不做，只打印一行说明。
+tasks.withType<Test>().configureEach {
+    systemProperty(
+        "infinitesimal.liveKeyFile",
+        providers.gradleProperty("infinitesimalLiveKeyFile").getOrElse(""),
+    )
+}
