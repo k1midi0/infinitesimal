@@ -25,6 +25,14 @@ object JudgeTools {
     const val TARGET = "target"
     const val REJECT_TARGETS = "reject_targets"
 
+    /**
+     * **两步共用的一只查询手**：把看得到的那一片朝外扩一圈。
+     *
+     * 它不是"提议改世界"，所以两组工具都带着它。它是这次判定里**唯一一只会让这一轮接着往下走**的
+     * 手——其余的手一被调用，这一轮就收工（见 [Judge.call]）。
+     */
+    const val WIDEN_VIEW = "widen_view"
+
     // ── 第二步：列出后果 ──────────────────────────────────────────────────────────
 
     const val MOVE = "move"
@@ -52,7 +60,14 @@ object JudgeTools {
     private fun int(name: String, description: String) = name to PropertySchema("integer", description)
     private fun text(name: String, description: String) = name to PropertySchema("string", description)
 
-    /** 第一步能用的手：**只有这两只**。 */
+    private val WIDEN = tool(
+        WIDEN_VIEW,
+        "你现在手上这一片范围不够用的时候调它（要看的东西在框外、或者你拿不准两样东西隔多远）。" +
+            "它会朝外扩一圈，扩完你**立刻**会收到一份新的范围，然后接着干你原来的活。" +
+            "**不调就是「现在这些够了」**——因为你也许还想要别的就随手调它，只会白多花一趟，而那一趟里你什么也没做。",
+    )
+
+    /** 第一步能用的手：**只有这几只**。 */
     val TARGETING: List<ToolDefinition> = listOf(
         tool(
             TARGET,
@@ -66,6 +81,7 @@ object JudgeTools {
                 "而**不是**驳回。理由会原样告诉玩家，所以要写成这个世界在说话。",
             text("reason", "一句话，向玩家解释为什么看不出这次动作指着什么"),
         ),
+        WIDEN,
     )
 
     /** 第二步能用的手。 */
@@ -129,5 +145,6 @@ object JudgeTools {
                 "调用 reject 之后就不要再调任何改变世界的工具。",
             text("reason", "一句话，向玩家解释为什么这次动作不成立"),
         ),
+        WIDEN,
     )
 }

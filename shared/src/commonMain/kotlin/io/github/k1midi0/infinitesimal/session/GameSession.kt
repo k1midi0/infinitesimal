@@ -8,7 +8,6 @@ import io.github.k1midi0.infinitesimal.judge.Consequence
 import io.github.k1midi0.infinitesimal.judge.Judge
 import io.github.k1midi0.infinitesimal.judge.JudgeRequest
 import io.github.k1midi0.infinitesimal.judge.Judgment
-import io.github.k1midi0.infinitesimal.judge.Scene
 import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.Renderer
 import io.github.k1midi0.infinitesimal.world.Entity
@@ -191,7 +190,7 @@ class GameSession(
                     actorLabel = "你",
                     intention = intention,
                     selected = picked,
-                    scene = Scene.of(world, PLAYER),
+                    centers = picked,
                 ),
             )
         } catch (t: Throwable) {

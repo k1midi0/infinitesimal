@@ -4,7 +4,6 @@ import io.github.k1midi0.infinitesimal.judge.Consequence
 import io.github.k1midi0.infinitesimal.judge.Judge
 import io.github.k1midi0.infinitesimal.judge.JudgeRequest
 import io.github.k1midi0.infinitesimal.judge.Judgment
-import io.github.k1midi0.infinitesimal.judge.Scene
 import io.github.k1midi0.infinitesimal.judge.Stage
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
@@ -29,6 +28,26 @@ class JudgeProbeSpike {
 
     private val worldFile = "build/spike/judge-world.json"
 
+    /**
+     * 把一条后果写全。**坐标必须打出来。**
+     *
+     * 这一整轮改动的起因就是"模型给的坐标是编的"——油灯从 (12,5) 层1 被挪到 (2,0) 层0，而层降对了、
+     * 绝对值是它自己编的。只打一句 `Move → oil_lamp` 是看不出那件事修没修的。
+     */
+    private fun describe(c: Consequence): String = when (c) {
+        is Consequence.Move -> "Move → ${c.id}  到 (${c.x}, ${c.y}) 层${c.z}  [${c.level}]"
+        is Consequence.Reparent ->
+            "Reparent → ${c.id}  挂到 ${c.parent?.let { "「$it」" } ?: "（什么都不挂）"}  [${c.level}]"
+        is Consequence.SetAttribute -> "SetAttribute → ${c.id}  ${c.key}=${c.value}  [${c.level}]"
+        is Consequence.ChangeAppearance -> "ChangeAppearance → ${c.id}  [${c.level}]"
+        is Consequence.Destroy -> "Destroy → ${c.id}  [${c.level}]"
+        is Consequence.Spawn ->
+            "Spawn → ${c.entity.id}「${c.entity.label}」(${c.entity.x}, ${c.entity.y}) 层${c.entity.z}  [${c.level}]"
+        is Consequence.Replace ->
+            "Replace → ${c.oldId} 变成 ${c.entity.id}「${c.entity.label}」" +
+                "(${c.entity.x}, ${c.entity.y}) 层${c.entity.z}  [${c.level}]"
+    }
+
     @Test
     fun twoStepJudgment() {
         val apiKey = ProbeSupport.keyOrNull()
@@ -44,6 +63,8 @@ class JudgeProbeSpike {
         lateinit var wiped: Judgment
         lateinit var split: Judgment
         lateinit var reached: Judgment
+        lateinit var widened: Judgment
+        var widenedWidenings = 0
 
         runBlocking {
             header()
@@ -57,6 +78,12 @@ class JudgeProbeSpike {
             split = run(judge, world, "我举起腰间那把短柄斧，把这张木桌从中间劈成两半。", selected = listOf("oak_table"))
             // ⑤ 世界内驳回。
             reached = run(judge, world, "我伸手把三条街外那家店里的杯子拿过来。", selected = emptyList())
+            // ⑥ **唯一一个只有 widen_view 能解决的局面**：扫帚在 (16,3)，比默认那一片（x 9..15）
+            //    刚好差一格，所以它只在"框外"那一句里露面——那里有它的名字，没有它的 id。
+            //    模型想报出它，除了调 widen_view 没有第二条路。
+            world.put(Entity("broom", "器具", "靠在墙上的扫帚", 16, 3, 0))
+            widened = run(judge, world, "我拿起靠在墙上那把扫帚。", selected = emptyList())
+            widenedWidenings = judge.viewWidenings
             println("═".repeat(100))
         }
 
@@ -109,6 +136,20 @@ class JudgeProbeSpike {
             "⑤ 驳回理由是给玩家看的世界内措辞，不该出现系统词：${rejected.reason}",
         )
 
+        // ⑥ **不断言模型必须扩。** 它不扩也是一种可观测的结果（说明这一片够用，或者它没抓住）。
+        //    要断言的是那条硬约束：扫帚的 id 只可能出现在扩大之后的清单里，所以模型**若**报出了它，
+        //    就一定扩过；报出来了却没扩过，只能说明 id 是从别处漏出去的——那是个真 bug。
+        if (widened is Judgment.Applied) {
+            val targets = (widened as Judgment.Applied).targets
+            if ("broom" in targets) {
+                assertTrue(widenedWidenings >= 1, "⑥ 报出了扫帚（$targets）却没扩过——这个 id 是从哪儿来的？")
+            } else {
+                println("⑥ 成立但没指到扫帚，对齐到了：$targets")
+            }
+        } else {
+            println("⑥ 没有成立：$widened（这是一次观测，不是失败）")
+        }
+
         println()
         println("【两步的证据】")
         println("  ① 玩家选 [] -> 第一步补成 $filledTargets")
@@ -123,6 +164,7 @@ class JudgeProbeSpike {
         selected: List<String>,
     ): Judgment {
         val mark = kotlin.time.TimeSource.Monotonic.markNow()
+        val requestsBefore = judge.requestCount
         val judgment = judge.judgeAndCommit(
             world,
             JudgeRequest(
@@ -130,7 +172,7 @@ class JudgeProbeSpike {
                 actorLabel = "你",
                 intention = intention,
                 selected = selected,
-                scene = Scene.of(world, "player"),
+                centers = selected,
             ),
         )
         val elapsed = mark.elapsedNow().inWholeMilliseconds
@@ -138,15 +180,16 @@ class JudgeProbeSpike {
         println()
         println("▸ 动作：$intention")
         println("  玩家选的：${if (selected.isEmpty()) "（什么都没选）" else selected.joinToString("、")}")
+        println(
+            "  请求 ${judge.requestCount - requestsBefore} 次｜看大 ${judge.viewWidenings} 次｜${elapsed} ms",
+        )
         when (judgment) {
             is Judgment.Applied -> {
                 val changed = judgment.targets != selected
                 println("  第一步对齐到：${judgment.targets.ifEmpty { listOf("（不作用于具体的东西）") }.joinToString("、")}"
                     + if (changed) "   ← **与玩家选的不同**" else "")
                 println("  ✅ 落库 ${judgment.consequences.size} 条后果（尝试 ${judgment.attempts} 次）")
-                judgment.consequences.forEach {
-                    println("     · ${it::class.simpleName} → ${it.targetId}  [${it.level}]")
-                }
+                judgment.consequences.forEach { println("     · ${describe(it)}") }
                 if (judgment.affected.isNotEmpty()) println("     受影响：${judgment.affected}")
             }
 

@@ -5,9 +5,11 @@ import io.github.k1midi0.infinitesimal.config.ReasoningEffort
 import io.github.k1midi0.infinitesimal.config.SystemId
 import io.github.k1midi0.infinitesimal.config.ThinkingMode
 import io.github.k1midi0.infinitesimal.llm.ChatMessage
+import io.github.k1midi0.infinitesimal.llm.FunctionCall
 import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.llm.LlmEvent
 import io.github.k1midi0.infinitesimal.llm.ThinkingRequest
+import io.github.k1midi0.infinitesimal.llm.ToolCall
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
 import kotlinx.coroutines.flow.toList
@@ -29,8 +31,16 @@ data class JudgeRequest(
     val actorLabel: String,
     val intention: String,
     val selected: List<String>,
-    /** 地点背景 + 同一地点里有什么。由 [Scene] 拼好——判定不自己去猜世界长什么样。 */
-    val scene: String,
+    /**
+     * 这次动作涉及的东西。**空间框就是以「发起者 + 这些」为中心算出来的**（见 [ViewBudget]）。
+     *
+     * 这里要的是 id，不是拼好的一段文字：这一片空间有**两个投影**——给模型看的文字，和给代码用的
+     * 几何。让调用方拼文字，代码手里就只剩文字了，而"模型的坐标是编的"这件事正是那样发生的。
+     *
+     * 两步用的是**同一批 centers**（玩家勾的那些），不是第一步对齐出来的结果。理由是缓存：
+     * [sharedPrefix] 必须两步逐字相同（§7.5），把随步骤变的东西放进去，第二步的缓存就全灭。
+     */
+    val centers: List<String>,
 )
 
 /** 判定发生在哪一步。驳回是"选错了"还是"做不成"，玩家能做的事完全不同。 */
@@ -121,19 +131,30 @@ class Judge(
     var requestCount = 0
         private set
 
+    /**
+     * 最近一次判定里，模型一共要求"看大一点"几次。
+     *
+     * **没有上限的东西必须能被观测**，否则"它会不会一直扩下去"永远是个猜。这也是为什么它是**两步
+     * 共享的那一个数字**，而不是每步各记一个。
+     */
+    var viewWidenings = 0
+        private set
+
     // ── 第一步：对齐指向对象 ────────────────────────────────────────────────────────
 
     suspend fun alignTargets(
         world: World,
         request: JudgeRequest,
         retryNotes: List<String> = emptyList(),
+        view: ViewBudget = ViewBudget(world, request.actorId, request.centers),
     ): TargetAlignment {
         val calls = call(
             tools = JudgeTools.TARGETING,
-            user = targetingPrompt(request, retryNotes),
+            user = targetingPrompt(request, retryNotes, view),
             // 快速档：对齐不需要推理。**只有这一档 temperature 才生效**，而这里也不需要温度。
             thinking = ThinkingRequest.of(ThinkingMode.Never, ReasoningEffort.LOW),
             maxTokens = 512,
+            view = view,
         )
         if (calls.isEmpty()) return TargetAlignment.Malformed(listOf("第一步没有调用任何工具"))
 
@@ -177,14 +198,16 @@ class Judge(
         request: JudgeRequest,
         targets: List<String>,
         retryNotes: List<String> = emptyList(),
+        view: ViewBudget = ViewBudget(world, request.actorId, request.centers),
     ): Verdict {
         val calls = call(
             tools = JudgeTools.EFFECTS,
-            user = effectPrompt(request, targets, retryNotes),
+            user = effectPrompt(request, targets, retryNotes, view),
             // 思考档：整套设计把"物理推理"整个交给了模型（附录 A.4——现实无法用代码模拟），
             // 这里就是那件事发生的地方，也是全系统里最该让它想清楚的一处。
             thinking = ThinkingRequest.of(ThinkingMode.Always, ReasoningEffort.HIGH),
             maxTokens = 2_000,
+            view = view,
         )
         if (calls.isEmpty()) return Verdict.Empty("第二步没有调用任何工具")
 
@@ -221,11 +244,22 @@ class Judge(
      * 宁可这次动作什么都不发生，也不要写进去一半。两步各自最多 [maxAttempts] 次模型调用。
      */
     suspend fun judgeAndCommit(world: World, request: JudgeRequest): Judgment {
+        // **一次判定一个预算，两步共用。** 第一步扩过之后，第二步拿到的是已经大了的那个框。
+        val view = ViewBudget(world, request.actorId, request.centers)
+        return try {
+            runJudgment(world, request, view)
+        } finally {
+            // 提前返回的几条路也要记上——驳回的那一次同样扩过，那也是成本。
+            viewWidenings = view.widenings
+        }
+    }
+
+    private suspend fun runJudgment(world: World, request: JudgeRequest, view: ViewBudget): Judgment {
         // 第一步
         var alignProblems = listOf<String>()
         var aligned: List<String>? = null
         for (attempt in 1..maxAttempts) {
-            when (val alignment = alignTargets(world, request, alignProblems)) {
+            when (val alignment = alignTargets(world, request, alignProblems, view)) {
                 is TargetAlignment.Rejected ->
                     return Judgment.RejectedWorld(alignment.reason, Stage.ALIGN, attempt)
 
@@ -243,7 +277,7 @@ class Judge(
         // 第二步
         val effectProblems = mutableListOf<String>()
         for (attempt in 1..maxAttempts) {
-            when (val verdict = proposeEffects(world, request, targets, effectProblems.toList())) {
+            when (val verdict = proposeEffects(world, request, targets, effectProblems.toList(), view)) {
                 is Verdict.Rejected ->
                     return Judgment.RejectedWorld(verdict.reason, Stage.EFFECT, attempt)
 
@@ -272,15 +306,40 @@ class Judge(
         user: String,
         thinking: ThinkingRequest,
         maxTokens: Int,
+        view: ViewBudget,
     ): List<RawCall> {
-        requestCount++
-        val events = client.streamChat(
-            messages = listOf(ChatMessage.system(SYSTEM), ChatMessage.user(user)),
-            tools = tools,
-            thinking = thinking,
-            maxTokens = maxTokens,
-        ).toList()
-        return collectCalls(events)
+        val messages = mutableListOf(ChatMessage.system(SYSTEM), ChatMessage.user(user))
+        val proposals = mutableListOf<RawCall>()
+        while (true) {
+            requestCount++
+            val turn = Turn.of(
+                client.streamChat(
+                    messages = messages,
+                    tools = tools,
+                    thinking = thinking,
+                    maxTokens = maxTokens,
+                ).toList(),
+            )
+            proposals += turn.calls.filter { it.name != JudgeTools.WIDEN_VIEW }
+            if (turn.calls.none { it.name == JudgeTools.WIDEN_VIEW }) return proposals
+
+            // 这一轮模型只是想看得更远。把它**如实**记回历史再接着问——有两样不能省：
+            // assistant 那条要带 `reasoning_content`（带 tools 的请求里它必须在，§1.2.1），
+            // 而每一个 tool_call_id 都要有一条 tool 结果，端点是这么要求配对的。
+            messages += turn.asAssistantMessage()
+            for (c in turn.calls) {
+                messages += ChatMessage.toolResult(
+                    c.id,
+                    if (c.name == JudgeTools.WIDEN_VIEW) {
+                        view.widen()
+                    } else {
+                        // 同一轮里既报了东西又要看更大范围。**不能把这个报的东西丢掉**——它是模型
+                        // 已经做出的判断，而这一轮之后它没有理由再报一次。
+                        "（记下了。你这一轮还要看更大的范围，所以它先搁着；看完新的范围再一起给。）"
+                    },
+                )
+            }
+        }
     }
 
     /**
@@ -289,9 +348,9 @@ class Judge(
      * 它是缓存唯一可能命中的地方：两步的 system 相同、情境相同、发起者与动作相同，之后才分岔。
      * 所以**任何会变的东西都不许放进这里**——放进来一次，第二步的缓存就全灭（§7.5 是同一条理由）。
      */
-    private fun sharedPrefix(request: JudgeRequest): String = buildString {
-        appendLine("【情境】")
-        appendLine(request.scene)
+    private fun sharedPrefix(request: JudgeRequest, view: ViewBudget): String = buildString {
+        appendLine("【你周围这一片】")
+        appendLine(view.text())
         appendLine()
         appendLine("【动作发起者】")
         appendLine("id=${request.actorId}，名字=${request.actorLabel}")
@@ -300,8 +359,8 @@ class Judge(
         appendLine(request.intention)
     }
 
-    private fun targetingPrompt(request: JudgeRequest, retryNotes: List<String>): String = buildString {
-        append(sharedPrefix(request))
+    private fun targetingPrompt(request: JudgeRequest, retryNotes: List<String>, view: ViewBudget): String = buildString {
+        append(sharedPrefix(request, view))
         appendLine()
         appendLine("【你这一步只做一件事：对齐指向对象】")
         appendLine("上面是发起者自己在界面上选的东西：")
@@ -322,9 +381,14 @@ class Judge(
         appendRetryNotes(retryNotes)
     }
 
-    private fun effectPrompt(request: JudgeRequest, targets: List<String>, retryNotes: List<String>): String =
+    private fun effectPrompt(
+        request: JudgeRequest,
+        targets: List<String>,
+        retryNotes: List<String>,
+        view: ViewBudget,
+    ): String =
         buildString {
-            append(sharedPrefix(request))
+            append(sharedPrefix(request, view))
             appendLine()
             appendLine("【这次动作作用在这些东西上】")
             if (targets.isEmpty()) {
@@ -348,22 +412,59 @@ class Judge(
         notes.forEach { appendLine("- $it") }
     }
 
-    private class RawCall(val name: String, val arguments: String)
+    private class RawCall(val id: String, val name: String, val arguments: String)
 
-    /** 按 index 把流式的工具调用片段拼起来。 */
-    private fun collectCalls(events: List<LlmEvent>): List<RawCall> {
-        val names = mutableMapOf<Int, String>()
-        val arguments = mutableMapOf<Int, StringBuilder>()
-        for (event in events) {
-            when (event) {
-                is LlmEvent.ToolCallStarted -> names[event.index] = event.name
-                is LlmEvent.ToolCallArguments ->
-                    arguments.getOrPut(event.index) { StringBuilder() }.append(event.fragment)
-                else -> Unit
+    /**
+     * 一轮流式响应拼起来的样子。
+     *
+     * 与原先那个只收工具调用的版本相比，多留了两样，而这两样都是硬的：**这条 assistant 消息的思考
+     * 内容**，和**每个工具调用的 id**。要让这一轮接着往下走（`widen_view` 是唯一那种情况），端点
+     * 要求每条 assistant 都带着 `reasoning_content`，而每条 tool 结果都要对上 `tool_call_id`——
+     * 只收 name 与 arguments 是做不了这件事的。
+     */
+    private class Turn(val content: String, val reasoning: String, val calls: List<RawCall>) {
+
+        fun asAssistantMessage() = ChatMessage.assistant(
+            content = content.ifEmpty { null },
+            // 没有思考时给空串、不给 null：带 tools 的请求里这个字段必须在（§1.2.1）。
+            reasoningContent = reasoning,
+            toolCalls = calls.map { c ->
+                ToolCall(id = c.id, function = FunctionCall(c.name, c.arguments.ifEmpty { "{}" }))
+            },
+        )
+
+        companion object {
+            /** 按 index 把流式的工具调用片段拼起来。 */
+            fun of(events: List<LlmEvent>): Turn {
+                val content = StringBuilder()
+                val reasoning = StringBuilder()
+                val ids = mutableMapOf<Int, String>()
+                val names = mutableMapOf<Int, String>()
+                val arguments = mutableMapOf<Int, StringBuilder>()
+                for (event in events) {
+                    when (event) {
+                        is LlmEvent.Content -> content.append(event.text)
+                        is LlmEvent.Reasoning -> reasoning.append(event.text)
+                        is LlmEvent.ToolCallStarted -> {
+                            ids[event.index] = event.id
+                            names[event.index] = event.name
+                        }
+
+                        is LlmEvent.ToolCallArguments ->
+                            arguments.getOrPut(event.index) { StringBuilder() }.append(event.fragment)
+
+                        is LlmEvent.Finished -> Unit
+                    }
+                }
+                val calls = names.keys.sorted().map { index ->
+                    RawCall(
+                        ids[index].orEmpty(),
+                        names.getValue(index),
+                        arguments[index]?.toString().orEmpty(),
+                    )
+                }
+                return Turn(content.toString(), reasoning.toString(), calls)
             }
-        }
-        return names.keys.sorted().map { index ->
-            RawCall(names.getValue(index), arguments[index]?.toString().orEmpty())
         }
     }
 
@@ -444,63 +545,6 @@ class Judge(
 
             你不描写、不叙事、不对话——那些是别人的事。后果只能通过工具给出，**你没有直接修改世界的能力**。
         """.trimIndent()
-    }
-}
-
-/**
- * 给模型的地图视图（附录 A.2 的"投影 B"）。
- *
- * 它只给**同一个地点里的东西**与**地点背景**——不是整张地图。而且它**不给坐标**：实测里把坐标发给
- * 渲染器，它就写位置关系（§7.6）。
- *
- * 但它**必须标出归属**：判定看不出"桌上的东西"是哪几件，就会漏（第一版只处理了酒杯，油灯还留在
- * 桌上）。这与 §7.6 不冲突——那条禁的是**渲染器的输出**里出现位置关系，不是判定看不到归属。
- */
-object Scene {
-
-    fun of(world: World, actorId: String, extraNote: String? = null): String = buildString {
-        val background = world.backgroundChainOf(actorId)
-        if (background.isNotEmpty()) {
-            appendLine("【所在】")
-            background.forEach { appendLine(it) }
-        }
-
-        val root = rootOf(world, actorId)
-        val here = world.all().filter { rootOf(world, it.id) == root }
-        appendLine()
-        appendLine("【这里有什么】")
-        here.forEach { appendLine(describe(world, it)) }
-
-        if (extraNote != null) {
-            appendLine()
-            appendLine(extraNote)
-        }
-    }.trimEnd()
-
-    private fun describe(world: World, entity: Entity): String = buildString {
-        append("- id=${entity.id}｜${entity.label}（${entity.kind}）")
-        entity.parent?.let { parentId ->
-            world.byId(parentId)?.let { parent -> append("｜在「${parent.label}」上") }
-        }
-        if (entity.attributes.isNotEmpty()) {
-            append("｜")
-            append(entity.attributes.entries.joinToString("，") { "${it.key}=${it.value}" })
-        }
-        if (entity.sentences.isNotEmpty()) {
-            appendLine()
-            append("  它看上去是：${entity.text()}")
-        }
-    }
-
-    /** 沿 parent 链走到根。同一棵树下就算"在同一个地点"。 */
-    private fun rootOf(world: World, id: String): String {
-        var current = world.byId(id)
-        var last = id
-        while (current?.parent != null) {
-            last = current.parent!!
-            current = world.byId(last)
-        }
-        return last
     }
 }
 
