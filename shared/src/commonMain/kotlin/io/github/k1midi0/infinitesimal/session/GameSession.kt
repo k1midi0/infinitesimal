@@ -8,6 +8,7 @@ import io.github.k1midi0.infinitesimal.judge.Consequence
 import io.github.k1midi0.infinitesimal.judge.Judge
 import io.github.k1midi0.infinitesimal.judge.JudgeRequest
 import io.github.k1midi0.infinitesimal.judge.Judgment
+import io.github.k1midi0.infinitesimal.judge.TargetAlignment
 import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.Renderer
 import io.github.k1midi0.infinitesimal.world.Entity
@@ -24,6 +25,22 @@ const val PLAYER = "player"
 data class LogLine(val kind: Kind, val text: String) {
     enum class Kind { SAY, ACT, OK, REJECT, PROBLEM, NOTE, ERROR }
 }
+
+/**
+ * 「对齐完了、还没算后果」这一小段中间状态（§4.7）。
+ *
+ * 它攥着 [Judge.Turn]——那里面是这次动作的扩大预算。**预算是这一次动作的属性，不是某一步的
+ * 属性**：第一步扩过之后，玩家确认完再跑第二步时，拿到的是已经大了的那个框（§4.6）。
+ */
+class PendingAlignment internal constructor(
+    /** 玩家当初那句话。**「改动作」时界面可以拿它回填输入框。** */
+    val intention: String,
+    /** 玩家当初勾的那些。 */
+    val picked: List<String>,
+    /** 判定对齐出来的那些。**与 [picked] 不同，这是它存在的理由。** */
+    val targets: List<String>,
+    internal val turn: Judge.Turn,
+)
 
 /**
  * 一轮游戏的全部状态。
@@ -75,6 +92,15 @@ class GameSession(
         private set
 
     var status by mutableStateOf("")
+        private set
+
+    /**
+     * 第一步对齐完了、在等玩家确认的那一次（§4.7）。**不是 null 就是有东西在等。**
+     *
+     * 它存在的理由是：世界**一个字都还没动**。判定第一步只会说"这次动作指向哪些东西"，改世界是
+     * 第二步的事——所以停在这里是免费的，没有要回滚的东西。
+     */
+    var pending by mutableStateOf<PendingAlignment?>(null)
         private set
 
     val focusedEntity: Entity? get() = focused?.let { world.byId(it) }
@@ -140,6 +166,40 @@ class GameSession(
         run(scope, "跑一轮…") { runTurn(said, acted) }
     }
 
+    // ── 纠正预览的两个按钮（§4.7） ─────────────────────────────────────────────────
+
+    /**
+     * 「应用」：接受判定纠正后的指向，接着跑第二步。
+     *
+     * **这是玩家唯一说"对，就是这些"的地方**，而它之后世界才会动。
+     */
+    fun applyPending(scope: CoroutineScope) {
+        val p = pending ?: return
+        run(scope, "算后果…") {
+            pending = null
+            runEffects(p.turn, p.targets)
+        }
+    }
+
+    /** 挂起版：给 spike 直接 await 用（否则测试只能 sleep 猜）。 */
+    suspend fun applyPendingNow() {
+        val p = pending ?: return
+        pending = null
+        runEffects(p.turn, p.targets)
+    }
+
+    /**
+     * 「改动作」：把这一次丢掉。
+     *
+     * **没有要回滚的东西**——第一步不改世界（§4.6），所以停下来的这段是免费的。
+     */
+    fun dismissPending() {
+        if (pending == null) return
+        pending = null
+        say(LogLine.Kind.NOTE, "（这一次丢掉了；世界一个字都没动过）")
+        selection = emptySet()
+    }
+
     /**
      * 把一次动作放到协程里，并保证三件事：**同一时刻只有一个动作**、界面上的"跑着"一定会被清掉、
      * 世界改完之后一定推一份新快照给界面。
@@ -181,18 +241,72 @@ class GameSession(
         )
 
         status = "判定中…"
+        val turn = judge.beginTurn(
+            world,
+            JudgeRequest(
+                actorId = PLAYER,
+                actorLabel = "你",
+                intention = intention,
+                selected = picked,
+                centers = picked,
+            ),
+        )
+        val alignment = try {
+            // **只跑第一步。** 它不改世界，所以走到哪里停下都不需要回滚（§4.7）。
+            turn.align()
+        } catch (t: Throwable) {
+            say(LogLine.Kind.ERROR, "判定没跑起来：${t.message}")
+            return
+        }
+
+        when (alignment) {
+            is TargetAlignment.Aligned ->
+                if (alignment.targets.toSet() != picked.toSet()) {
+                    pending = PendingAlignment(intention, picked, alignment.targets, turn)
+                    say(
+                        LogLine.Kind.NOTE,
+                        "对齐到：${alignment.targets.joinToString("、") { name(it) }}" +
+                            "　← 和你勾的不一样（世界还没动）",
+                    )
+                    status = ""
+                    return
+                } else {
+                    runEffects(turn, alignment.targets)
+                }
+
+            is TargetAlignment.Rejected -> {
+                // 这是给玩家看的那一层：**不出现任何系统词**。
+                say(LogLine.Kind.REJECT, "「${alignment.reason}」")
+                say(
+                    LogLine.Kind.NOTE,
+                    "（在第一步拦下的：**你指向的东西对不上**——改一下勾选就能重来；世界没动）",
+                )
+            }
+
+            is TargetAlignment.Malformed -> {
+                say(LogLine.Kind.PROBLEM, "协议内失败——按设计不给玩家看，这里显示是为了调试：")
+                alignment.problems.forEach { say(LogLine.Kind.NOTE, "   · $it") }
+                say(LogLine.Kind.NOTE, "   （这一次动作当作没发生；世界没动）")
+            }
+        }
+        selection = emptySet()
+    }
+
+    /**
+     * 第二步：列后果、校验、提交。**这是唯一改世界的地方。**
+     *
+     * 两个入口共用它：对齐结果与勾选一致时直接跑，玩家点「应用」时跑（§4.7）。所以它只认
+     * [targets]，不关心那个集合是模型自己给的还是玩家确认过的。
+     */
+    private suspend fun runEffects(turn: Judge.Turn, targets: List<String>) {
+        // 同一个理由：标签要在落库之前抓。
+        val labels = world.all().associate { it.id to it.label }
+        fun name(id: String) = labels[id] ?: world.byId(id)?.label ?: id
+
+        status = "算后果…"
         val mark = TimeSource.Monotonic.markNow()
         val judgment = try {
-            judge.judgeAndCommit(
-                world,
-                JudgeRequest(
-                    actorId = PLAYER,
-                    actorLabel = "你",
-                    intention = intention,
-                    selected = picked,
-                    centers = picked,
-                ),
-            )
+            turn.finish(targets)
         } catch (t: Throwable) {
             say(LogLine.Kind.ERROR, "判定没跑起来：${t.message}")
             return
@@ -201,16 +315,8 @@ class GameSession(
 
         when (judgment) {
             is Judgment.Applied -> {
-                // 对齐结果**必须说出来**。玩家勾的和实际作用的不一样时，界面若闭口不谈，玩家会
-                // 以为是自己的动作没生效。§4.6 的两步就是为这件事存在的。
-                if (judgment.targets != picked) {
-                    val aligned = judgment.targets
-                    say(
-                        LogLine.Kind.NOTE,
-                        if (aligned.isEmpty()) "对齐到：（不作用于具体的东西）"
-                        else "对齐到：${aligned.joinToString("、") { name(it) }}   ← 和你勾的不一样",
-                    )
-                }
+                // **这里不再说「对齐到」**：两条入口都已经说过了——一致时根本没什么可说，不一致时
+                // 那句「对齐到：…　← 和你勾的不一样（世界还没动）」在预览那一步就写进日志了。
                 say(
                     LogLine.Kind.OK,
                     "成立——${judgment.consequences.size} 条后果，尝试 ${judgment.attempts} 次，${elapsed} ms",

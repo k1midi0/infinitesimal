@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -86,6 +87,19 @@ fun GameScreen(session: GameSession, modifier: Modifier = Modifier) {
                 LogPane(session, Modifier.weight(1.2f).fillMaxHeight())
             }
             Spacer(Modifier.height(8.dp))
+            // §4.7 的纠正预览。**它只在第一步说"你要动的不是这些"时出现**——那时世界还一个字都
+            // 没动，所以关掉它是免费的。
+            session.pending?.let { p ->
+                PendingPanel(
+                    session = session,
+                    onApply = { session.applyPending(scope) },
+                    onRewrite = {
+                        acted = p.intention
+                        session.dismissPending()
+                    },
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             InputBar(
                 said = said,
                 acted = acted,
@@ -181,6 +195,10 @@ private fun MapPane(session: GameSession, modifier: Modifier) {
             val satelliteColor = MaterialTheme.colorScheme.tertiary
             val picked = session.selection
             val focusedId = session.focused
+            // 判定纠正后要标出来的那些（§4.7）。**地图上会发光**——玩家一眼看到"它以为我要动的是
+            // 那个"，而这一步世界还没动。
+            val pendingTargets = session.pending?.targets?.toSet().orEmpty()
+            val pendingGlow = MaterialTheme.colorScheme.tertiary
 
             Canvas(Modifier.fillMaxSize()) {
                 for (i in 0..spanX) {
@@ -193,6 +211,10 @@ private fun MapPane(session: GameSession, modifier: Modifier) {
                 }
                 ground.forEach { e ->
                     val p = at(e.x, e.y)
+                    if (e.id in pendingTargets) {
+                        drawCircle(pendingGlow.copy(alpha = 0.20f), 22f, p)
+                        drawCircle(pendingGlow, 14f, p, alpha = 0.9f, style = Stroke(width = 2.5f))
+                    }
                     if (e.id == focusedId) drawCircle(groundColor.copy(alpha = 0.22f), 17f, p)
                     drawCircle(if (e.id in picked) groundColor else groundColor.copy(alpha = 0.45f), 9f, p)
                 }
@@ -206,6 +228,10 @@ private fun MapPane(session: GameSession, modifier: Modifier) {
                             (kotlin.math.cos(angle) * cell * 0.42).toFloat(),
                             (kotlin.math.sin(angle) * cell * 0.42).toFloat(),
                         )
+                        if (e.id in pendingTargets) {
+                            drawCircle(pendingGlow.copy(alpha = 0.20f), 17f, p)
+                            drawCircle(pendingGlow, 10f, p, alpha = 0.9f, style = Stroke(width = 2f))
+                        }
                         if (e.id == focusedId) drawCircle(satelliteColor.copy(alpha = 0.22f), 13f, p)
                         drawCircle(if (e.id in picked) satelliteColor else satelliteColor.copy(alpha = 0.5f), 6f, p)
                     }
@@ -422,6 +448,47 @@ private fun LogRow(line: LogLine) {
             color = color,
             modifier = Modifier.weight(1f),
         )
+    }
+}
+
+// ── 纠正预览（§4.7） ────────────────────────────────────────────────────────────────
+
+/**
+ * 「判定认为你要动的是这些，对吗？」
+ *
+ * 它出现的时候**世界一个字都还没动**——第一步只对齐、不改世界（§4.6），所以两个按钮都不需要
+ * 回滚：应用就是接着跑第二步，改动作就是把这一次丢掉。
+ */
+@Composable
+private fun PendingPanel(session: GameSession, onApply: () -> Unit, onRewrite: () -> Unit) {
+    val p = session.pending ?: return
+    val glow = MaterialTheme.colorScheme.tertiary
+    Surface(
+        color = glow.copy(alpha = 0.12f),
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                buildString {
+                    append("判定认为这次动作作用在：")
+                    append(
+                        if (p.targets.isEmpty()) "（不作用于具体的东西）"
+                        else p.targets.joinToString("、") { session.world.byId(it)?.label ?: it },
+                    )
+                    append("　——和你勾的不一样。世界还没动。")
+                },
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(onClick = onApply, enabled = !session.busy) { Text("应用") }
+            // 「改动作」把原话填回输入框：多数时候玩家要改的只是勾选，话还是同一句。
+            TextButton(onClick = onRewrite, enabled = !session.busy) { Text("改动作") }
+        }
     }
 }
 

@@ -258,7 +258,7 @@ class Judge(
         // **一次判定一个预算，两步共用。** 第一步扩过之后，第二步拿到的是已经大了的那个框。
         val view = ViewBudget(world, request.actorId, request.centers)
         return try {
-            runJudgment(world, request, view)
+            runJudgmentOn(Turn(world, request, view))
         } finally {
             // 提前返回的几条路也要记上——驳回的那一次同样扩过，那也是成本。
             viewWidenings = view.widenings
@@ -266,50 +266,88 @@ class Judge(
         }
     }
 
-    private suspend fun runJudgment(world: World, request: JudgeRequest, view: ViewBudget): Judgment {
-        // 第一步
-        var alignProblems = listOf<String>()
-        var aligned: List<String>? = null
-        for (attempt in 1..maxAttempts) {
-            when (val alignment = alignTargets(world, request, alignProblems, view)) {
-                is TargetAlignment.Rejected ->
-                    return Judgment.RejectedWorld(alignment.reason, Stage.ALIGN, attempt)
+    /**
+     * 开一次判定，**第一步之后可以停下来**（§4.7 纠正预览）。
+     *
+     * 停下来这一段时间里 [Turn] 一直活着，因为它攥着那个 `ViewBudget`——**扩大的预算是一次动作的
+     * 属性，不是某一步的属性**：第一步扩过之后，玩家确认完再跑第二步时，拿到的是已经大了的那个框。
+     *
+     * 一次性的那条路（[judgeAndCommit]）与它共用同一份实现，所以"停了再走"不会长出一条只在预览
+     * 那条路上才有的分叉。
+     */
+    fun beginTurn(world: World, request: JudgeRequest): Turn =
+        Turn(world, request, ViewBudget(world, request.actorId, request.centers))
 
-                is TargetAlignment.Malformed -> alignProblems = alignment.problems
+    /** 一次判定的两段。每一步各自最多 [maxAttempts] 次模型调用。 */
+    inner class Turn internal constructor(
+        private val world: World,
+        private val request: JudgeRequest,
+        private val view: ViewBudget,
+    ) {
+        /** 第一步用了几次调用。`0` 表示还没跑过。 */
+        var alignAttempts: Int = 0
+            private set
 
-                is TargetAlignment.Aligned -> {
-                    aligned = alignment.targets
-                    break
+        /**
+         * 第一步：对齐指向对象。
+         *
+         * 返回 [TargetAlignment.Malformed] 表示**重试用尽**（不是"这一次格式不对"）——模型修不好
+         * 的那种失败，再问下去只是白花钱。
+         */
+        suspend fun align(): TargetAlignment {
+            var problems = listOf<String>()
+            for (attempt in 1..maxAttempts) {
+                alignAttempts = attempt
+                when (val alignment = alignTargets(world, request, problems, view)) {
+                    is TargetAlignment.Aligned, is TargetAlignment.Rejected -> return alignment
+                    is TargetAlignment.Malformed -> problems = alignment.problems
                 }
             }
+            return TargetAlignment.Malformed(listOf("对齐指向对象失败") + problems)
         }
-        val targets = aligned
-            ?: return Judgment.FailedProtocol(listOf("对齐指向对象失败") + alignProblems, maxAttempts)
 
-        // 第二步
-        val effectProblems = mutableListOf<String>()
-        for (attempt in 1..maxAttempts) {
-            when (val verdict = proposeEffects(world, request, targets, effectProblems.toList(), view)) {
-                is Verdict.Rejected ->
-                    return Judgment.RejectedWorld(verdict.reason, Stage.EFFECT, attempt)
+        /**
+         * 第二步：列后果、校验、提交。
+         *
+         * [targets] 由调用方给，而不是从 [align] 记下来——因为**玩家可以在预览那一步改它**
+         * （§4.7）。这里要的正是"最后确认过的那个集合"。
+         */
+        suspend fun finish(targets: List<String>): Judgment {
+            val problems = mutableListOf<String>()
+            for (attempt in 1..maxAttempts) {
+                when (val verdict = proposeEffects(world, request, targets, problems.toList(), view)) {
+                    is Verdict.Rejected ->
+                        return Judgment.RejectedWorld(verdict.reason, Stage.EFFECT, attempt)
 
-                is Verdict.Empty -> effectProblems += "模型没有提议任何后果，也没有驳回（${verdict.note}）"
+                    is Verdict.Empty -> problems += "模型没有提议任何后果，也没有驳回（${verdict.note}）"
 
-                is Verdict.Malformed -> effectProblems += verdict.problems
+                    is Verdict.Malformed -> problems += verdict.problems
 
-                is Verdict.Proposed -> when (
-                    val result = Committer.apply(world, verdict.consequences, verdict.affected)
-                ) {
-                    is Committer.Applied ->
-                        return Judgment.Applied(targets, result.consequences, result.affected, attempt)
+                    is Verdict.Proposed -> when (
+                        val result = Committer.apply(world, verdict.consequences, verdict.affected)
+                    ) {
+                        is Committer.Applied ->
+                            return Judgment.Applied(targets, result.consequences, result.affected, attempt)
 
-                    is Committer.Rejected -> effectProblems += result.problems
+                        is Committer.Rejected -> problems += result.problems
+                    }
                 }
             }
+            return Judgment.FailedProtocol(problems.toList(), maxAttempts)
         }
-
-        return Judgment.FailedProtocol(effectProblems.toList(), maxAttempts)
     }
+
+    private suspend fun runJudgmentOn(turn: Turn): Judgment = when (val alignment = turn.align()) {
+        is TargetAlignment.Rejected ->
+            Judgment.RejectedWorld(alignment.reason, Stage.ALIGN, turn.alignAttempts)
+
+        is TargetAlignment.Malformed -> Judgment.FailedProtocol(alignment.problems, maxAttempts)
+
+        is TargetAlignment.Aligned -> turn.finish(alignment.targets)
+    }
+
+    private suspend fun runJudgment(world: World, request: JudgeRequest, view: ViewBudget): Judgment =
+        runJudgmentOn(Turn(world, request, view))
 
     // ── 请求构造 ───────────────────────────────────────────────────────────────────
 
@@ -324,7 +362,7 @@ class Judge(
         val proposals = mutableListOf<RawCall>()
         while (true) {
             requestCount++
-            val turn = Turn.of(
+            val turn = RawTurn.of(
                 client.streamChat(
                     messages = messages,
                     tools = tools,
@@ -367,6 +405,10 @@ class Judge(
      */
     private fun sharedPrefix(world: World, request: JudgeRequest, view: ViewBudget): String = buildString {
         appendLine("【你周围这一片】")
+        // **这句是给「驳回理由不撒谎」那条硬规则垫底的。** 不说，模型会把「这一片里没有」说成
+        // 「没有」——而它手里真的只有这一片（§14.12 那次量出来的就是这个）。框外有什么仍然不给：
+        // 那会诱它拿手边同类顶替（§14.13）。
+        appendLine("下面这一段**只是发起者身边的一小片，不是整个世界**——这一片里没有的东西，不等于世上没有。")
         appendLine(view.text())
         appendLine()
         appendLine("【动作发起者】")
@@ -471,7 +513,7 @@ class Judge(
      * 要求每条 assistant 都带着 `reasoning_content`，而每条 tool 结果都要对上 `tool_call_id`——
      * 只收 name 与 arguments 是做不了这件事的。
      */
-    private class Turn(val content: String, val reasoning: String, val calls: List<RawCall>) {
+    private class RawTurn(val content: String, val reasoning: String, val calls: List<RawCall>) {
 
         fun asAssistantMessage() = ChatMessage.assistant(
             content = content.ifEmpty { null },
@@ -484,7 +526,7 @@ class Judge(
 
         companion object {
             /** 按 index 把流式的工具调用片段拼起来。 */
-            fun of(events: List<LlmEvent>): Turn {
+            fun of(events: List<LlmEvent>): RawTurn {
                 val content = StringBuilder()
                 val reasoning = StringBuilder()
                 val ids = mutableMapOf<Int, String>()
@@ -512,7 +554,7 @@ class Judge(
                         arguments[index]?.toString().orEmpty(),
                     )
                 }
-                return Turn(content.toString(), reasoning.toString(), calls)
+                return RawTurn(content.toString(), reasoning.toString(), calls)
             }
         }
     }
