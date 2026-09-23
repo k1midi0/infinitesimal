@@ -202,46 +202,6 @@ class JudgeWidenProbe {
         println("═".repeat(118))
     }
 
-    /** 与世界其余探针同一份种子，好让读数能横向比。 */
-    private fun seedWorld(): List<Entity> = listOf(
-        Entity(
-            id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 10, y = 0, z = 0,
-            attributes = mapOf("地面" to "夯土", "光照" to "几盏油灯"),
-            background = """
-                这里是「醉猫」酒馆，边境小镇灰渡唯一还在营业的酒馆，木石结构，建成约二十年。
-                眼下是深秋傍晚，屋里点了四盏油灯，客人比往常少。
-            """.trimIndent(),
-        ),
-        Entity(
-            id = "oak_table", kind = "家具", label = "木桌", x = 12, y = 4, z = 0,
-            parent = "tavern_hall",
-            attributes = mapOf("材质" to "橡木", "状态" to "完好"),
-            sentences = listOf("橡木桌呈深褐色，表面打磨得光滑，木纹清晰而紧密地延展。"),
-        ),
-        Entity(
-            id = "wine_cup", kind = "器具", label = "酒杯", x = 12, y = 4, z = 1,
-            parent = "oak_table",
-            attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
-            sentences = listOf("深色木制杯身，表面可见木纹，杯口边缘有几道划痕。"),
-        ),
-        Entity(
-            id = "oil_lamp", kind = "器具", label = "油灯", x = 12, y = 5, z = 1,
-            parent = "oak_table",
-            attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
-            sentences = listOf("铁架上扣着一只发黄的玻璃罩，罩口有烟熏的痕迹。"),
-        ),
-        Entity(
-            id = "player", kind = "角色", label = "你", x = 12, y = 3, z = 0,
-            parent = "tavern_hall",
-            attributes = mapOf("两手" to "空着", "腰间" to "挂着一把短柄斧"),
-        ),
-        Entity(
-            id = "axe", kind = "器具", label = "短柄斧", x = 12, y = 3, z = 1,
-            parent = "player", attributes = mapOf("状态" to "刃口有些卷"),
-        ),
-        Entity(
-            id = "rag", kind = "器具", label = "抹布", x = 12, y = 3, z = 1,
-            parent = "player", attributes = mapOf("状态" to "半干"),
-        ),
-    )
+    /** 与世界其余探针同一份种子，好让读数能横向比。**放在 `ProbeSupport` 里，不在这里。** */
+    private fun seedWorld(): List<Entity> = ProbeSupport.tavernSeed()
 }

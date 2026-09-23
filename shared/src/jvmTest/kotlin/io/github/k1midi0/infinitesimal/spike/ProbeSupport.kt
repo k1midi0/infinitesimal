@@ -40,6 +40,54 @@ object ProbeSupport {
     fun seed(path: String, entities: List<Entity>): World =
         World.from(WorldSnapshot(entities)).also { save(path, it) }
 
+    /**
+     * 判定探针共用的那个世界：酒馆大厅里一张木桌，桌上一只酒杯一盏油灯，玩家身上一把斧子一块抹布。
+     *
+     * 放在这里而不是各自私有，是因为**读数要能横向比**：两个探针的世界只要差一样东西，两次读数就
+     * 不能放在同一张表里。
+     */
+    fun tavernSeed(): List<Entity> = listOf(
+        Entity(
+            id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 10, y = 0, z = 0,
+            attributes = mapOf("地面" to "夯土", "光照" to "几盏油灯"),
+            background = """
+                这里是「醉猫」酒馆，边境小镇灰渡唯一还在营业的酒馆，木石结构，建成约二十年。
+                眼下是深秋傍晚，屋里点了四盏油灯，客人比往常少。
+            """.trimIndent(),
+        ),
+        Entity(
+            id = "oak_table", kind = "家具", label = "木桌", x = 12, y = 4, z = 0,
+            parent = "tavern_hall",
+            attributes = mapOf("材质" to "橡木", "状态" to "完好"),
+            sentences = listOf("橡木桌呈深褐色，表面打磨得光滑，木纹清晰而紧密地延展。"),
+        ),
+        Entity(
+            id = "wine_cup", kind = "器具", label = "酒杯", x = 12, y = 4, z = 1,
+            parent = "oak_table",
+            attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
+            sentences = listOf("深色木制杯身，表面可见木纹，杯口边缘有几道划痕。"),
+        ),
+        Entity(
+            id = "oil_lamp", kind = "器具", label = "油灯", x = 12, y = 5, z = 1,
+            parent = "oak_table",
+            attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
+            sentences = listOf("铁架上扣着一只发黄的玻璃罩，罩口有烟熏的痕迹。"),
+        ),
+        Entity(
+            id = "player", kind = "角色", label = "你", x = 12, y = 3, z = 0,
+            parent = "tavern_hall",
+            attributes = mapOf("两手" to "空着", "腰间" to "挂着一把短柄斧"),
+        ),
+        Entity(
+            id = "axe", kind = "器具", label = "短柄斧", x = 12, y = 3, z = 1,
+            parent = "player", attributes = mapOf("状态" to "刃口有些卷"),
+        ),
+        Entity(
+            id = "rag", kind = "器具", label = "抹布", x = 12, y = 3, z = 1,
+            parent = "player", attributes = mapOf("状态" to "半干"),
+        ),
+    )
+
     fun save(path: String, world: World) {
         val file = File(path)
         file.parentFile?.mkdirs()
