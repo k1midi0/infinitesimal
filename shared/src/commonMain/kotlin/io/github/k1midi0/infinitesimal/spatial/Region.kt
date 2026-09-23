@@ -3,6 +3,10 @@ package io.github.k1midi0.infinitesimal.spatial
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /** 俯视图上的一个格子。 */
 data class Cell(val x: Int, val y: Int)
@@ -44,7 +48,7 @@ class Region internal constructor(
     val maxY: Int,
     val minZ: Int,
     val maxZ: Int,
-    /** 这一次用的射线长度。扩大一次就翻一倍。 */
+    /** 这一次用的射线长度，等于 `3k`（k = widenings + 1）。扩大一次加 3。 */
     val rayLen: Int,
     /** 已经被要求扩大过几次。0 表示这是第一眼。 */
     val widenings: Int,
@@ -131,7 +135,7 @@ class Region internal constructor(
  *
  * 改成**射线**之后，框的大小由"周围实际有什么"决定：
  *
- * - 从每个中心（发起者 + 动作指向的东西）朝 **18 个方向**各发一条射线；
+ * - 从每个中心（发起者 + 动作指向的东西）朝 **球面上均匀铺开的若干个方向**各发一条射线；
  * - 射线**碰到东西就停**，那个交点作为一个参考点；
  * - **碰不到就走满 [RegionBuilder.DEFAULT_RAY] 格**，端点同样作为参考点；
  * - 所有参考点的**凸包**就是这一片。
@@ -140,49 +144,65 @@ class Region internal constructor(
  * 和指向的东西**——这不是碰巧，是构造出来的。若把打空的射线丢掉（比如朝上的那几条），凸包就可能
  * 缩到中心一侧，反而把自己关在外面。
  *
- * ## 18 向是三维的
+ * ## 方向是三维的
  *
- * 6 个轴向 + 12 个棱对角，**没有面对角线**（那会变成 26 向）。层是真实的一维，所以「指向天空」
- * 是一条真的射线：它在 z 上走满长度，落点在 (x,y) 上不挪窝，于是**不影响俯视图的形状**，但会撑高
- * 层范围。
+ * 层是真实的一维，所以确实有「指向天空」这类射线：它们在 z 上走得最远，落点在 (x,y) 上不挪窝，
+ * 于是**不影响俯视图的形状**，但会撑高层范围。球面采样天然覆盖这些方向，不需要单独挑出来。
  *
  * ## 扩大
  *
- * 判定说"不够"时调 `widen_view()`，算一遍新的：**射线长度翻倍**，而且**上一眼够得着的那段距离之内的
+ * 判定说"不够"时调 `widen_view()`，算一遍新的：**长度加一档、条数按 k² 长**，而且**上一眼够得着的那段距离之内的
  * 东西不再算阻挡**——不然射线还是被同一张桌子在第一步就拦下，扩大等于没扩。这条也让扩大一定收敛：
- * 每扩一次，起算距离就挪远一倍，而世界里的东西是有限的。
+ * 每扩一次，起算距离就挪远一档，而世界里的东西是有限的。
+ *
+ * **长度每档只加 3，不翻倍。** 要维持空间密度，条数就得按 k² 长；长度再翻倍的话，k 得跟着翻，
+ * 条数就是每扩一次乘四——k=8 时 1530 条。加一档的代价是每扩一次要多走一轮往返，但从实测看
+ * 一次判定最多也就扩两次。
  */
 object RegionBuilder {
 
-    /** 6 个轴向 + 12 个棱对角。这个数字是数出来的，不是挑的。 */
-    private val DIRECTIONS: List<Triple<Int, Int, Int>> = buildList {
-        fun add3(x: Int, y: Int, z: Int) { add(Triple(x, y, z)) }
-        for (axis in 0..2) {
-            for (sign in listOf(-1, 1)) {
-                add3(
-                    if (axis == 0) sign else 0,
-                    if (axis == 1) sign else 0,
-                    if (axis == 2) sign else 0,
-                )
-            }
-        }
-        for (a in 0..2) for (b in a + 1..2) for (sa in listOf(-1, 1)) for (sb in listOf(-1, 1)) {
-            val v = IntArray(3)
-            v[a] = sa
-            v[b] = sb
-            add3(v[0], v[1], v[2])
-        }
-    }
+    /**
+     * 第 k 档的射线数：`24k² − 6`。
+     *
+     * k=1 是 18 条——**条数和改之前那个手写的 18 向一样**，但方向不是同一批。
+     */
+    internal fun rayCount(k: Int): Int = 24 * k * k - 6
 
-    init {
-        check(DIRECTIONS.size == 18) { "18 向算错了：${DIRECTIONS.size}" }
-        check(DIRECTIONS.toSet().size == 18) { "18 向里有重复" }
+    /** 黄金角 `2π/φ²`。斐波那契球面就是靠它把点铺匀的。 */
+    private const val GOLDEN_ANGLE: Double = 2.399963229728653
+
+    /**
+     * 第 k 档的方向：球面上**均匀铺开**的 [rayCount] 个单位向量（斐波那契球面）。
+     *
+     * ## 为什么不用整数方向
+     *
+     * 原来那 18 条是整数向量（`x = cx + dx * t`），落在**切比雪夫立方体**上。整数方向有个看不见的
+     * 代价：射线一长，相邻两条端点之间的空隙就按距离线性变大——**扩得越远，缝越大**，远的东西
+     * 反而比近的更容易从缝里漏掉。实测的密度是 2.5 → 5.0 → 10.0 → 20.0 格。
+     *
+     * 球面均匀采样把这件事摁住了：每一条射线摊到的球面面积恒定，相邻间距在 k=1 时 2.5 格、
+     * k=4 时 2.2 格。这就是"保持空间密度大体相同"。
+     *
+     * ## 取整不会跳格，所以不需要 DDA
+     *
+     * 方向不再是整数，每一步都要取整。但 `|u| = 1`，所以每步每个坐标的变化都不超过 1，取整之后
+     * 不可能越过一整格——逐格判等就够了。（同一个格子可能被两条射线重复检查，那是浪费，不是错。）
+     */
+    internal fun directions(k: Int): List<Triple<Double, Double, Double>> {
+        val n = rayCount(k)
+        return List(n) { i ->
+            val z = 1.0 - 2.0 * (i + 0.5) / n
+            val r = sqrt((1.0 - z * z).coerceAtLeast(0.0))
+            val theta = GOLDEN_ANGLE * i
+            Triple(cos(theta) * r, sin(theta) * r, z)
+        }
     }
 
     /**
      * 打不到东西时，射线走多远。
      *
-     * **3 这个数不是随手取的**：周围一片空的时候，6 个轴向的端点围出来恰好是 7×7 格——也就是
+     * **3 这个数不是随手取的**：它是第一档的射线长度（k=1，18 条球面方向）。周围一片空时，
+     * 最靠东西南北的那几条端点落在 ±3 上，围出来正好是 7×7 格——也就是
      * 那个"最小方框"。于是"退回最小方框"不需要单独一条分支，它就是这套算法在真空里的自然结果。
      */
     const val DEFAULT_RAY: Int = 3
@@ -199,7 +219,7 @@ object RegionBuilder {
         val centerEntities = centers.mapNotNull { world.byId(it) }
         require(centerEntities.isNotEmpty()) { "一个中心都没有，框无处可谈" }
 
-        var region = trace(entities, centerEntities, DEFAULT_RAY, widenings = 0, reach = 0)
+        var region = trace(entities, centerEntities, k = 1, widenings = 0, reach = 0)
         repeat(widenings) {
             // **上一眼够得着的距离之内的东西，这一眼不再算阻挡。**
             //
@@ -209,7 +229,7 @@ object RegionBuilder {
             region = trace(
                 entities,
                 centerEntities,
-                region.rayLen * 2,
+                k = region.rayLen / DEFAULT_RAY + 1,
                 widenings = region.widenings + 1,
                 reach = region.rayLen,
             )
@@ -220,19 +240,22 @@ object RegionBuilder {
     private fun trace(
         entities: List<Entity>,
         centers: List<Entity>,
-        rayLen: Int,
+        /** 第几档。射线长 `3k`，方向取 [directions]`(k)`，条数 `24k² − 6`。 */
+        k: Int,
         widenings: Int,
         /** 离中心没超过这个距离的东西不算阻挡。第一眼是 0，也就是什么都算阻挡。 */
         reach: Int,
     ): Region {
+        val rayLen = DEFAULT_RAY * k
+        val directions = directions(k)
         val points = mutableListOf<RayPoint>()
         for (c in centers) {
-            for ((dx, dy, dz) in DIRECTIONS) {
+            for ((ux, uy, uz) in directions) {
                 var landed: RayPoint? = null
                 for (t in 1..rayLen) {
-                    val x = c.x + dx * t
-                    val y = c.y + dy * t
-                    val z = c.z + dz * t
+                    val x = c.x + (ux * t).roundToInt()
+                    val y = c.y + (uy * t).roundToInt()
+                    val z = c.z + (uz * t).roundToInt()
                     val blocker = entities.firstOrNull { e ->
                         e.id != c.id && e.x == x && e.y == y && e.z == z &&
                             maxOf(abs(e.x - c.x), abs(e.y - c.y), abs(e.z - c.z)) > reach
@@ -242,7 +265,12 @@ object RegionBuilder {
                         break
                     }
                 }
-                points += landed ?: RayPoint(c.x + dx * rayLen, c.y + dy * rayLen, c.z + dz * rayLen, hit = false)
+                points += landed ?: RayPoint(
+                    c.x + (ux * rayLen).roundToInt(),
+                    c.y + (uy * rayLen).roundToInt(),
+                    c.z + (uz * rayLen).roundToInt(),
+                    hit = false,
+                )
             }
         }
 

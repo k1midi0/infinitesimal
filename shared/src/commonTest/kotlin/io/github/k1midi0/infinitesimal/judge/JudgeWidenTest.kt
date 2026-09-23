@@ -153,7 +153,10 @@ class JudgeWidenTest {
 
         assertEquals(0, view.widenings)
         assertEquals(7, view.region().width)
-        assertEquals(8, view.region().height)
+        // **7 不是 8，这是球面采样的代价。** 老的整数 18 向里有恰好朝南的 (0,1,0) 与 (0,1,±1)；
+        // 球面采样里没有完全对齐轴的方向，于是朝南那条射线在 t=1 就被桌上的油灯挡下了
+        // （旧的 (0,1,1) 从灯上方飞过去，能摸到 y=7）。极值方向不再有一条**恰好**对齐的射线兜底。
+        assertEquals(7, view.region().height)
 
         view.widen()
         assertEquals(1, view.widenings)

@@ -3,6 +3,9 @@ package io.github.k1midi0.infinitesimal.spatial
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.sqrt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -69,16 +72,45 @@ class RegionTest {
     }
 
     @Test
-    fun aSingleLayerWallDoesNotTightenTheFootprint() {
-        // 这一条是**记录一个真实的后果**，不是记录我们想要的行为：墙只在 z=0 时，斜向射线
-        // （±1,0,±1）从它上面/下面飞过去了，于是俯视图上的跨度一点没变。
+    fun aSingleLayerWallAlsoTightensTheFootprint() {
+        // **这一条以前记的是相反的行为。** 老的 18 条是整数方向，能逃过单层障碍的是竖直棱对角
+        // （每步同时走 x 和 z，z 很快离开 0），于是单摆一件家具挡不住射线，俯视图跨度一点不变。
         //
-        // 也就是说：**要让框真的贴合，能挡射线的得是跨层的东西**（墙、地形），单摆一件家具挡不住。
-        // 这条在探针里会再露一次面。
+        // 换成球面均匀采样之后，赤道附近那一圈点的 uz 很小，它们**留在 z=0 那一层**，撞上单层的
+        // 墙。所以框现在贴得住了——这正是当初写这条测试时想要而没得到的东西。
         val wall = (0..6).map { thing("w$it", 13, it) }
         val w = world(thing("a", 12, 3), *wall.toTypedArray())
         val r = RegionBuilder.of(w, listOf("a"))
-        assertEquals(15, r.maxX, "单层的墙不该收紧俯视图跨度——如果它收紧了，说明算法被改过了")
+        assertEquals(13, r.maxX, "单层的墙现在该收紧俯视图跨度：$r")
+        assertEquals(9, r.minX, "西边没东西，该走满长度")
+    }
+
+    @Test
+    fun rayCountAndSpacingFollowTheDensityRule() {
+        // 条数按 k² 长，长度按 k 长——**两件事一起动，每一条射线摊到的球面面积才恒定**。
+        // 这条是这次改动的全部理由：老的 18 条固定，射线一长缝就跟着大（2.5 → 5.0 → 10.0 → 20.0）。
+        assertEquals(18, RegionBuilder.rayCount(1))
+        assertEquals(90, RegionBuilder.rayCount(2))
+        assertEquals(210, RegionBuilder.rayCount(3))
+
+        for (k in 1..4) {
+            val dirs = RegionBuilder.directions(k)
+            assertEquals(RegionBuilder.rayCount(k), dirs.size, "k=$k 的条数不对")
+            for ((x, y, z) in dirs) {
+                val len = sqrt(x * x + y * y + z * z)
+                assertTrue(abs(len - 1.0) < 1e-9, "k=$k 里有个不是单位向量：($x, $y, $z) 长度 $len")
+            }
+        }
+
+        // 相邻间距 ≈ sqrt(4πR²/N)。**它必须在每一档上都差不多**，否则"保持空间密度"就是空话。
+        val spacing = (1..5).map { k ->
+            val r = RegionBuilder.DEFAULT_RAY.toDouble() * k
+            sqrt(4.0 * PI * r * r / RegionBuilder.rayCount(k))
+        }
+        assertTrue(
+            spacing.max() / spacing.min() < 1.2,
+            "每一档的密度散得太开了：${spacing.map { "%.2f".format(it) }}",
+        )
     }
 
     @Test
@@ -91,7 +123,7 @@ class RegionTest {
 
         assertEquals(3, r0.rayLen)
         assertEquals(6, r1.rayLen)
-        assertEquals(12, r2.rayLen)
+        assertEquals(9, r2.rayLen)
         assertEquals(0, r0.widenings)
         assertEquals(1, r1.widenings)
         assertEquals(2, r2.widenings)
