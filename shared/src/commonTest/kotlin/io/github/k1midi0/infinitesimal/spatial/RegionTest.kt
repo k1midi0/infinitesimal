@@ -131,9 +131,8 @@ class RegionTest {
 
     @Test
     fun sampledDirectionsAgreeWithTheSectorTheyAreNamedAfter() {
-        // **这两件事必须一致。** 模型读到框外那句「在东南 8 格外」，拿「东南」要求看远一档，
-        // 而东南那一档的射线必须真的铺在东南——否则它花了钱、多等一趟，拿回来的还是原来那一片，
-        // 而这件事没有任何地方会报错。
+        // **这两件事必须一致。** 模型自己说「往东南看远一档」，而东南那一档的射线必须真的铺在
+        // 东南——否则它花了钱、多等一趟，拿回来的还是原来那一片，而这件事没有任何地方会报错。
         assertEquals(Direction.EAST, Direction.of(5, 0, 0))
         assertEquals(Direction.SOUTHEAST, Direction.of(5, 5, 0))
         assertEquals(Direction.SOUTH, Direction.of(0, 5, 0))

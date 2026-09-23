@@ -79,8 +79,8 @@ class JudgeProbeSpike {
             // ⑤ 世界内驳回。
             reached = run(judge, world, "我伸手把三条街外那家店里的杯子拿过来。", selected = emptyList())
             // ⑥ **唯一一个只有 widen_view 能解决的局面**：扫帚在 (16,3)，比默认那一片（x 9..15）
-            //    刚好差一格，所以它只在"框外"那一句里露面——那里有它的名字，没有它的 id。
-            //    模型想报出它，除了调 widen_view 没有第二条路。
+            //    刚好差一格。框外那句话被删掉之后，它**在提示词里一个字都没有**——模型想报出它，
+            //    除了调 widen_view 把框扩过去，没有第二条路。
             world.put(Entity("broom", "器具", "靠在墙上的扫帚", 16, 3, 0))
             widened = run(judge, world, "我拿起靠在墙上那把扫帚。", selected = emptyList())
             widenedWidenings = judge.viewWidenings

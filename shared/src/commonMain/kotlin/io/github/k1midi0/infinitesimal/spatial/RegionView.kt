@@ -22,6 +22,17 @@ import io.github.k1midi0.infinitesimal.world.World
  *
  * **框外的格子留空白**，不填占位符。参差的边缘本身就是信息——"这一片是在东北方向被挡住的"，
  * 而一个填满的方框会把这个信息抹掉。
+ *
+ * ## 框外一样都不提
+ *
+ * 早先这里还有一句「框外还有 N 样东西；最近的是「X」，在东南 4 格外」。它被删掉了，因为它给出的
+ * 是一行**假目标**：`minByOrNull` 取「最近的那样」，而最近的那样常常是发起者**自己所在的房间**
+ * ——房间的坐标落在参差凸包的角上，于是模型读到「酒馆大厅在西北 3 格外」。它不但没用，还骗走了
+ * 一次扩大；而真正在框外的第二样东西（扫帚、井边那只杯子）永远排不上号，模型于是拿手边的同类
+ * 顶替。
+ *
+ * 判定**不需要**知道框外有什么：要看的东西在框外，就调 `widen_view` 把框扩过去。理由也是现成的
+ * ——没被指向的东西本来就不该被判。
  */
 object RegionView {
 
@@ -50,6 +61,7 @@ object RegionView {
 
         return buildString {
             appendLine("【空间框】发起者与这次动作指向的东西所在的那一片")
+            appendLine("一格约合现实中的一米。")
             appendLine(
                 "范围 x ${region.minX}..${region.maxX}（${region.width} 格），" +
                     "y ${region.minY}..${region.maxY}（${region.height} 格）；" +
@@ -97,9 +109,6 @@ object RegionView {
                 appendLine()
             }
 
-            // 框外**只说一句**：一样都不提，判定就没法把"东西在很远的地方"和"没这东西"分开。
-            // 全给坐标，那框就白框了。
-            farLine(world, region, actor)?.let { appendLine(it) }
         }.trimEnd()
     }
 
@@ -130,40 +139,6 @@ object RegionView {
             "${dirs.joinToString("、") { it.label }} ${RegionBuilder.DEFAULT_RAY * k}"
         }
         return "射线长：" + parts.joinToString("；")
-    }
-
-    private fun farLine(world: World, region: Region, actor: Entity?): String? {
-        if (actor == null) return null
-        val outside = world.all().filter { !region.covers(it) && it.id != actor.id }
-        if (outside.isEmpty()) return null
-        val nearest = outside.minByOrNull {
-            maxOf(
-                kotlin.math.abs(it.x - actor.x),
-                kotlin.math.abs(it.y - actor.y),
-                kotlin.math.abs(it.z - actor.z),
-            )
-        }!!
-        return "框外还有 ${outside.size} 样东西；最近的是「${nearest.label}」，" +
-            "${wherePhrase(nearest.x - actor.x, nearest.y - actor.y, nearest.z - actor.z)}。"
-    }
-
-    /**
-     * 「在东南 8 格外」「在正上方 2 格」。
-     *
-     * **词表必须和 `widen_view` 收的那十个方向完全一致**（[Direction]）：模型在这里读到哪个词，
-     * 就应该能拿同一个词要求往那边看。两张词表不重合，等于让它翻译一次——而它翻译错的时候没人
-     * 会发现。
-     */
-    private fun wherePhrase(dx: Int, dy: Int, dz: Int): String {
-        val flat = maxOf(kotlin.math.abs(dx), kotlin.math.abs(dy))
-        val sector = Direction.of(dx, dy, dz)
-        // 层差比水平距离还大时用「正上方/正下方」——「在东南 0 格外、上 3 层」不是人话。
-        if (sector == Direction.UP || sector == Direction.DOWN) {
-            val side = if (flat == 0) "" else "偏${Direction.of(dx, dy, 0).label}"
-            return "在正${sector.label}方$side ${kotlin.math.abs(dz)} 格"
-        }
-        val tail = if (dz == 0) "" else "、${if (dz > 0) "上" else "下"} ${kotlin.math.abs(dz)} 层"
-        return "在${sector.label} $flat 格外$tail"
     }
 
     private fun pad(s: String): String = " " + s.padEnd(2)
