@@ -111,6 +111,54 @@ class JudgeWidenTest {
     }
 
     @Test
+    fun wideningOneDirectionMovesOnlyThatEdge() = runBlocking {
+        // 方向参数是**可选**的：填了只抬那一个扇区。这条要钉住的是"只抬一个"真的只动一条边——
+        // 不然模型读到「在东南 8 格外」、要求看东南，拿回来的却是四面八方都变大，
+        // 多烧的那三倍射线不会有人去对账。
+        val script = Scripted(
+            listOf(
+                turn("call_w", JudgeTools.WIDEN_VIEW, """{"direction":"南"}"""),
+                turn("call_t", JudgeTools.TARGET, """{"id":"wine_cup"}"""),
+            ),
+        )
+        val judge = Judge(LlmClient(config, script.client))
+
+        val result = judge.alignTargets(tavern(), request("我拿起桌上那杯麦酒"))
+
+        assertEquals(TargetAlignment.Aligned(listOf("wine_cup")), result)
+        assertEquals(2, judge.requestCount, "定向扩大同样要多走一趟")
+
+        // 第一次请求的工具 schema 里，`direction` **不该出现在任何 required 里**——它是唯一的可选参数。
+        val requiredBlocks = Regex(""""required":\[[^\]]*\]""")
+            .findAll(script.bodies[0]).map { it.value }.toList()
+        assertTrue(requiredBlocks.isNotEmpty(), "请求体里该有工具 schema：${script.bodies[0]}")
+        assertTrue(
+            requiredBlocks.none { it.contains("direction") },
+            "direction 不该是必填：$requiredBlocks",
+        )
+
+        // 第二眼：南边该变远，**另外三条边一格不动**。
+        val (firstX, firstY) = lastRange(script.bodies[0])
+        val (secondX, secondY) = lastRange(script.bodies[1])
+        assertEquals(firstX, secondX, "看南边不该动东西向跨度：$firstX → $secondX")
+        assertEquals(firstY.first, secondY.first, "北边不该动：$firstY → $secondY")
+        assertTrue(secondY.last > firstY.last, "南边该变远：$firstY → $secondY")
+    }
+
+    /**
+     * 请求体里**最后**一次出现的范围。
+     *
+     * 必须取最后一次：第二眼那条请求里同时带着旧范围（user 消息）和新范围（tool 结果）。
+     */
+    private fun lastRange(body: String): Pair<IntRange, IntRange> {
+        fun pick(axis: String): IntRange {
+            val m = Regex("$axis (-?\\d+)\\.\\.(-?\\d+)").findAll(body).last()
+            return IntRange(m.groupValues[1].toInt(), m.groupValues[2].toInt())
+        }
+        return pick("x") to pick("y")
+    }
+
+    @Test
     fun aProposalMadeInTheSameTurnAsWideningIsNotLost() = runBlocking {
         // 模型可以在同一次响应里既报一个东西、又要看更大范围。**那个报的东西不能丢**——它是模型
         // 已经做出的判断，而这一轮之后它没有理由再报一次。
