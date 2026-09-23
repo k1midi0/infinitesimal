@@ -6,13 +6,6 @@ import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.session.StartingWorld
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.mock.MockEngine
-import io.ktor.client.engine.mock.respond
-import io.ktor.http.HttpHeaders
-import io.ktor.http.HttpStatusCode
-import io.ktor.http.content.TextContent
-import io.ktor.http.headersOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -35,51 +28,6 @@ class JudgeWidenTest {
     )
 
     private fun tavern(): World = World.from(WorldSnapshot(StartingWorld.tavern()))
-
-    private fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
-
-    private fun sse(vararg frames: String) = frames.joinToString("") { "data: $it\n\n" } + "data: [DONE]\n\n"
-
-    /** 一轮工具调用。`reasoning` 非空时会带上 `reasoning_content`——那正是回传时的硬约束。 */
-    private fun turn(id: String, name: String, args: String, reasoning: String = ""): String {
-        val r = if (reasoning.isEmpty()) "" else "\"reasoning_content\":\"${esc(reasoning)}\","
-        return sse(
-            """{"choices":[{"delta":{$r"tool_calls":[{"index":0,"id":"$id","function":{"name":"$name","arguments":"${esc(args)}"}}]}}]}""",
-            """{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}""",
-        )
-    }
-
-    /** 一轮里同时调好几只手。 */
-    private fun multiTurn(vararg calls: Triple<String, String, String>): String {
-        val body = calls.mapIndexed { i, (id, name, args) ->
-            """{"index":$i,"id":"$id","function":{"name":"$name","arguments":"${esc(args)}"}}"""
-        }.joinToString(",")
-        return sse(
-            """{"choices":[{"delta":{"reasoning_content":"先想一下。","tool_calls":[$body]}}]}""",
-            """{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}""",
-        )
-    }
-
-    /** 逐轮吐出写好的响应，并把每次请求体原样存下来。 */
-    private class Scripted(private val frames: List<String>) {
-        val bodies = mutableListOf<String>()
-        private var served = 0
-
-        val client: HttpClient = HttpClient(
-            MockEngine { request ->
-                bodies += (request.body as? TextContent)?.text.orEmpty()
-                val body = frames[minOf(served, frames.size - 1)]
-                served++
-                respond(
-                    content = body,
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, "text/event-stream"),
-                )
-            },
-        ) {
-            expectSuccess = false
-        }
-    }
 
     @Test
     fun wideningContinuesTheSameTurnAndReplaysTheProtocolCorrectly() = runBlocking {
@@ -113,8 +61,7 @@ class JudgeWidenTest {
     @Test
     fun wideningOneDirectionMovesOnlyThatEdge() = runBlocking {
         // 方向参数是**可选**的：填了只抬那一个扇区。这条要钉住的是"只抬一个"真的只动一条边——
-        // 不然模型读到「在东南 8 格外」、要求看东南，拿回来的却是四面八方都变大，
-        // 多烧的那三倍射线不会有人去对账。
+        // 不然模型说要往南看，拿回来的却是四面八方都变大，多烧的那三倍射线不会有人去对账。
         val script = Scripted(
             listOf(
                 turn("call_w", JudgeTools.WIDEN_VIEW, """{"direction":"南"}"""),

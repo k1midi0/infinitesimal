@@ -29,6 +29,15 @@ data class Entity(
     /** 地点背景。通常写在地点实体上，物体沿 [parent] 链继承。 */
     val background: String? = null,
     val sentences: List<String> = emptyList(),
+    /**
+     * 人设卡（§3.5）。
+     *
+     * **只有角色会写它，但字段对所有实体开放**——角色就是物体的一种，多一个 `kind == "角色"` 的
+     * 判断只会多一处会写错的地方（判定那边按"有没有卡"取，不按 `kind` 取）。
+     *
+     * 它和 [attributes] 是两回事：[attributes] 是判定能改的世界状态，这一项判定只读。
+     */
+    val cards: List<CharacterCard> = emptyList(),
 ) {
     /** 展示用的整段文字。句子里带着各自的句末标点，直接相连即可。 */
     fun text(): String = sentences.joinToString("")

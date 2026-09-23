@@ -13,6 +13,7 @@ import io.github.k1midi0.infinitesimal.llm.ToolCall
 import io.github.k1midi0.infinitesimal.spatial.Direction
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
+import io.github.k1midi0.infinitesimal.world.rendered
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
@@ -160,7 +161,7 @@ class Judge(
     ): TargetAlignment {
         val calls = call(
             tools = JudgeTools.TARGETING,
-            user = targetingPrompt(request, retryNotes, view),
+            user = targetingPrompt(world, request, retryNotes, view),
             // 快速档：对齐不需要推理。**只有这一档 temperature 才生效**，而这里也不需要温度。
             thinking = ThinkingRequest.of(ThinkingMode.Never, ReasoningEffort.LOW),
             maxTokens = 512,
@@ -212,7 +213,7 @@ class Judge(
     ): Verdict {
         val calls = call(
             tools = JudgeTools.EFFECTS,
-            user = effectPrompt(request, targets, retryNotes, view),
+            user = effectPrompt(world, request, targets, retryNotes, view),
             // 思考档：整套设计把"物理推理"整个交给了模型（附录 A.4——现实无法用代码模拟），
             // 这里就是那件事发生的地方，也是全系统里最该让它想清楚的一处。
             thinking = ThinkingRequest.of(ThinkingMode.Always, ReasoningEffort.HIGH),
@@ -364,19 +365,27 @@ class Judge(
      * 它是缓存唯一可能命中的地方：两步的 system 相同、情境相同、发起者与动作相同，之后才分岔。
      * 所以**任何会变的东西都不许放进这里**——放进来一次，第二步的缓存就全灭（§7.5 是同一条理由）。
      */
-    private fun sharedPrefix(request: JudgeRequest, view: ViewBudget): String = buildString {
+    private fun sharedPrefix(world: World, request: JudgeRequest, view: ViewBudget): String = buildString {
         appendLine("【你周围这一片】")
         appendLine(view.text())
         appendLine()
         appendLine("【动作发起者】")
         appendLine("id=${request.actorId}，名字=${request.actorLabel}")
+        // 发起者的人设卡（§3.5）。**放在共用前缀里**：两步都要它，而前缀两步一字不差，缓存才仍然
+        // 命中（§8 的动静分层）。指向的其它角色的卡在第二步自己那一段里。
+        world.byId(request.actorId)?.cards?.rendered()?.takeIf { it.isNotEmpty() }?.let { appendLine(it) }
         appendLine()
         appendLine("【动作】")
         appendLine(request.intention)
     }
 
-    private fun targetingPrompt(request: JudgeRequest, retryNotes: List<String>, view: ViewBudget): String = buildString {
-        append(sharedPrefix(request, view))
+    private fun targetingPrompt(
+        world: World,
+        request: JudgeRequest,
+        retryNotes: List<String>,
+        view: ViewBudget,
+    ): String = buildString {
+        append(sharedPrefix(world, request, view))
         appendLine()
         appendLine("【你这一步只做一件事：对齐指向对象】")
         appendLine("上面是发起者自己在界面上选的东西：")
@@ -398,13 +407,14 @@ class Judge(
     }
 
     private fun effectPrompt(
+        world: World,
         request: JudgeRequest,
         targets: List<String>,
         retryNotes: List<String>,
         view: ViewBudget,
     ): String =
         buildString {
-            append(sharedPrefix(request, view))
+            append(sharedPrefix(world, request, view))
             appendLine()
             appendLine("【这次动作作用在这些东西上】")
             if (targets.isEmpty()) {
@@ -412,6 +422,7 @@ class Judge(
             } else {
                 targets.forEach { appendLine("- $it") }
             }
+            appendTargetCards(world, request.actorId, targets)
             appendLine()
             appendLine("【你这一步要做的事：列出后果】")
             appendLine("1. 先判断这次动作在这个情境下成不成立。不成立就调 ${JudgeTools.REJECT}，理由写成这个世界会说的话。")
@@ -420,6 +431,28 @@ class Judge(
             appendLine("4. 只列这次动作确实造成的后果。不要顺手整理世界。")
             appendRetryNotes(retryNotes)
         }
+
+    /**
+     * 这次动作指向的**其它角色**的人设卡（§3.5）。
+     *
+     * 发起者自己的卡已经在共用前缀里，这里跳过它。**按「有没有卡」取，不按 `kind` 取**——角色
+     * 就是物体的一种，多一个 `kind == "角色"` 的判断只会多一处会写错的地方。
+     *
+     * 它只能放在**第二步自己那一段**里：第一步还不知道要指向谁，而共用前缀必须两步一字不差，
+     * 否则缓存整段作废（§8）。
+     */
+    private fun StringBuilder.appendTargetCards(world: World, actorId: String, targets: List<String>) {
+        val others = targets.filter { it != actorId }
+            .mapNotNull { world.byId(it) }
+            .filter { it.cards.isNotEmpty() }
+        if (others.isEmpty()) return
+        appendLine()
+        appendLine("【这次动作指向的角色】")
+        for (e in others) {
+            appendLine("${e.label}（id=${e.id}）：")
+            appendLine(e.cards.rendered())
+        }
+    }
 
     private fun StringBuilder.appendRetryNotes(notes: List<String>) {
         if (notes.isEmpty()) return

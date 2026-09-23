@@ -1,5 +1,6 @@
 package io.github.k1midi0.infinitesimal.session
 
+import io.github.k1midi0.infinitesimal.world.CharacterCard
 import io.github.k1midi0.infinitesimal.world.Entity
 
 /**
@@ -73,6 +74,13 @@ object StartingWorld {
             x = 12, y = 3, z = 0,
             parent = "tavern_hall",
             attributes = mapOf("两手" to "空着", "腰间" to "挂着一把短柄斧"),
+            // 人设卡（§3.5）。**「交互范围」这一张就是「够不够得着」那条线的来源**——距离在这里
+            // 已经是格了（写卡那一步换算，基准 1 格 = 1 米，附录 A.12），判定只读，不做算术。
+            // 没有这一张卡的故事就不给这一行，由模型按情境判（A.6）。
+            cards = listOf(
+                CharacterCard("身份", "你是走南闯北的过路人，身上没什么钱，惯用一把短柄斧。"),
+                CharacterCard("交互范围", "你伸得着大约一格以内的东西——一臂之遥。够不到就得先走过去。"),
+            ),
         ),
         // **身上带着的东西也是实体**，靠 parent 挂在角色下面。这样"把手里的东西放下"就是一次
         // Reparent，不需要为"随身物品"另开一套数据结构（§3.1）。
