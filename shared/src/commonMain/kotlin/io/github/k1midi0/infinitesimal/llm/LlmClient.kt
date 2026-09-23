@@ -122,6 +122,8 @@ class LlmClient(
             tools = tools,
             thinking = thinking?.options,
             reasoningEffort = thinking?.effort,
+            // 分层：这一路请求属于哪个系统，它就用哪个缓存池。null 时整项不发。
+            userId = config.userId?.userId,
         )
 
         val response = try {

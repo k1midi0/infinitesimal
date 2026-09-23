@@ -41,6 +41,13 @@ data class EndpointConfig(
      * null 表示这一项不发，由端点用自己的默认。
      */
     val temperature: Double? = null,
+    /**
+     * 这一路请求属于哪个系统的缓存池。null = 不分层。
+     *
+     * 类型是闭合枚举而不是字符串：`user_id` 写错一个字母不报错，只静默换一个缓存池——命中率掉
+     * 下去，没有地方看起来不对。理由见 [SystemId]。
+     */
+    val userId: SystemId? = null,
 ) {
 
     /** Names of the fields that still need a value. Empty when usable. */

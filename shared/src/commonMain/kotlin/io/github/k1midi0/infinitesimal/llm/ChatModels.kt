@@ -128,6 +128,13 @@ data class ChatRequest(
      * 那样包在 `thinking` 里面。
      */
     @SerialName("reasoning_effort") val reasoningEffort: String? = null,
+    /**
+     * 这一条请求属于哪个缓存池。`null` 表示不分层，由端点把它归进"空 id"那个特殊池。
+     *
+     * 端点的原话是它用于 KVCache 隔离、内容安全隔离与调度隔离（《限速与隔离》）。名字是线上的
+     * `user_id`——平铺在请求体里，与 `thinking` 无关。约束：`[a-zA-Z0-9\-_]+`，最长 512。
+     */
+    @SerialName("user_id") val userId: String? = null,
 )
 
 /**
