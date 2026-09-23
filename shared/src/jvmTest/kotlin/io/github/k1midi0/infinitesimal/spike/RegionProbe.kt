@@ -26,7 +26,11 @@ class RegionProbe {
         println("═".repeat(96))
         println(RegionView.render(world, region, actorId = "player"))
         println("─".repeat(96))
-        println("$region｜参考点 ${region.points.size} 个（其中打空的 ${region.points.count { !it.hit }} 个）")
+        println(
+            "$region｜参考点 ${region.points.size} 个（打空 ${region.points.count { !it.hit }} 个）" +
+                "｜被射线打中的 ${region.hitIds.size} 样：${region.hitIds.sorted().take(8).joinToString("、")}" +
+                if (region.hitIds.size > 8) "…" else "",
+        )
     }
 
     @Test

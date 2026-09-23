@@ -113,4 +113,24 @@ class RegionTest {
         assertEquals(4, hull.size, "内部那个点不该出现在凸包上：$hull")
         assertTrue(Cell(2, 2) !in hull)
     }
+
+    @Test
+    fun whateverStopsARayIsAlwaysInTheRegion() {
+        // 把射线挡下来的那样东西，**定义的就是这片空间的边**。它必须出现在片里：否则判定会看见
+        // 一个在 x=13 处齐刷刷断掉的框，却不知道 13 那里是什么——而那正是最该知道的东西。
+        val wall = (0..8).flatMap { y -> (-3..3).map { z -> thing("w_${y}_$z", 13, y, z) } }
+        val w = world(thing("a", 12, 3), *wall.toTypedArray())
+        val r = RegionBuilder.of(w, listOf("a"))
+
+        assertTrue(r.hitIds.isNotEmpty(), "墙该被射线打中：$r")
+        for (id in r.hitIds) {
+            val e = requireNotNull(w.byId(id))
+            assertTrue(r.covers(e), "$id 把射线挡下来了，却不在这片里（在 ${e.x}, ${e.y}, 层 ${e.z}）")
+        }
+
+        // 穿越法是半开的，只判内部——照那样算，凸包整条边上每一格都会被判成框外，而被打中的东西
+        // 恰恰都站在那条边上。所以边界必须算框内。
+        assertTrue(r.contains(13, 3), "凸包边界上的格子该算在框里：$r")
+        assertTrue(!r.contains(15, 3), "框外的格子不该算在框里：$r")
+    }
 }

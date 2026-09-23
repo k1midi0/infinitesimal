@@ -7,8 +7,19 @@ import kotlin.math.abs
 /** 俯视图上的一个格子。 */
 data class Cell(val x: Int, val y: Int)
 
-/** 一次射线追出来的落点。`hit` 为 false 表示那条射线一路没碰到东西，走满长度停下的。 */
-data class RayPoint(val x: Int, val y: Int, val z: Int, val hit: Boolean)
+/**
+ * 一次射线追出来的落点。
+ *
+ * `hit` 为 false 表示那条射线一路没碰到东西，走满长度停下的。[blockerId] 是把它挡下来的那样东西
+ * ——**它可能落在凸包的边界上，而不是内部**。
+ */
+data class RayPoint(
+    val x: Int,
+    val y: Int,
+    val z: Int,
+    val hit: Boolean,
+    val blockerId: String? = null,
+)
 
 /**
  * 判定看得见的那一片空间。
@@ -17,6 +28,14 @@ data class RayPoint(val x: Int, val y: Int, val z: Int, val hit: Boolean)
  */
 class Region internal constructor(
     val points: List<RayPoint>,
+    /**
+     * **被射线打中的那些东西。**
+     *
+     * 它们必须算作"在框里"，哪怕它们的格子落在凸包边界上——而它们几乎总在边界上：把射线挡下来的
+     * 那样东西，定义的就是这片空间的边。少了它们，判定会看见一个在 x=13 处齐刷刷断掉的框，
+     * 却不知道 13 那里是什么。
+     */
+    val hitIds: Set<String>,
     private val hull: List<Cell>,
     private val degenerate: Boolean,
     val minX: Int,
@@ -32,16 +51,24 @@ class Region internal constructor(
 ) {
     val width: Int get() = maxX - minX + 1
     val height: Int get() = maxY - minY + 1
-    val cellCount: Int get() = if (degenerate) width * height else hullCells().size
+    val cellCount: Int get() = cells().size
 
-    /** 这个格子在不在框里。 */
+    /**
+     * 这个格子在不在框里。
+     *
+     * **边界算在框里**（[onBoundary]）。穿越法是半开的，只判内部——照那样算，凸包的整条边上每一格
+     * 都会被判成框外，而射线打中的东西恰恰都站在那条边上。
+     */
     fun contains(x: Int, y: Int): Boolean {
         if (x < minX || x > maxX || y < minY || y > maxY) return false
         // 退化的凸包（一个点、或一条线）没有内部可言，那时用外接矩形兜底——**这一片仍必须能装下
         // 发起者自己**，否则判定拿到的坐标范围里不含它，反而更容易瞎填。
         if (degenerate) return true
-        return insidePolygon(x, y)
+        return insidePolygon(x, y) || onBoundary(x, y)
     }
+
+    /** 那样东西算不算在这片里：**格子在框内，或者它是被射线打中的那一个**。 */
+    fun covers(entity: Entity): Boolean = entity.id in hitIds || contains(entity.x, entity.y)
 
     fun cells(): List<Cell> {
         if (degenerate) {
@@ -49,14 +76,28 @@ class Region internal constructor(
                 for (y in minY..maxY) for (x in minX..maxX) add(Cell(x, y))
             }
         }
-        return hullCells()
+        // 凸包不大（一次射线最多也就几十格跨度），逐格判定即可，不值得做扫描线优化。
+        val out = mutableListOf<Cell>()
+        for (y in minY..maxY) for (x in minX..maxX) if (contains(x, y)) out += Cell(x, y)
+        return out
     }
 
-    private fun hullCells(): List<Cell> {
-        // 凸包不大（一次射线最多也就几十格跨度），逐行求交即可，不值得做扫描线优化。
-        val out = mutableListOf<Cell>()
-        for (y in minY..maxY) for (x in minX..maxX) if (insidePolygon(x, y)) out += Cell(x, y)
-        return out
+    /** 整数点是否正落在凸包的某条边上。 */
+    private fun onBoundary(x: Int, y: Int): Boolean {
+        var j = hull.size - 1
+        for (i in hull.indices) {
+            val a = hull[i]
+            val b = hull[j]
+            val cross = (b.x - a.x).toLong() * (y - a.y) - (b.y - a.y).toLong() * (x - a.x)
+            if (cross == 0L &&
+                x >= minOf(a.x, b.x) && x <= maxOf(a.x, b.x) &&
+                y >= minOf(a.y, b.y) && y <= maxOf(a.y, b.y)
+            ) {
+                return true
+            }
+            j = i
+        }
+        return false
     }
 
     private fun insidePolygon(x: Int, y: Int): Boolean {
@@ -192,12 +233,12 @@ object RegionBuilder {
                     val x = c.x + dx * t
                     val y = c.y + dy * t
                     val z = c.z + dz * t
-                    val blocked = entities.any { e ->
+                    val blocker = entities.firstOrNull { e ->
                         e.id != c.id && e.x == x && e.y == y && e.z == z &&
                             maxOf(abs(e.x - c.x), abs(e.y - c.y), abs(e.z - c.z)) > reach
                     }
-                    if (blocked) {
-                        landed = RayPoint(x, y, z, hit = true)
+                    if (blocker != null) {
+                        landed = RayPoint(x, y, z, hit = true, blockerId = blocker.id)
                         break
                     }
                 }
@@ -211,6 +252,7 @@ object RegionBuilder {
         val degenerate = hull.size < 3
         return Region(
             points = points,
+            hitIds = points.mapNotNull { it.blockerId }.toSet(),
             hull = hull,
             degenerate = degenerate,
             minX = projected.minOf { it.x },

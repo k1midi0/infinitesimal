@@ -32,7 +32,9 @@ object RegionView {
         val actor = world.byId(actorId)
         val layer = actor?.z ?: 0
 
-        val inside = world.all().filter { region.contains(it.x, it.y) }
+        // **covers 而不是 contains**：被射线打中的东西一定算在片里，哪怕它的格子落在凸包边界上
+        // （它几乎总在边界上——挡住射线的那样东西，定义的就是这片空间的边）。
+        val inside = world.all().filter { region.covers(it) }
         val onLayer = inside.filter { it.z == layer }.sortedWith(compareBy({ it.y }, { it.x }))
         val otherLayers = inside.filter { it.z != layer }
 
@@ -114,7 +116,7 @@ object RegionView {
 
     private fun farLine(world: World, region: Region, actor: Entity?): String? {
         if (actor == null) return null
-        val outside = world.all().filter { !region.contains(it.x, it.y) && it.id != actor.id }
+        val outside = world.all().filter { !region.covers(it) && it.id != actor.id }
         if (outside.isEmpty()) return null
         val nearest = outside.minByOrNull { maxOf(kotlin.math.abs(it.x - actor.x), kotlin.math.abs(it.y - actor.y)) }!!
         val d = maxOf(kotlin.math.abs(nearest.x - actor.x), kotlin.math.abs(nearest.y - actor.y))
