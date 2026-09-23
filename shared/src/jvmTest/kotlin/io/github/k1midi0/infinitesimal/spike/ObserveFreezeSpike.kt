@@ -1,12 +1,9 @@
 package io.github.k1midi0.infinitesimal.spike
 
-import io.github.k1midi0.infinitesimal.llm.FimClient
-import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.render.DetailInserter
-import io.github.k1midi0.infinitesimal.render.FimSentenceWriter
+import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.RenderGuards
 import io.github.k1midi0.infinitesimal.render.Renderer
-import io.github.k1midi0.infinitesimal.render.ToolSentenceWriter
 import io.github.k1midi0.infinitesimal.world.Entity
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -62,17 +59,16 @@ class ObserveFreezeSpike {
             world.put(requireNotNull(world.byId("oak_table")).copy(id = "oak_table_tool"))
             world.put(requireNotNull(world.byId("oak_table")).copy(id = "oak_table_fim"))
 
-            toolOutcome = renderer.addDetail(
-                "oak_table_tool",
-                DetailInserter(null, ToolSentenceWriter(LlmClient(config))),
-                afterIndex = 1,
-            )
-            fimOutcome = renderer.addDetail(
-                "oak_table_fim",
-                // FIM 主路、工具回退——§14.4 定下来的形状。
-                DetailInserter(FimSentenceWriter(FimClient(config)), ToolSentenceWriter(LlmClient(config))),
-                afterIndex = 1,
-            )
+            // 默认装配：**只有工具路**——FIM 默认关闭（实测五次里两次可用，见 DetailInserters）。
+            val defaultInserter = DetailInserters.of(config)
+            // 显式打开 FIM 才有对比：它在前，工具在后兜底。
+            val fimInserter = DetailInserters.of(config, useFim = true)
+            println()
+            println("[装配] 默认：${defaultInserter.paths.joinToString(" → ")}")
+            println("[装配] 开了 FIM：${fimInserter.paths.joinToString(" → ")}")
+
+            toolOutcome = renderer.addDetail("oak_table_tool", defaultInserter, afterIndex = 1)
+            fimOutcome = renderer.addDetail("oak_table_fim", fimInserter, afterIndex = 1)
 
             // ── 变化之一：仅仅外表变了（§7.1）──────────────────────────────────────
             world.invalidateAppearance("oak_table")

@@ -72,6 +72,14 @@ class DetailInserter(
         val attempts: List<String>,
     )
 
+    /**
+     * 这次装配挂了哪几条路，按尝试顺序。
+     *
+     * 日志与界面都该看得见它——**"现在到底能不能用 FIM"必须是能一眼看出来的**，否则一次装配失误
+     * （比如开关没接上）会表现为"细化偶尔不好使"，而那种症状没人查得出来。
+     */
+    val paths: List<String> get() = listOfNotNull(primary, fallback).map { it.name }
+
     suspend fun insert(sentences: List<String>, context: String, hint: Int): Outcome {
         val attempts = mutableListOf<String>()
 
