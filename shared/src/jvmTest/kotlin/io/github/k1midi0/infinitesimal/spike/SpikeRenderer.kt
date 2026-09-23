@@ -55,7 +55,10 @@ class SpikeRenderer(
             events = client
                 .streamChat(
                     messages = listOf(
-                        ChatMessage.system(SYSTEM_PROMPT),
+                        // **三层动静分层**：观察器规则（全局静态、逐字不变）→ 导演给的背景（每地点
+                        // 稳定）→ 对象本身（每次都变）。前两层拼成同一段前缀，缓存才有东西可以完整
+                        // 匹配；背景也因此不只是"让描述不编造"，它同时把渲染器那点可怜的前缀撑长了。
+                        ChatMessage.system(staticPrefixOf(entity)),
                         ChatMessage.user(contextOf(entity)),
                     ),
                     thinking = ThinkingRequest.of(ThinkingMode.Never, ReasoningEffort.LOW),
@@ -88,6 +91,34 @@ class SpikeRenderer(
         val next = entity.sentences.toMutableList().apply { add(at, insertion.sentence) }
         world.put(entity.copy(sentences = next))
         return insertion.violations
+    }
+
+    /**
+     * 地点背景：沿 `parent` 链往上收集，由**导演**写在地点实体上。
+     *
+     * 渲染器只读它、不改它——"导演是世界的补写者"（§8.3）在这里的落点。
+     */
+    fun backgroundOf(entity: SpikeEntity): List<String> =
+        generateSequence(entity) { current -> current.parent?.let { world.byId(it) } }
+            .mapNotNull { it.background }
+            .toList()
+            .reversed() // 从地点（根）到最近，读起来是"先大势、后近况"
+
+    /**
+     * 静态前缀 = 规则 + 背景。
+     *
+     * 拼成**一段**而不是两条 system 消息：缓存按 token 前缀匹配，分成两条只会在中间多出 role 标记，
+     * 对命中没有任何好处，却让"前两层"变成两个要各自维护的东西。
+     */
+    fun staticPrefixOf(entity: SpikeEntity): String {
+        val background = backgroundOf(entity)
+        if (background.isEmpty()) return SYSTEM_PROMPT
+        return buildString {
+            appendLine(SYSTEM_PROMPT)
+            appendLine()
+            appendLine("【背景】")
+            background.forEach { appendLine(it) }
+        }.trimEnd()
     }
 
     /**

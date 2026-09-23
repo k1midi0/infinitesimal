@@ -21,6 +21,13 @@ data class SpikeEntity(
     val parent: String? = null,
     val attributes: Map<String, String> = emptyMap(),
     /**
+     * 地点背景，**由导演写**，渲染器只读。
+     *
+     * 它写在地点实体上（通常是 `parent` 链的根），物体通过链继承。这样它落在**地图**里，而不是落在
+     * 某个"背景表"里——世界只有地图这一份事实（§3.2.4）。
+     */
+    val background: String? = null,
+    /**
      * 固化下来的描述，**按句存**。
      *
      * 存成一整段文本的话，"只增不改"只能靠提示词去求——而实测证明求不到（见 README 记的那次

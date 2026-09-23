@@ -156,6 +156,108 @@ class CacheProbeSpike {
         )
     }
 
+    /**
+     * 导演给的背景，能不能成为渲染器**可复用的共享前缀**。
+     *
+     * 渲染器自己那段 system 只有约 130 token，够不着缓存门槛（§14.5）。导演写的背景把前缀撑长了，
+     * 而且**同一个地点下的所有物体共享它**——所以设计上它不只是"让描述不脱离世界"，它同时是渲染器
+     * 唯一可能命中缓存的那一段。
+     *
+     * 官方文档说：两个请求只有公共前缀时第二次不命中，系统随后把那个**公共前缀**单独落盘，
+     * **第三次**才命中。所以下面按"三个不同的物体、同一个地点"来量——第三次才是判决点。
+     */
+    @Test
+    fun probeSharedBackgroundPrefix() {
+        val file = keyFile
+        if (file == null || !file.isFile) {
+            println("[共享背景前缀探针未执行] 未提供 -PinfinitesimalLiveKeyFile=<密钥文件路径>")
+            return
+        }
+        val base = EndpointConfig(
+            baseUrl = "https://api.deepseek.com",
+            apiKey = file.readText().trim(),
+            model = "deepseek-flash",
+            thinking = ThinkingMode.Never,
+        )
+
+        val world = SpikeWorld(File("build/spike/cache-world.json")).load().apply { seed(tavernSeed()) }
+        val renderer = SpikeRenderer(LlmClient(base.copy(userId = SystemId.RENDERER)), world)
+
+        runBlocking {
+            println()
+            println("═".repeat(104))
+            println("共享背景前缀：同一地点下三个不同物体，第三次才是判决点")
+            println("═".repeat(104))
+
+            observeAndReport(renderer, "① 木桌（首次）")
+            println("     …等 8 秒")
+            delay(8_000)
+            observeAndReport(renderer, "② 酒杯（此时系统识别公共前缀并落盘）")
+            observeAndReport(renderer, "③ 木凳（判决点：该命中规则+背景）")
+            observeAndReport(renderer, "④ 油灯（应同样命中）")
+            observeAndReport(renderer, "⑤ 另一个地点的木桌（背景不同，不该命中）")
+
+            println("═".repeat(104))
+        }
+    }
+
+    private suspend fun observeAndReport(renderer: SpikeRenderer, label: String) {
+        val id = when {
+            label.startsWith("①") -> "oak_table"
+            label.startsWith("②") -> "wine_cup"
+            label.startsWith("③") -> "stool"
+            label.startsWith("④") -> "oil_lamp"
+            else -> "yard_table"
+        }
+        val outcome = renderer.observe(id)
+        val usage = outcome.usage
+        println(
+            "%-34s %-8s 命中 %4d ｜ 未命中 %4d ｜ 共 %4d ｜ %5d ms".format(
+                label,
+                if (outcome.fromCache) "固化命中" else "发请求",
+                usage?.promptCacheHitTokens ?: -1,
+                usage?.promptCacheMissTokens ?: -1,
+                usage?.promptTokens ?: -1,
+                outcome.elapsedMs,
+            ),
+        )
+    }
+
+    private fun tavernSeed(): List<SpikeEntity> = listOf(
+        SpikeEntity(
+            id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 10, y = 0, z = 0,
+            background = """
+                这里是「醉猫」酒馆，边境小镇灰渡唯一还在营业的酒馆，木石结构，建成约二十年，墙角常年返潮，北侧的窗子有一扇关不严。
+                三天前镇东的粮仓失火，烧掉了半个冬天的存粮；酒馆老板在那之后就没再露面，如今由一个年长的伙计照看店面。
+                眼下是深秋傍晚，屋里点了四盏油灯，客人比往常少，靠门的两张桌子空着。
+            """.trimIndent(),
+        ),
+        SpikeEntity(
+            id = "oak_table", kind = "家具", label = "木桌", x = 12, y = 4, z = 0, parent = "tavern_hall",
+            attributes = mapOf("材质" to "橡木", "状态" to "完好", "尺寸" to "2米 × 1米 × 0.8米"),
+        ),
+        SpikeEntity(
+            id = "wine_cup", kind = "器具", label = "酒杯", x = 12, y = 4, z = 1, parent = "oak_table",
+            attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
+        ),
+        SpikeEntity(
+            id = "stool", kind = "家具", label = "木凳", x = 13, y = 4, z = 0, parent = "tavern_hall",
+            attributes = mapOf("材质" to "榆木", "状态" to "凳面有裂"),
+        ),
+        SpikeEntity(
+            id = "oil_lamp", kind = "器具", label = "油灯", x = 12, y = 5, z = 1, parent = "oak_table",
+            attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
+        ),
+        SpikeEntity(
+            id = "yard_table", kind = "家具", label = "木桌", x = 3, y = 9, z = 0, parent = "yard",
+            attributes = mapOf("材质" to "松木", "状态" to "被雨淋过"),
+        ),
+        SpikeEntity(
+            id = "yard", kind = "地点", label = "后院", x = 3, y = 9, z = 0,
+            background = "灰渡酒馆的后院，地上散着劈好的柴，靠墙堆着几只空酒桶，雨下过不久，泥地还没干。",
+        ),
+    )
+
     private companion object {
         /** 固定不变，好让两个请求之间只差 user_id 或末尾追加。 */
         const val SYSTEM = "你是一个观察器。你只描述被观察的对象本身。用中文，两到四句，直接给出描述。"

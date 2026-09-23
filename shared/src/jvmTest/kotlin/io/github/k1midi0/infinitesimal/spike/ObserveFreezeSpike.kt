@@ -209,6 +209,12 @@ class ObserveFreezeSpike {
         SpikeEntity(
             id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 10, y = 0, z = 0,
             attributes = mapOf("层高" to "4米", "地面" to "夯土", "光照" to "几盏油灯"),
+            // 导演写的背景。渲染器读它，好让描述不脱离这个世界。
+            background = """
+                这里是「醉猫」酒馆，边境小镇灰渡唯一还在营业的酒馆，木石结构，建成约二十年，墙角常年返潮，北侧的窗子有一扇关不严。
+                三天前镇东的粮仓失火，烧掉了半个冬天的存粮；酒馆老板在那之后就没再露面，如今由一个年长的伙计照看店面。
+                眼下是深秋傍晚，屋里点了四盏油灯，客人比往常少，靠门的两张桌子空着。
+            """.trimIndent(),
         ),
         SpikeEntity(
             id = "oak_table", kind = "家具", label = "木桌", x = 12, y = 4, z = 0,
