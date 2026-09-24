@@ -146,15 +146,15 @@ class Judge(
     private val client: LlmClient,
     private val maxAttempts: Int = 2,
     /**
-     * 第二步的思考强度，默认 [ReasoningEffort.HIGH]。
+     * 第二步的思考强度，默认 [ReasoningEffort.HIGH]——**也就是端点的默认，不为了快往下降**。
      *
-     * **这个旋钮还没有被量出来。** §14.19 拿它跑过四整轮采样（每轮 16 次判定），四个读数之间的差别
-     * **全在噪声里**：总耗时 109 / 215 / 236 / 276 秒，单次最慢 36 / 76 / 81 / 80 秒，"符合预期"
-     * 12 / 13 / 12 / 12 ——`low` 有一轮最快、也有一轮最慢，中位推理量忽高忽低（950 → 5733）。
-     * n=4、每轮还开一个新世界，这种方差下**任何"降档更快"的结论都是过度解读**。
+     * 这条是用户定的（2026-09-24）：**不限制思考，防止逻辑出错；导演系统同理。** 判定是全系统里
+     * 唯一被托付"物理推理"的地方（附录 A.4——现实无法用代码模拟），在这里省它的思考预算，等于用
+     * 判错换几秒钟。
      *
-     * 所以默认值保持 `high`：拿一次读数去改它是把噪声当结论。它是个参数，是为了下次**采够样本**
-     * 之后再回答（§12 第 17 项）。
+     * 之所以它还是个参数：§14.19 拿它跑过四整轮采样，四个读数之间的差别**全在噪声里**（总耗时
+     * 109–276 秒、单次最慢 36–81 秒、符合预期 12/13/12/12），n=4 分不开。参数留着是为了**能再量**，
+     * 不是因为准备降档。
      */
     val effort: ReasoningEffort = ReasoningEffort.HIGH,
 ) {
@@ -238,7 +238,6 @@ class Judge(
             user = targetingPrompt(world, request, retryNotes, view, variables),
             // 快速档：对齐不需要推理。**只有这一档 temperature 才生效**，而这里也不需要温度。
             thinking = ThinkingRequest.of(ThinkingMode.Never, ReasoningEffort.LOW),
-            maxTokens = 1_024,
             view = view,
             variables = variables,
             calc = calc,
@@ -307,11 +306,6 @@ class Judge(
             // 思考档：整套设计把"物理推理"整个交给了模型（附录 A.4——现实无法用代码模拟），
             // 这里就是那件事发生的地方，也是全系统里最该让它想清楚的一处。
             thinking = ThinkingRequest.of(ThinkingMode.Always, effort),
-            // **8192，不是 2000。** 思考模式下思维链 token 也算在 `max_tokens` 里，2000 对
-            // `reasoning_effort: high` 来说太紧——§14.19 量到过 4 次里有 2 次第二步一个工具都没调，
-            // 而那种失败与"模型拒绝回答"在日志里长得一模一样。它是**上限不是预留**，调高只在真的
-            // 用掉时才花钱；截断才是净亏（白等 20 秒，什么也没得到）。
-            maxTokens = 8_192,
             view = view,
             variables = variables,
             calc = calc,
@@ -510,7 +504,6 @@ class Judge(
         tools: List<io.github.k1midi0.infinitesimal.llm.ToolDefinition>,
         user: String,
         thinking: ThinkingRequest,
-        maxTokens: Int,
         view: ViewBudget,
         variables: Map<String, Double>,
         calc: CalcLog,
@@ -533,7 +526,11 @@ class Judge(
                     messages = messages,
                     tools = tools,
                     thinking = thinking,
-                    maxTokens = maxTokens,
+                    // **不设 `max_tokens`。** 思考模式下思维链也算在它里面，任何一个小数字都会把
+                    // 想得久的那一次**截断**——症状是"第二步一个工具都没调"，与"模型拒绝回答"长得
+                    // 一模一样（§14.19 量到过 2000 时的 4/16、8192 时的 1/16）。用户定的是
+                    // **不限制思考，防止逻辑出错**；发 null 就是不发这一项，端点用思考档默认的 64K。
+                    maxTokens = null,
                 ).toList(),
             )
             proposals += turn.calls.filterNot { isQuery(it.name) }

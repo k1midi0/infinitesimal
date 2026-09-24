@@ -136,7 +136,7 @@ class RulebookProbe {
             println()
             println("═".repeat(140))
             println("规则书模块：${scenarios.size} 个场景 × $rounds 轮，每轮开新世界")
-            println("第二步 thinking=enabled，reasoning_effort=$effort，max_tokens=8192")
+            println("第二步 thinking=enabled，reasoning_effort=$effort，**不设 max_tokens**")
             println("═".repeat(140))
             println(
                 "%-28s %-4s %-6s %-14s %-14s %-8s %-9s %-8s %s".format(
@@ -313,7 +313,7 @@ class RulebookProbe {
         val lengths = rows.count { it.finishReason == "length" }
         println(
             "被截断（finish_reason=length）$lengths/${rows.size} 次" +
-                if (lengths == 0) "——这个上限够用" else "——**上限还是太小**",
+                if (lengths == 0) "——没有上限，它没有被谁打断过" else "——**还有别的东西在限它**",
         )
         println("═".repeat(140))
     }
