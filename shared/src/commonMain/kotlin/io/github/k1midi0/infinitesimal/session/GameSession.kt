@@ -16,6 +16,7 @@ import io.github.k1midi0.infinitesimal.render.Renderer
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.Rulebook
+import io.github.k1midi0.infinitesimal.world.TerrainSnapshot
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import io.github.k1midi0.infinitesimal.world.WorldTime
@@ -67,8 +68,10 @@ class GameSession(
     seed: List<Entity> = StartingWorld.tavern(),
     /** 世界自己的规则书（§12 第 12 项）。与 [seed] 分开，因为它的作用域本来就不一样。 */
     rules: Rulebook = StartingWorld.rules(),
+    /** 地形（附录 A.15）。与 [seed] 一样是**内容**，默认就是开局那一圈地。 */
+    ground: TerrainSnapshot = StartingWorld.ground,
 ) {
-    val world: World = World.from(WorldSnapshot(seed, rules))
+    val world: World = World.from(WorldSnapshot(seed, rules, terrain = ground))
     private val renderer = Renderer(config, world)
     private val judge = Judge(config)
 

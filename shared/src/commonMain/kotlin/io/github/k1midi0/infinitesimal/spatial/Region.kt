@@ -16,13 +16,20 @@ data class Cell(val x: Int, val y: Int)
  *
  * `hit` 为 false 表示那条射线一路没碰到东西，走满长度停下的。[blockerId] 是把它挡下来的那样东西
  * ——**它可能落在凸包的边界上，而不是内部**。
+ *
+ * **挡住射线的有两类：东西，与地形**（附录 A.15）。两类分别记在两个字段上，因为后面要做的事完全
+ * 不同：东西要进 [Region.hitIds] 从而进清单，而地形不进清单——同一个材质在网格里已经画过一次，
+ * 在清单里再列一遍就是两份可以不一致的数据。
  */
 data class RayPoint(
     val x: Int,
     val y: Int,
     val z: Int,
     val hit: Boolean,
+    /** 把它挡下来的**东西**的 id。地形挡下时是 null。 */
     val blockerId: String? = null,
+    /** 把它挡下来的**地形**的材质 id。东西挡下时是 null。 */
+    val blockerMaterial: String? = null,
 )
 
 /**
@@ -216,10 +223,11 @@ object RegionBuilder {
         val entities = world.all()
         val centerEntities = centers.mapNotNull { world.byId(it) }
         require(centerEntities.isNotEmpty()) { "一个中心都没有，框无处可谈" }
-        return trace(entities, centerEntities, levels)
+        return trace(world, entities, centerEntities, levels)
     }
 
     private fun trace(
+        world: World,
         entities: List<Entity>,
         centers: List<Entity>,
         /** 一个扇区一项的档位。同一档的射线长 `3k`。 */
@@ -254,11 +262,23 @@ object RegionBuilder {
                         val x = origin.x + (ux * t).roundToInt()
                         val y = origin.y + (uy * t).roundToInt()
                         val z = origin.z + (uz * t).roundToInt()
-                        val blockerId = blockers[Cell3(x, y, z)]
-                        if (blockerId != null && blockerId != c.id &&
-                            maxOf(abs(x - origin.x), abs(y - origin.y), abs(z - origin.z)) > reach
-                        ) {
+                        if (maxOf(abs(x - origin.x), abs(y - origin.y), abs(z - origin.z)) <= reach) {
+                            // **上一档够得着的那段距离之内的东西，这一档不再算阻挡**——不然射线还是
+                            // 被同一张桌子在第一步就拦下，扩大等于没扩。地形同样适用：脚下那一层永远
+                            // 在最近的一段里，不豁免它的话每次扩大的第一步都是撞地。
+                            continue
+                        }
+                        val cell = Cell3(x, y, z)
+                        val blockerId = blockers[cell]
+                        if (blockerId != null && blockerId != c.id) {
                             landed = RayPoint(x, y, z, hit = true, blockerId = blockerId)
+                            break
+                        }
+                        // 地形与东西**同级**（附录 A.15）。它排在东西后面：一样东西站在墙上时，模型
+                        // 要读到的是那样东西，而不是"这里有一堵墙"。
+                        val material = world.solidTerrainAt(cell)
+                        if (material != null) {
+                            landed = RayPoint(x, y, z, hit = true, blockerMaterial = material)
                             break
                         }
                     }

@@ -42,6 +42,10 @@ object RegionView {
     fun render(world: World, region: Region, actorId: String): String {
         val actor = world.byId(actorId)
         val layer = actor?.cell()?.z ?: 0
+        // **地形按发起者的高度问**：网格画的是"脚下踩的是什么"，而发起者的脚就是这个世界里唯一
+        // 有意义的参照高度（附录 A.15）。用米格层去问会永远问到那一层半土半空的格子，见
+        // `groundMaterialAt` 的注释。
+        val actorCm = actor?.z ?: 0
 
         // **covers 而不是 contains**：被射线打中的东西一定算在片里，哪怕它的格子落在凸包边界上
         // （它几乎总在边界上——挡住射线的那样东西，定义的就是这片空间的边）。
@@ -94,6 +98,10 @@ object RegionView {
             )
             appendLine()
 
+            // **这一片里出现过哪些材质。** 图例只列它们，不把整张材质表抄一遍——那张表已经在前缀里
+            // 了（`judge/MaterialView.kt`），而这一份输出是每一步都要重付的。
+            val materials = linkedSetOf<String>()
+
             if (region.width <= GRID_LIMIT && region.height <= GRID_LIMIT) {
                 append("      x=")
                 for (x in region.minX..region.maxX) append(pad(x.toString()))
@@ -102,11 +110,24 @@ object RegionView {
                     append(("  y=$y").padEnd(8))
                     for (x in region.minX..region.maxX) {
                         val here = drawn[Cell3(x, y, layer)]
+                        // **地形画在网格里，东西叠在上面**（A.15）。只有确实没有东西的格子才轮到
+                        // 地形——一样东西站在地上时，它的符号比脚下的材质重要。而**框外那一格不查
+                        // 地形**：查了就会把框外的东西漏进图例，而"框外一概不提"是这份输出的老规矩。
+                        val ground = if (region.contains(x, y)) {
+                            world.groundMaterialAt(Cell(x, y), actorCm)?.also { materials += it }
+                        } else {
+                            null
+                        }
                         append(
                             when {
                                 here != null -> pad(symbols[here.id].toString())
                                 // **框外留空**。这一句 if 就是"参差"的全部实现。
                                 !region.contains(x, y) -> pad(" ")
+                                // 地形与东西用**两套不重叠的符号**：东西是 `@` 与 `a`..`z`，材质是
+                                // 各自那个 ASCII 字符，所以叠在一张表上也不会有歧义。
+                                ground != null -> pad(world.materials.display(ground).toString())
+                                // 在框里、没东西、脚下也没地形。**这与框外不是一回事**，所以符号
+                                // 也不同：`.` 是"这一格空着"，空白是"这一格不归这一片管"。
                                 else -> pad(".")
                             },
                         )
@@ -114,11 +135,24 @@ object RegionView {
                     appendLine()
                 }
                 appendLine()
-                appendLine("@ 是发起者自己，字母是下面列出的东西，. 是这一片里的空格子，**空白是框外**。")
+                appendLine(
+                    "@ 是发起者自己，字母是下面列出的东西；**其余符号是地形材质**（见下面的图例）。" +
+                        ". 是这一片里既没有东西、脚下也没有地形的格子，**空白是框外**。",
+                )
             } else {
                 appendLine("这一片跨度太大（${region.width}×${region.height}），不画网格，只列格子范围和里面的东西。")
             }
             appendLine()
+
+            if (materials.isNotEmpty()) {
+                appendLine("【这一片里的材质】（网格里画的就是这些字符；更全的材质表在【世界材质表】里）")
+                // 按材质表的顺序列，不按扫描顺序——同一片地形换个扫描方向就换一个次序，读数就没法
+                // 横向比了。表里没有的 id 排在最后（它是坏的，不该混在正常材质中间）。
+                val ordered = world.materials.all.map { it.id }.filter { it in materials } +
+                    materials.filter { world.materials.byId(it) == null }
+                for (id in ordered) appendLine(materialLegend(world, id))
+                appendLine()
+            }
 
             appendLine("【层 $layer 上的东西】（一层 = 1 米）")
             if (onLayer.isEmpty()) {
@@ -160,6 +194,40 @@ object RegionView {
                 append("   ")
                 append(e.attributes.entries.joinToString("、") { "${it.key}=${it.value}" })
             }
+        }
+    }
+
+    /**
+     * 图例里的一行：**一行一种材质**。
+     *
+     * 这是 A.15 那条"按材质去重的图例"的落点。一片 16×16 的草地是**一行**，不是二百五十六行——
+     * 布局（哪一格是什么）在网格里，性质（这一种材质是什么）在这里，两处都不重复。
+     *
+     * **属性与规则书要印出来**，理由与 [describe] 里那段逐字相同：世界对一种材质的真相就装在
+     * `attributes` 与 `rulebook` 里，不印的话模型只剩一个名字，于是它要么心算、要么编。而"她踩过的
+     * 那片草会不会烧起来"这类判断，全靠这两样。
+     */
+    private fun materialLegend(world: World, id: String): String = buildString {
+        append("  ")
+        append(world.materials.display(id))
+        append(' ')
+        append(world.materials.name(id))
+        val material = world.materials.byId(id)
+        if (material == null) {
+            // 网格里那个符号是 `?`（`MaterialTable.display` 对不认识的 id 退成 `?`）。**说清是什么
+            // 坏了**，不要装作没事：这一格写的 id 不在表里，那是个数据错误。
+            append("（这一格写的材质 id 不在材质表里）")
+            return@buildString
+        }
+        if (!material.breakable) append("（挖不动）")
+        if (material.attributes.isNotEmpty()) {
+            append("   ")
+            append(material.attributes.entries.joinToString("、") { "${it.key}=${it.value}" })
+        }
+        val rules = material.rulebook.entries.joinToString("；") { it.text }
+        if (rules.isNotEmpty()) {
+            append("   规则：")
+            append(rules)
         }
     }
 

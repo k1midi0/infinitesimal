@@ -3,6 +3,7 @@ package io.github.k1midi0.infinitesimal.spike
 import io.github.k1midi0.infinitesimal.spatial.RegionBuilder
 import io.github.k1midi0.infinitesimal.spatial.RegionView
 import io.github.k1midi0.infinitesimal.spatial.cell
+import io.github.k1midi0.infinitesimal.session.StartingWorld
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
@@ -26,7 +27,11 @@ class FrameProbe {
     @Test
     fun frameText() {
         for ((name, extra) in windows()) {
-            val world = World.from(WorldSnapshot(ProbeSupport.tavernSeed() + extra))
+            // **带上地形。** 不带的话网格永远只画得出 `.`，而地形正是这一段里最该被看一眼的东西
+            // ——它的判据错一格（"半格土算不算实心"）就会让整个框塌掉，而输出里看不出任何异常。
+            val world = World.from(
+                WorldSnapshot(ProbeSupport.tavernSeed() + extra, terrain = StartingWorld.ground),
+            )
             val actor = world.byId("player")!!
             val region = RegionBuilder.of(world, listOf("player"))
 

@@ -2,10 +2,15 @@ package io.github.k1midi0.infinitesimal.session
 
 import io.github.k1midi0.infinitesimal.world.CharacterCard
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CELLS
 import io.github.k1midi0.infinitesimal.world.RuleEntry
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.Shapes
+import io.github.k1midi0.infinitesimal.world.TerrainColumn
+import io.github.k1midi0.infinitesimal.world.TerrainRun
+import io.github.k1midi0.infinitesimal.world.TerrainSnapshot
 import io.github.k1midi0.infinitesimal.world.WorldDepth
+import io.github.k1midi0.infinitesimal.world.terrainCellOf
 
 /**
  * 开局的那个世界。
@@ -40,6 +45,57 @@ object StartingWorld {
      * 那个错没有任何东西会报。
      */
     private val GROUND: Int = WorldDepth().surfaceCm
+
+    /**
+     * 开局的**地层剖面**（附录 A.15、A.16）。
+     *
+     * 从下往上三层：**一格岩层、石、土**。最底下那一格是 `breakable = false` 的岩层——它是"挖穿
+     * 世界底"这件事在数据上的唯一保险，所以它必须在，哪怕开局谁也挖不到那里。
+     *
+     * ## 范围就是 A.16 那个硬性圈
+     *
+     * 以玩家为心、半径 [HARD_RADIUS_CELLS]（64 格 = 32 米），**画成圆**；圈里每一列从第 0 格铺到
+     * 地面。那条"脚下不会踩空"的硬判据说的就是它。
+     *
+     * ## 它是内容，不是配置
+     *
+     * A.16 写着**没有代码默认剖面**——"这里该长什么样"是内容问题，该由生成器读着区划产出。这一份
+     * 手写的剖面是给**开局那一圈**用的，因为那时还没有生成器可调；生成器接上之后它该被换掉。
+     *
+     * ## 还没有标"已生成"
+     *
+     * [TerrainSnapshot.generated] 是空的。那是 A.16 那条"探索过 = 既定事实"的落点，而它要等生成器
+     * 才有东西读它——现在世界小得一眼看完，标了也没有人会去查。
+     */
+    val ground: TerrainSnapshot by lazy { layGround(WorldDepth()) }
+
+    private fun layGround(depth: WorldDepth): TerrainSnapshot {
+        // 圆心跟着玩家走，不另写一份坐标——两份写法迟早会漂。
+        val seat = tavern().first { it.id == PLAYER }
+        val cx = terrainCellOf(seat.x)
+        val cy = terrainCellOf(seat.y)
+        // 土与石的分界放在七成深处：上面那七十七层（3.85 米）是土，下面是石。
+        val stoneTop = depth.bottom + (depth.surface - depth.bottom) * 7 / 10
+        val columns = buildList {
+            for (dx in -HARD_RADIUS_CELLS..HARD_RADIUS_CELLS) {
+                for (dy in -HARD_RADIUS_CELLS..HARD_RADIUS_CELLS) {
+                    if (dx * dx + dy * dy > HARD_RADIUS_CELLS * HARD_RADIUS_CELLS) continue
+                    add(
+                        TerrainColumn(
+                            x = cx + dx,
+                            y = cy + dy,
+                            runs = listOf(
+                                TerrainRun("bedrock", depth.bottom, depth.bottom),
+                                TerrainRun("stone", depth.bottom + 1, stoneTop),
+                                TerrainRun("soil", stoneTop + 1, depth.surface),
+                            ),
+                        ),
+                    )
+                }
+            }
+        }
+        return TerrainSnapshot(columns = columns, depth = depth)
+    }
 
     /**
      * 开局那张酒馆。
