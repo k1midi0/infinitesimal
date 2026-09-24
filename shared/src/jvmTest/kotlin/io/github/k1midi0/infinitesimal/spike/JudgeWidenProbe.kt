@@ -47,6 +47,8 @@ class JudgeWidenProbe {
         val widenings: Int,
         /** 模型填了哪些方向。`—` 表示一次都没扩。 */
         val asked: String,
+        /** 第一步报了什么。`—` 是驳回或重试用尽，`（无）` 是一个都没报。 */
+        val aligned: String,
         val outcome: String,
         val ms: Long,
         val detail: String,
@@ -93,11 +95,11 @@ class JudgeWidenProbe {
             println("「看大一点」重复采样：${scenarios.size} 个场景 × $rounds 轮，每轮开新世界")
             println("═".repeat(112))
             println(
-                "%-22s %-4s %-6s %-6s %-16s %-14s %-8s %s".format(
-                    "场景", "轮", "请求", "看大", "填的方向", "结果", "耗时", "细节",
+                "%-22s %-4s %-6s %-6s %-16s %-18s %-14s %-8s %s".format(
+                    "场景", "轮", "请求", "看大", "填的方向", "第一步报的", "结果", "耗时", "细节",
                 ),
             )
-            println("─".repeat(112))
+            println("─".repeat(132))
 
             repeat(rounds) { r ->
                 for (s in scenarios) {
@@ -122,15 +124,16 @@ class JudgeWidenProbe {
                         requests = judge.requestCount - requestsBefore,
                         widenings = judge.viewWidenings,
                         asked = askedOf(judge),
+                        aligned = alignedOf(judge),
                         outcome = outcomeOf(judgment),
                         ms = ms,
                         detail = detailOf(judgment),
                     )
                     rows += row
                     println(
-                        "%-22s %-4d %-6d %-6d %-16s %-14s %-8s %s".format(
+                        "%-22s %-4d %-6d %-6d %-16s %-18s %-14s %-8s %s".format(
                             row.scenario, row.round, row.requests, row.widenings, row.asked,
-                            row.outcome, "${row.ms}ms", row.detail,
+                            row.aligned, row.outcome, "${row.ms}ms", row.detail,
                         ),
                     )
                 }
@@ -145,16 +148,28 @@ class JudgeWidenProbe {
     private fun askedOf(judge: Judge): String =
         judge.viewDirections.joinToString("、") { it?.label ?: "整体" }.ifEmpty { "—" }
 
+    /**
+     * 第一步**报了什么**。**`—` 是驳回或重试用尽；`（无）` 是一个都没报。**
+     *
+     * 「报空」与「驳回」在结果那一列长得一样（都让第二步白跑一趟），所以必须分开看。
+     */
+    private fun alignedOf(judge: Judge): String = when (val a = judge.alignedTargets) {
+        null -> "—"
+        else -> a.ifEmpty { listOf("（无）") }.joinToString("、")
+    }
+
     private fun outcomeOf(j: Judgment): String = when (j) {
         is Judgment.Applied -> "成立"
         is Judgment.RejectedWorld -> "驳回@${j.stage}"
         is Judgment.FailedProtocol -> "协议失败"
+        is Judgment.Nothing -> "无对象"
     }
 
     private fun detailOf(j: Judgment): String = when (j) {
         is Judgment.Applied -> "对齐 ${j.targets.ifEmpty { listOf("（无）") }.joinToString("、")}｜后果 ${j.consequences.size} 条"
         is Judgment.RejectedWorld -> j.reason.replace('\n', ' ').take(46)
         is Judgment.FailedProtocol -> j.problems.firstOrNull().orEmpty().take(46)
+        is Judgment.Nothing -> "第一步一个目标都没报，第二步没有跑"
     }
 
     /** 每个场景一行汇总。**要看的就三件**：扩过几次、在哪一步驳回、耗时的中位数。 */

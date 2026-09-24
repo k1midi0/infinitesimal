@@ -202,6 +202,10 @@ class JudgeProbeSpike {
                 println("  ⚠ 协议内失败（尝试 ${judgment.attempts} 次）——**不示给玩家**：")
                 judgment.problems.forEach { println("     · $it") }
             }
+
+            is Judgment.Nothing -> {
+                println("  ○ 第一步一个目标都没报（尝试 ${judgment.attempts} 次）——**第二步按设计没有跑**，世界没动")
+            }
         }
         println("  总用时 $elapsed ms｜世界现在有：${world.all().joinToString("、") { it.id }}")
         return judgment

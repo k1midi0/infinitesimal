@@ -97,6 +97,13 @@ sealed interface Judgment {
 
     /** 我们这边没救回来。**不示给玩家**，记日志、当这次动作没发生。 */
     data class FailedProtocol(val problems: List<String>, val attempts: Int) : Judgment
+
+    /**
+     * 这次动作**不落在任何东西上**：第一步一个目标都没报，第二步按设计根本没有跑。
+     *
+     * 它既不是驳回（没有东西可以驳回），也不是失败（协议一路正常）。世界没动。
+     */
+    data class Nothing(val attempts: Int) : Judgment
 }
 
 /**
@@ -149,6 +156,15 @@ class Judge(
      * 它是新加的一只可选参数值不值，全看这里。
      */
     var viewDirections: List<Direction?> = emptyList()
+        private set
+
+    /**
+     * 最近一次判定里，第一步**报了什么**。
+     *
+     * **`null` = 驳回，或重试用尽；空列表 = 一个都没报。**「报空」与「驳回」在结果表上长得一样
+     * （都让第二步白跑一趟），所以必须分开记——不记的话诊断只能靠反推（§14.16 就是这么推出来的）。
+     */
+    var alignedTargets: List<String>? = null
         private set
 
     // ── 第一步：对齐指向对象 ────────────────────────────────────────────────────────
@@ -257,12 +273,14 @@ class Judge(
     suspend fun judgeAndCommit(world: World, request: JudgeRequest): Judgment {
         // **一次判定一个预算，两步共用。** 第一步扩过之后，第二步拿到的是已经大了的那个框。
         val view = ViewBudget(world, request.actorId, request.centers)
+        val turn = Turn(world, request, view)
         return try {
-            runJudgmentOn(Turn(world, request, view))
+            runJudgmentOn(turn)
         } finally {
             // 提前返回的几条路也要记上——驳回的那一次同样扩过，那也是成本。
             viewWidenings = view.widenings
             viewDirections = view.asked
+            alignedTargets = turn.alignedTargets
         }
     }
 
@@ -288,6 +306,10 @@ class Judge(
         var alignAttempts: Int = 0
             private set
 
+        /** 第一步报了什么。**`null` = 还没跑、或重试用尽；空列表 = 一个都没报。** */
+        var alignedTargets: List<String>? = null
+            private set
+
         /**
          * 第一步：对齐指向对象。
          *
@@ -299,7 +321,12 @@ class Judge(
             for (attempt in 1..maxAttempts) {
                 alignAttempts = attempt
                 when (val alignment = alignTargets(world, request, problems, view)) {
-                    is TargetAlignment.Aligned, is TargetAlignment.Rejected -> return alignment
+                    is TargetAlignment.Aligned -> {
+                        alignedTargets = alignment.targets
+                        return alignment
+                    }
+
+                    is TargetAlignment.Rejected -> return alignment
                     is TargetAlignment.Malformed -> problems = alignment.problems
                 }
             }
@@ -313,6 +340,11 @@ class Judge(
          * （§4.7）。这里要的正是"最后确认过的那个集合"。
          */
         suspend fun finish(targets: List<String>): Judgment {
+            // **空目标没有第二步。** 第一步报空 = 这次动作不指向也不牵涉任何东西，那就不存在「后果」
+            // 可言；再跑一趟只会让模型把同一句话换个说法驳回，白烧 1.5–3 秒（§14.16 的尾部延迟有
+            // 一半是这么来的）。
+            if (targets.isEmpty()) return Judgment.Nothing(alignAttempts)
+
             val problems = mutableListOf<String>()
             for (attempt in 1..maxAttempts) {
                 when (val verdict = proposeEffects(world, request, targets, problems.toList(), view)) {
@@ -441,8 +473,11 @@ class Judge(
         appendLine("- **选少了就补**：动作说的是「桌上的东西」，桌上每一件都得报。")
         appendLine("- **选多了就剔除**：跟这次动作无关的不要报。")
         appendLine("- **选错了就换成对的**。")
-        appendLine("- 这次动作确实不作用在任何东西上（例如「我环顾四周」），那就一个都不报——**那是合法的，不是驳回**。")
-        appendLine("- 只有当你完全看不出它要对什么做时才调 ${JudgeTools.REJECT_TARGETS}。")
+        appendLine("- 报的东西**包括会被这次动作影响到的角色**（「我喊了一嗓子」——旁边那个人也算，虽然它没被指着）。")
+        appendLine()
+        appendLine("一个都不报，只在**这次动作确实不指向、也不牵涉任何东西**时才合法（「我环顾四周」「我打了个哈欠」）。")
+        appendLine()
+        appendLine("**动作点名了一样东西、而这一片里没有它**——这是另一回事：调 ${JudgeTools.REJECT_TARGETS}，理由说清「这一片里没有……」。**别报空。** 报空是「这次动作没有对象」，驳回是「有对象，但它不在这里」——这两件事对发起者是不同的答案。")
         appendLine()
         appendLine("**不要在这一步推演后果**，那是下一步的事。")
         appendRetryNotes(retryNotes)

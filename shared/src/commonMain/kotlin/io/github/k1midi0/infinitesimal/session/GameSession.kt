@@ -342,6 +342,12 @@ class GameSession(
                 say(LogLine.Kind.NOTE, "（$which；${elapsed} ms）")
             }
 
+            is Judgment.Nothing -> {
+                // 第一步一个目标都没报 = 这次动作不指向也不牵涉任何东西。**第二步根本没有跑**，
+                // 所以这里既没有驳回的理由、也没有后果可以报。
+                say(LogLine.Kind.NOTE, "（这一次动作没有落在任何东西上；世界没动，第二步没有跑）")
+            }
+
             is Judgment.FailedProtocol -> {
                 say(LogLine.Kind.PROBLEM, "协议内失败——按设计不给玩家看，这里显示是为了调试：")
                 judgment.problems.forEach { say(LogLine.Kind.NOTE, "   · $it") }
