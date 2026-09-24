@@ -839,7 +839,10 @@ class Judge(
         if (request.selected.isEmpty()) {
             appendLine("（什么都没选）")
         } else {
-            request.selected.forEach { appendLine("- $it") }
+            // 与第二步同一条：**距离代码算好写在这一行里**，不让模型拿坐标自己推。
+            request.selected.forEach { appendLine(thingLine(world, request.actorId, it)) }
+            appendLine()
+            appendLine(DISTANCE_IS_GIVEN)
         }
         appendLine()
         appendLine("判断这次动作**实际作用于哪些东西**，然后用 ${JudgeTools.TARGET} 逐个报出来：")
@@ -871,6 +874,47 @@ class Judge(
         appendRetryNotes(retryNotes)
     }
 
+    /**
+     * 清单里的那一行：**发起者到它的距离直接算好写上去**。
+     *
+     * 用户定的：*测量工具保留，但先自动算好动作角色和被指向物体/角色的距离*。理由是实测出来的
+     * （§14.26）——把这件事留给模型，它会为此烧掉几百到四千多个思维 token；而代码算这个数是一瞬间
+     * 的事，**而且答案不会有错**。清单里本来就有厘米坐标，让模型自己去减、去开方，是白给的出错机会。
+     *
+     * **为什么仍然留着 [JudgeTools.DISTANCE]。** 代码只算得出"发起者到被点名的东西"这一种；两样
+     * **都不是发起者**的东西之间有多远、或者发起者到一样**没被写进清单**的东西有多远，只有模型问了
+     * 才知道它想问哪一对。
+     *
+     * 三个数都给，理由与 [io.github.k1midi0.infinitesimal.spatial.Distance] 上那段相同：规矩书说的
+     * "一格以内"指的是格距，高度差是另一回事，合成一个标量等于替规矩做了决定。
+     */
+    private fun thingLine(world: World, actorId: String, id: String): String {
+        val thing = world.byId(id) ?: return "- $id"
+        val head = "- ${thing.id}（${thing.label}）"
+        if (thing.id == actorId) return "$head　就是发起者本人"
+        val actor = world.byId(actorId) ?: return head
+        val d = distanceBetween(actor, thing)
+        return buildString {
+            append(head)
+            append("　格距 ${d.cells} 格")
+            append("；高度差 ${abs(d.dzCm)} 厘米")
+            append(
+                when {
+                    d.dzCm > 0 -> "（它比发起者高）"
+                    d.dzCm < 0 -> "（它比发起者低）"
+                    else -> "（与发起者同高）"
+                },
+            )
+            append("；直线 ${d.straightCm} 厘米")
+        }
+    }
+
+    /**
+     * 那几行清单**每次都要带的一句话**。不写它，模型会照着坐标自己再算一遍——而实测里它正是这么干的。
+     */
+    private val DISTANCE_IS_GIVEN =
+        "**每一样后面都写好了它与发起者的距离，要判够不够得着就看那里**——不要自己拿坐标算，那是白给的出错机会。"
+
     private fun effectPrompt(
         world: World,
         request: JudgeRequest,
@@ -887,7 +931,11 @@ class Judge(
             if (targets.isEmpty()) {
                 appendLine("（不作用于任何具体的东西）")
             } else {
-                targets.forEach { appendLine("- $it") }
+                // 距离**代码算好写在这一行里**（用户定的：测量工具保留，但先自动算好发起者与被指向
+                // 东西的距离）。清单里本来就印着厘米坐标，让模型自己减、自己开方，是白给的出错机会。
+                targets.forEach { appendLine(thingLine(world, request.actorId, it)) }
+                appendLine()
+                appendLine(DISTANCE_IS_GIVEN)
             }
             appendTargetCards(world, request.actorId, targets)
             // **第一步问过的距离带过来。** 同一次动作的两步看的是同一个世界，答案不会变；不带上，

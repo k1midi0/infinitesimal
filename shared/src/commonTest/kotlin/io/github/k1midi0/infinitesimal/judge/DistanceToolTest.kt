@@ -28,11 +28,11 @@ class DistanceToolTest {
 
     private fun tavern(): World = World.from(WorldSnapshot(StartingWorld.tavern()))
 
-    private fun request(intention: String) = JudgeRequest(
+    private fun request(intention: String, selected: List<String> = emptyList()) = JudgeRequest(
         actorId = "player",
         actorLabel = "你",
         intention = intention,
-        selected = emptyList(),
+        selected = selected,
         centers = emptyList(),
     )
 
@@ -102,6 +102,53 @@ class DistanceToolTest {
     fun theEffectStepOffersItToo() = runBlocking {
         assertTrue(JudgeTools.EFFECTS.any { it.function.name == JudgeTools.DISTANCE })
         assertTrue(JudgeTools.TARGETING.any { it.function.name == JudgeTools.DISTANCE })
+    }
+
+    /**
+     * **发起者到被点名的东西的距离，代码先算好写进清单里。**
+     *
+     * 用户定的：*测量工具保留，但先自动算好动作角色和被指向物体/角色的距离*。清单里本来就印着厘米
+     * 坐标，让模型自己减、自己开方，是白给的出错机会——而它真会那么干（§14.24）。
+     */
+    @Test
+    fun theActorsDistanceToWhatItPointedAtIsAlreadyInThePrompt() = runBlocking {
+        val scripted = Scripted(
+            listOf(
+                turn("t1", JudgeTools.TARGET, """{"id":"wine_cup"}"""),
+                turn("e1", JudgeTools.NO_CHANGE, """{"note":"够得着。"}"""),
+            ),
+        )
+        val judge = Judge(LlmClient(config, scripted.client), maxAttempts = 2)
+
+        judge.judgeAndCommit(
+            tavern(),
+            request("我把桌上那只酒杯端起来", selected = listOf("wine_cup")),
+        )
+
+        // 第一步：玩家勾了酒杯，那一行就该带着距离。
+        assertTrue(scripted.bodies[0].contains("格距 1 格"), scripted.bodies[0])
+        assertTrue(scripted.bodies[0].contains("不要自己拿坐标算"), scripted.bodies[0])
+        // 第二步：**这一步才是判「够不着」的地方**，那一行同样带着距离。
+        assertTrue(scripted.bodies[1].contains("格距 1 格"), scripted.bodies[1])
+        // 既然已经写好了，它就不该再问一遍。
+        assertEquals(emptyList(), judge.distancePairs, "写进清单之后它不该还要问")
+    }
+
+    /** 发起者自己那一行没有"距离"可算，得说清楚，不能让 0 格读成"贴在一起"。 */
+    @Test
+    fun theActorsOwnLineSaysItIsTheActorNotZeroCellsAway() = runBlocking {
+        val scripted = Scripted(
+            listOf(
+                turn("t1", JudgeTools.TARGET, """{"id":"player"}"""),
+                turn("e1", JudgeTools.NO_CHANGE, """{"note":"衣襟本来就不乱。"}"""),
+            ),
+        )
+        val judge = Judge(LlmClient(config, scripted.client), maxAttempts = 2)
+
+        judge.judgeAndCommit(tavern(), request("我低头理了理衣襟", selected = listOf("player")))
+
+        assertTrue(scripted.bodies[0].contains("就是发起者本人"), scripted.bodies[0])
+        assertTrue(!scripted.bodies[0].contains("格距 0 格"), scripted.bodies[0])
     }
 
     /**
