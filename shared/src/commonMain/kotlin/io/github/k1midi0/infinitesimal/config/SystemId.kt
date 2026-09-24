@@ -37,6 +37,15 @@ enum class SystemId(val userId: String) {
 
     /** 摘要与笔记的整理。 */
     SUMMARIZER("inf-summarizer"),
+
+    /**
+     * 建模：把一句要求画成一份体素形状（附录 A.9–A.11）。
+     *
+     * **独占一池，不与 [DIRECTOR] 或 [JUDGE] 合。** 它的 system 是整段网格语法——几百 token 的静态
+     * 前缀，而它每次调用都逐字相同。这是这套东西里**缓存最该命中的一段**：一个物体一次建模，而同一
+     * 张桌子会被造很多次（A.9 的"预设是工厂"）。混进别的池，这段前缀就要和别人的抢缓存单元。
+     */
+    MODELER("inf-modeler"),
     ;
 
     companion object {

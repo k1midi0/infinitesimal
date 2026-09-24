@@ -56,6 +56,13 @@ object Committer {
 
                 is Consequence.ChangeAppearance -> world.invalidateAppearance(consequence.id)
 
+                // 建模造出来的形状。**它排在 Spawn/Replace 后面**（ShapeLog.consequences 的注释），
+                // 所以到这里 `byId` 找得到那个刚进世界的新东西。
+                is Consequence.SetShape -> world.byId(consequence.id)?.let {
+                    world.put(it.copy(shape = consequence.shape))
+                    world.invalidateAppearance(consequence.id)
+                }
+
                 is Consequence.Destroy -> world.remove(consequence.id)
 
                 is Consequence.Spawn -> world.put(consequence.entity)
@@ -95,6 +102,8 @@ object Committer {
                 }
 
                 is Consequence.ChangeAppearance -> requireLive(consequence.id, "外表变化")
+
+                is Consequence.SetShape -> requireLive(consequence.id, "造形状")
 
                 is Consequence.Destroy -> {
                     requireLive(consequence.id, "摧毁")

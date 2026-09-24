@@ -13,6 +13,7 @@ import io.github.k1midi0.infinitesimal.llm.ToolCall
 import io.github.k1midi0.infinitesimal.llm.Usage
 import io.github.k1midi0.infinitesimal.spatial.Direction
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.VOXEL_CM
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.rendered
 import kotlinx.coroutines.flow.toList
@@ -157,6 +158,13 @@ class Judge(
      * 不是因为准备降档。
      */
     val effort: ReasoningEffort = ReasoningEffort.HIGH,
+    /**
+     * 建模那一段（附录 A.9）。`model_shape` 被调用时整个转交给它。
+     *
+     * **默认复用判定的这个 client**，于是两者会共用一个缓存池。config 那条构造器给的是独立的一份
+     * （`SystemId.MODELER`）——共用只是"拿不到配置时也还能跑"的兜底，不是想要的形态。
+     */
+    private val modeler: ShapeModeler = ShapeModeler(client),
 ) {
     /** 给配置确实是固定值的地方用。**强制落到 [SystemId.JUDGE] 那个缓存池**（§14.8）。 */
     constructor(
@@ -167,6 +175,9 @@ class Judge(
         LlmClient(config.copy(userId = SystemId.JUDGE)),
         maxAttempts,
         effort,
+        // 建模独占一池（SystemId.MODELER 的注释）：它的前缀是几百 token 的网格语法、每次都逐字相同，
+        // 是这套东西里最该命中缓存的一段。
+        ShapeModeler(LlmClient(config.copy(userId = SystemId.MODELER))),
     )
 
     /** 两步加起来的模型调用次数。 */
@@ -241,6 +252,9 @@ class Judge(
             view = view,
             variables = variables,
             calc = calc,
+            // 第一步不建模（`model_shape` 只挂在 EFFECTS 那组里），给一份空的只是为了让这一步与第二步
+            // 走同一条 `call`。
+            shaped = ShapeLog(),
         )
         val calls = answered.proposals
         if (calls.isEmpty()) {
@@ -298,6 +312,7 @@ class Judge(
         retryNotes: List<String> = emptyList(),
         view: ViewBudget = ViewBudget(world, request.actorId, request.centers),
         calc: CalcLog = CalcLog(),
+        shapeLog: ShapeLog = ShapeLog(),
     ): Verdict {
         val variables = Variables.of(world, listOf(request.actorId) + targets)
         val answered = call(
@@ -309,6 +324,7 @@ class Judge(
             view = view,
             variables = variables,
             calc = calc,
+            shaped = shapeLog,
         )
         val calls = answered.proposals
         if (calls.isEmpty()) return Verdict.Empty("第二步没有调用任何工具" + answered.diagnosis())
@@ -425,6 +441,13 @@ class Judge(
         internal val calc = CalcLog()
 
         /**
+         * 这次判定里建模造出来的形状。与 [calc] 同一个位置、同一条理由：这次动作的属性，两步共用。
+         *
+         * 实际上只有第二步会用到它——`model_shape` 只挂在 `EFFECTS` 那组工具里。
+         */
+        internal val shaped = ShapeLog()
+
+        /**
          * 第一步：对齐指向对象。
          *
          * 返回 [TargetAlignment.Malformed] 表示**重试用尽**（不是"这一次格式不对"）——模型修不好
@@ -461,7 +484,7 @@ class Judge(
 
             val problems = mutableListOf<String>()
             for (attempt in 1..maxAttempts) {
-                when (val verdict = proposeEffects(world, request, targets, problems.toList(), view, calc)) {
+                when (val verdict = proposeEffects(world, request, targets, problems.toList(), view, calc, shaped)) {
                     is Verdict.Rejected ->
                         return Judgment.RejectedWorld(verdict.reason, Stage.EFFECT, attempt)
 
@@ -473,7 +496,13 @@ class Judge(
                     is Verdict.Malformed -> problems += verdict.problems
 
                     is Verdict.Proposed -> when (
-                        val result = Committer.apply(world, verdict.consequences, verdict.affected)
+                        val result = Committer.apply(
+                            world,
+                            // **建模造的形状接在模型给的那些后面。** 它作用的通常正是这一批里刚 spawn
+                            // 或 replace 出来的新东西，而影子状态是按顺序走的（见 ShapeLog.consequences）。
+                            verdict.consequences + shaped.consequences(),
+                            verdict.affected,
+                        )
                     ) {
                         is Committer.Applied ->
                             return Judgment.Applied(targets, result.consequences, result.affected, attempt)
@@ -507,6 +536,7 @@ class Judge(
         view: ViewBudget,
         variables: Map<String, Double>,
         calc: CalcLog,
+        shaped: ShapeLog,
     ): Answered {
         val messages = mutableListOf(ChatMessage.system(SYSTEM), ChatMessage.user(user))
         val proposals = mutableListOf<RawCall>()
@@ -517,7 +547,8 @@ class Judge(
          * 判据是"它有没有提议改世界"，不是"它是不是 `widen_view`"——把 `calc` 加进来的那天，
          * 原先那个写死 `WIDEN_VIEW` 的判断会让它被当成一条后果，然后整轮判定报协议内失败。
          */
-        fun isQuery(name: String): Boolean = name == JudgeTools.WIDEN_VIEW || name == JudgeTools.CALC
+        fun isQuery(name: String): Boolean =
+            name == JudgeTools.WIDEN_VIEW || name == JudgeTools.CALC || name == JudgeTools.MODEL_SHAPE
 
         while (true) {
             requestCount++
@@ -558,6 +589,8 @@ class Judge(
 
                     JudgeTools.CALC -> calculate(c, variables, calc)
 
+                    JudgeTools.MODEL_SHAPE -> modelShape(c, shaped)
+
                     else ->
                         // 同一轮里既报了东西又要查询。**不能把这个报的东西丢掉**——它是模型
                         // 已经做出的判断，而这一轮之后它没有理由再报一次。
@@ -582,6 +615,40 @@ class Judge(
         return when (val result = Calc.evaluate(args.expression, variables)) {
             is Calc.Result.Value -> "${args.expression} = ${Calc.format(result.value)}"
             is Calc.Result.Failed -> "算不出来：${result.problem}"
+        }
+    }
+
+    /**
+     * 把一次 `model_shape` 整个转交给建模那一段（[ShapeModeler]），并把造出来的形状记进 [ShapeLog]。
+     *
+     * **造不出来不是协议内失败**，与 [calculate] 同一条理由：那是模型可以自己绕开的一步——换一句更
+     * 具体的要求再试，或者干脆不用形状、接着列后果。把它当成 `Malformed` 会让整轮判定重来，而重来时
+     * 它手里并没有"是那一句要求画不出来"这条信息。
+     *
+     * 回给它的**只有尺寸与格数，不回那张网格**：判定不需要看见格子，它需要的是"这样东西多大"；而一
+     * 整张网格会吃掉这一轮里本该留给后果列表的注意力。
+     */
+    private suspend fun modelShape(call: RawCall, log: ShapeLog): String {
+        val args = decode(ModelArgs.serializer(), call)
+            ?: return "${JudgeTools.MODEL_SHAPE} 的参数不是合法 JSON：${call.arguments.take(160)}"
+        if (args.id.isBlank()) return "${JudgeTools.MODEL_SHAPE} 的 id 不能空——形状是给哪一样东西造的。"
+        if (args.brief.isBlank()) {
+            return "${JudgeTools.MODEL_SHAPE} 的 brief 不能空——要给一句能独立读懂的要求。"
+        }
+
+        return when (val result = modeler.model(args.brief)) {
+            is ShapeModeler.Result.Failed -> buildString {
+                append("没有造出形状：")
+                append(result.problems.joinToString("；").take(400))
+                append("。你可以换一句更具体的要求再试一次，或者不用形状、直接接着列后果。")
+            }
+
+            is ShapeModeler.Result.Modeled -> {
+                log.record(args.id, result.shape)
+                val size = result.shape.extent
+                "造好了：已经记在 ${args.id} 名下，长 ${size.x + VOXEL_CM} 宽 ${size.y + VOXEL_CM} " +
+                    "高 ${size.z + VOXEL_CM} 厘米，占 ${result.shape.cellCount} 个格。你接着干。"
+            }
         }
     }
 
@@ -825,6 +892,9 @@ class Judge(
     /** `widen_view` 的参数。**`direction` 是可选的**——这是这个项目里第一只真正带可选参数的工具。 */
     @Serializable
     private data class WidenArgs(val direction: String? = null)
+
+/** `model_shape` 的两个参数。 */
+@Serializable private data class ModelArgs(val id: String = "", val brief: String = "")
 
     private fun <T> decode(serializer: KSerializer<T>, call: RawCall): T? = try {
         JSON.decodeFromString(serializer, call.arguments)

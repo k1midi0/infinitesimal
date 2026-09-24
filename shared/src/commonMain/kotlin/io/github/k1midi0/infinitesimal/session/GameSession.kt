@@ -386,6 +386,7 @@ class GameSession(
         is Consequence.Destroy -> "${name(c.id)} 从世界里消失了"
         is Consequence.Spawn -> "出现了「${c.entity.label}」"
         is Consequence.Replace -> "${name(c.oldId)} 变成了「${c.entity.label}」（另一个东西）"
+        is Consequence.SetShape -> "${name(c.id)} 有了形状（占 ${c.shape.cellCount} 个格）"
     }
 
     /** 给界面显示"这是什么、在哪"。**位置只来自坐标**——关系不存成事实（附录 A.5）。 */

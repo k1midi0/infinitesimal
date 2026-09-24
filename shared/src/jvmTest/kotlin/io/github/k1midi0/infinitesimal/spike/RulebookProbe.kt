@@ -266,6 +266,7 @@ class RulebookProbe {
         is Consequence.Destroy -> "摧毁 ${c.id}"
         is Consequence.Spawn -> "新增 ${c.entity.id}"
         is Consequence.Replace -> "${c.oldId} 换成 ${c.entity.id}"
+        is Consequence.SetShape -> "造了形状 ${c.id}（${c.shape.cellCount} 格）"
     }
 
     private fun aggregate(rows: List<Row>) {

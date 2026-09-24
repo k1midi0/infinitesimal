@@ -41,6 +41,17 @@ object JudgeTools {
      */
     const val CALC = "calc"
 
+    /**
+     * **两步共用的第三只查询手**：给一样东西造形状（附录 A.9）。
+     *
+     * 与 [WIDEN_VIEW]、[CALC] 同类：不提议改世界，调用了这一轮就接着往下走，结果灌回来再问一次。
+     *
+     * 它在这里的位置是被用户那一句定下来的：**物品本身就有建模，只有生成新物品时才需要建模，谁需要
+     * 谁调用。** 所以判定用它的场合很窄——**这一步刚让世界多出一个新东西**（桌子被劈成两半、树上多了
+     * 个果子），而那个新东西还没有形状。它也是导演将来会调的同一只手。
+     */
+    const val MODEL_SHAPE = "model_shape"
+
     // ── 第二步：列出后果 ──────────────────────────────────────────────────────────
 
     const val MOVE = "move"
@@ -87,6 +98,17 @@ object JudgeTools {
 
     private fun int(name: String, description: String) = name to PropertySchema("integer", description)
     private fun text(name: String, description: String) = name to PropertySchema("string", description)
+
+    private val MODEL = tool(
+        MODEL_SHAPE,
+        "给一样东西造形状。**只在你这一步让世界多出一个新东西、而它还没有形状时才用**" +
+            "（桌子被劈成两半、树上结了个果子）。形状由另一个专管画图的模型画，它看不到你看到的这一切——" +
+            "所以 brief 要写成一句**能独立读懂**的要求，把东西是什么、多大、什么样子说清楚，" +
+            "例如「被从中间劈开的橡木方桌的一半，断面粗糙」。它会给你造好的形状的尺寸与格数，然后你接着干。" +
+            "旧的、本来就有的东西不必造——它们本来就有形状。",
+        text("id", "要造形状的那样东西的 id。可以是这一步刚 spawn / replace 出来的"),
+        text("brief", "一句能独立读懂的要求，说清要造的是什么、多大、什么样子"),
+    )
 
     private val WIDEN = tool(
         WIDEN_VIEW,
@@ -195,5 +217,6 @@ object JudgeTools {
         ),
         WIDEN,
         CALC_TOOL,
+        MODEL,
     )
 }

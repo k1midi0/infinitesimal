@@ -2,6 +2,7 @@ package io.github.k1midi0.infinitesimal.judge
 
 import io.github.k1midi0.infinitesimal.world.ChangeLevel
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.VoxelShape
 
 /**
  * 判定系统提出的一条后果。**它是提议，不是事实**——校验与落库在 [Committer]。
@@ -67,5 +68,20 @@ sealed interface Consequence {
     data class Replace(val oldId: String, val entity: Entity) : Consequence {
         override val targetId: String get() = oldId
         override val level: ChangeLevel get() = ChangeLevel.REPLACED
+    }
+
+    /**
+     * 给一样东西安上形状——建模的产物（附录 A.9）。
+     *
+     * **它不是模型能直接调的一只手。** 它是 `model_shape` 造出形状之后由**代码补上**的一条后果，
+     * 然后与模型给的那些一起走 [Committer]。绕这一圈而不是当场写进世界，是因为"这个 id 是这一批里
+     * 刚 spawn 出来的、还是本来就有"，只有 [Committer] 的影子状态知道；当场写会漏掉那条判断。
+     *
+     * 算**外表变化**：几何变了，它既有的描述不再是它的样子（§7.1）。新造出来的东西还没有描述，
+     * 所以这一条对它们是白拿的。
+     */
+    data class SetShape(val id: String, val shape: VoxelShape) : Consequence {
+        override val targetId: String get() = id
+        override val level: ChangeLevel get() = ChangeLevel.APPEARANCE
     }
 }

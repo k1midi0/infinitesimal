@@ -44,6 +44,9 @@ class JudgeProbeSpike {
         is Consequence.Replace ->
             "Replace → ${c.oldId} 变成 ${c.entity.id}「${c.entity.label}」" +
                 "(${c.entity.x}, ${c.entity.y}) 层${c.entity.z}  [${c.level}]"
+        is Consequence.SetShape ->
+            "SetShape → ${c.id}  ${c.shape.cellCount} 格  最大角 (${c.shape.extent.x}, ${c.shape.extent.y}, " +
+                "${c.shape.extent.z})  [${c.level}]"
     }
 
     @Test
