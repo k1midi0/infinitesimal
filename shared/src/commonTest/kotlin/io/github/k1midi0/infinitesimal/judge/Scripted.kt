@@ -39,13 +39,41 @@ internal fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
 
 internal fun sse(vararg frames: String) = frames.joinToString("") { "data: $it\n\n" } + "data: [DONE]\n\n"
 
+/**
+ * 终点在最后一帧报的用量。
+ *
+ * 真端点在最后一个内容块之后、`data: [DONE]` 之前总会补一块 usage（§1.5）。假端点要能照样补，
+ * 否则"思维链 token 有没有记进账本"这件事在离线测试里根本无从验起——而那正是延迟那一节
+ * （§14.22）唯一能拆开「等」的量。
+ */
+internal data class Tokens(
+    val prompt: Int,
+    val cacheHit: Int = 0,
+    val completion: Int,
+    val reasoning: Int = 0,
+) {
+    fun frame(): String =
+        """{"choices":[],"usage":{"prompt_tokens":$prompt,"completion_tokens":$completion,""" +
+            """"total_tokens":${prompt + completion},"prompt_cache_hit_tokens":$cacheHit,""" +
+            """"prompt_cache_miss_tokens":${prompt - cacheHit},""" +
+            """"completion_tokens_details":{"reasoning_tokens":$reasoning}}}"""
+}
+
 /** 一轮工具调用。`reasoning` 非空时会带上 `reasoning_content`——那正是回传时的硬约束。 */
-internal fun turn(id: String, name: String, args: String, reasoning: String = ""): String {
+internal fun turn(
+    id: String,
+    name: String,
+    args: String,
+    reasoning: String = "",
+    tokens: Tokens? = null,
+): String {
     val r = if (reasoning.isEmpty()) "" else "\"reasoning_content\":\"${esc(reasoning)}\","
-    return sse(
+    val frames = mutableListOf(
         """{"choices":[{"delta":{$r"tool_calls":[{"index":0,"id":"$id","function":{"name":"$name","arguments":"${esc(args)}"}}]}}]}""",
         """{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}""",
     )
+    tokens?.let { frames += it.frame() }
+    return sse(*frames.toTypedArray())
 }
 
 /** 一轮里同时调好几只手。 */

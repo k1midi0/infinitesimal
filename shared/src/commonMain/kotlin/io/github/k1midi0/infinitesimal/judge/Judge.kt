@@ -17,11 +17,13 @@ import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.VOXEL_CM
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.rendered
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.time.TimeSource
 
 /**
  * 一次动作的完整输入。
@@ -244,6 +246,15 @@ class Judge(
     var lastFinishReason: String? = null
         private set
 
+    /**
+     * 这一次判定的时间账（见 [TimingLog]）。
+     *
+     * **记的位置只有一处：`call()` 循环里的每一次请求。** 于是"这一轮发了几次请求"（[requestCount]
+     * 的增量）与"这一轮记了几条"永远是同一个数——两边不会各说各话，而这一点在量延迟时是全部意义所
+     * 在：之前只有"这一轮一共几秒"，钱花在第一步还是第二步、是排队还是思考，全靠猜。
+     */
+    val timing = TimingLog()
+
     // ── 第一步：对齐指向对象 ────────────────────────────────────────────────────────
 
     suspend fun alignTargets(
@@ -252,6 +263,8 @@ class Judge(
         retryNotes: List<String> = emptyList(),
         view: ViewBudget = ViewBudget(world, request.actorId, request.centers),
         calc: CalcLog = CalcLog(),
+        /** 这是第几次尝试（1 起）。**只用来记账**——重试与首次在结果表上长得一样，只有这里分得开。 */
+        attempt: Int = 1,
     ): TargetAlignment {
         val variables = Variables.of(world, listOf(request.actorId) + request.selected)
         val answered = call(
@@ -265,6 +278,8 @@ class Judge(
             // 第一步不建模（`model_shape` 只挂在 EFFECTS 那组里），给一份空的只是为了让这一步与第二步
             // 走同一条 `call`。
             shaped = ShapeLog(),
+            stage = Stage.ALIGN,
+            attempt = attempt,
         )
         val calls = answered.proposals
         if (calls.isEmpty()) {
@@ -323,6 +338,8 @@ class Judge(
         view: ViewBudget = ViewBudget(world, request.actorId, request.centers),
         calc: CalcLog = CalcLog(),
         shapeLog: ShapeLog = ShapeLog(),
+        /** 这是第几次尝试（1 起）。**只用来记账**。 */
+        attempt: Int = 1,
     ): Verdict {
         val variables = Variables.of(world, listOf(request.actorId) + targets)
         val answered = call(
@@ -335,6 +352,8 @@ class Judge(
             variables = variables,
             calc = calc,
             shaped = shapeLog,
+            stage = Stage.EFFECT,
+            attempt = attempt,
         )
         val calls = answered.proposals
         if (calls.isEmpty()) return Verdict.Empty("第二步没有调用任何工具" + answered.diagnosis())
@@ -404,6 +423,9 @@ class Judge(
      * 宁可这次动作什么都不发生，也不要写进去一半。两步各自最多 [maxAttempts] 次模型调用。
      */
     suspend fun judgeAndCommit(world: World, request: JudgeRequest): Judgment {
+        // 这条路**自己造 [Turn]**，不走 [beginTurn]——所以清账要在这里再来一次。
+        // （测试逮到过：漏了这一处，第二次判定的账会接着上一次数下去。）
+        timing.clear()
         // **一次判定一个预算，两步共用。** 第一步扩过之后，第二步拿到的是已经大了的那个框。
         val view = ViewBudget(world, request.actorId, request.centers)
         val turn = Turn(world, request, view)
@@ -427,8 +449,11 @@ class Judge(
      * 一次性的那条路（[judgeAndCommit]）与它共用同一份实现，所以"停了再走"不会长出一条只在预览
      * 那条路上才有的分叉。
      */
-    fun beginTurn(world: World, request: JudgeRequest): Turn =
-        Turn(world, request, ViewBudget(world, request.actorId, request.centers))
+    fun beginTurn(world: World, request: JudgeRequest): Turn {
+        // 账是**这一次判定**的，不是这一局的——不清就会把上一轮的时间混进来。
+        timing.clear()
+        return Turn(world, request, ViewBudget(world, request.actorId, request.centers))
+    }
 
     /** 一次判定的两段。每一步各自最多 [maxAttempts] 次模型调用。 */
     inner class Turn internal constructor(
@@ -467,7 +492,7 @@ class Judge(
             var problems = listOf<String>()
             for (attempt in 1..maxAttempts) {
                 alignAttempts = attempt
-                when (val alignment = alignTargets(world, request, problems, view, calc)) {
+                when (val alignment = alignTargets(world, request, problems, view, calc, attempt)) {
                     is TargetAlignment.Aligned -> {
                         alignedTargets = alignment.targets
                         return alignment
@@ -494,7 +519,11 @@ class Judge(
 
             val problems = mutableListOf<String>()
             for (attempt in 1..maxAttempts) {
-                when (val verdict = proposeEffects(world, request, targets, problems.toList(), view, calc, shaped)) {
+                when (
+                    val verdict = proposeEffects(
+                        world, request, targets, problems.toList(), view, calc, shaped, attempt,
+                    )
+                ) {
                     is Verdict.Rejected ->
                         return Judgment.RejectedWorld(verdict.reason, Stage.EFFECT, attempt)
 
@@ -534,8 +563,11 @@ class Judge(
         is TargetAlignment.Aligned -> turn.finish(alignment.targets)
     }
 
-    private suspend fun runJudgment(world: World, request: JudgeRequest, view: ViewBudget): Judgment =
-        runJudgmentOn(Turn(world, request, view))
+    private suspend fun runJudgment(world: World, request: JudgeRequest, view: ViewBudget): Judgment {
+        // 与 [beginTurn] 同一条理由：`judgeAndCommit` 不走那条路，它自己造 [Turn]。
+        timing.clear()
+        return runJudgmentOn(Turn(world, request, view))
+    }
 
     // ── 请求构造 ───────────────────────────────────────────────────────────────────
 
@@ -547,6 +579,10 @@ class Judge(
         variables: Map<String, Double>,
         calc: CalcLog,
         shaped: ShapeLog,
+        /** 这一次调用属于哪一步。**只用来记账**——两步的账必须分得开，否则"钱花在哪"还是猜。 */
+        stage: Stage,
+        /** 这是第几次尝试（1 起）。**只用来记账**。 */
+        attempt: Int,
     ): Answered {
         val messages = mutableListOf(ChatMessage.system(SYSTEM), ChatMessage.user(user))
         val proposals = mutableListOf<RawCall>()
@@ -560,8 +596,16 @@ class Judge(
         fun isQuery(name: String): Boolean =
             name == JudgeTools.WIDEN_VIEW || name == JudgeTools.CALC || name == JudgeTools.MODEL_SHAPE
 
+        var round = 0
         while (true) {
             requestCount++
+            round++
+            // **每一次请求恰好记一条账**（见 [TimingLog]）。两个时刻：
+            // `first` 是收到的**第一个事件**——在那之前模型一个字都没吐，全是排队与预填充；
+            // 收完与它之差就是生成与思考。思考模式下这一截里绝大部分是思维链。
+            // 分开量是因为治法完全不同：等的那一截靠并发/端点，想的那一截靠提示词与档位。
+            val mark = TimeSource.Monotonic.markNow()
+            var first: Long? = null
             val turn = RawTurn.of(
                 client.streamChat(
                     messages = messages,
@@ -572,7 +616,21 @@ class Judge(
                     // 一模一样（§14.19 量到过 2000 时的 4/16、8192 时的 1/16）。用户定的是
                     // **不限制思考，防止逻辑出错**；发 null 就是不发这一项，端点用思考档默认的 64K。
                     maxTokens = null,
-                ).toList(),
+                )
+                    .onEach { if (first == null) first = mark.elapsedNow().inWholeMilliseconds }
+                    .toList(),
+            )
+            val elapsed = mark.elapsedNow().inWholeMilliseconds
+            timing.record(
+                stage = stage,
+                attempt = attempt,
+                round = round,
+                elapsedMs = elapsed,
+                // 一个事件都没收到时，把整段时间都算作"等"——那正是这种情况的真相。
+                firstEventMs = first ?: elapsed,
+                tools = turn.calls.map { it.name },
+                // 用量必须一路记到账本上：**思维链 token 是唯一能把那一大截"等"拆开的量**（§14.22）。
+                usage = turn.usage,
             )
             proposals += turn.calls.filterNot { isQuery(it.name) }
             if (turn.calls.none { isQuery(it.name) }) {
