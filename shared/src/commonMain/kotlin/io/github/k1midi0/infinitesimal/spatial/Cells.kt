@@ -31,3 +31,24 @@ fun metreCell(cm: Int): Int {
 
 /** 一样东西占在哪个米格上。**它的位置是厘米，格是派生量**。 */
 fun Entity.cell(): Cell3 = Cell3(metreCell(x), metreCell(y), metreCell(z))
+
+/**
+ * 这样东西在米格上**占哪几格**。
+ *
+ * 有形状时，是形状里每一个格换算过去（局部的格 + 世界位置）；**没有形状时就是它自己那一格**——
+ * `shape == null` 的意思是"还没建模"，不是"没有体积"。少了这条兜底，所有还没建模的东西会一起从
+ * 空间框里消失，而那正是最难查的一种回归。
+ *
+ * **这就是"形状接进几何"的全部。** 射线、包围框、俯视图从此看的是这样东西占哪几格，而不是它坐标
+ * 上那一个点。一张 2×1×0.8 米的桌子因此占 2×1 格（它只有一层高，因为 0.8 米不满一米）——斜着往
+ * 上走的射线会从它上面过去，那是对的，桌子就那么高。
+ */
+fun Entity.occupiedCells(): Set<Cell3> {
+    val shape = shape ?: return setOf(cell())
+    return buildSet {
+        for (v in shape.solid) add(Cell3(metreCell(x + v.x), metreCell(y + v.y), metreCell(z + v.z)))
+        for (p in shape.pointMass) {
+            add(Cell3(metreCell(x + p.voxel.x), metreCell(y + p.voxel.y), metreCell(z + p.voxel.z)))
+        }
+    }
+}

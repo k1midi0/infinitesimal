@@ -4,6 +4,7 @@ import io.github.k1midi0.infinitesimal.world.CharacterCard
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.RuleEntry
 import io.github.k1midi0.infinitesimal.world.Rulebook
+import io.github.k1midi0.infinitesimal.world.Shapes
 
 /**
  * 开局的那个世界。
@@ -56,6 +57,7 @@ object StartingWorld {
             // 桌面 80 厘米高、两米长一米宽——这几句在有了形状之后会变成体素表，现在先只有位置。
             x = 1200, y = 400, z = 0,
             attributes = mapOf("材质" to "橡木", "状态" to "完好"),
+            shape = Shapes.table(200, 100, 80, topCm = 10, legCm = 10),
             // 一条**具体到这张桌子上**的规则。它默认优先级 30，比世界规则（10）高——这就是"越具体
             // 越优先"落到实处的地方：世界规则说木头会烧，这张桌子的规则可以推翻它。
             rulebook = Rulebook(
@@ -69,6 +71,7 @@ object StartingWorld {
             // 站在桌面上：80 厘米高。
             x = 1200, y = 400, z = 80,
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
+            shape = Shapes.box(10, 10, 15),
         ),
         Entity(
             id = "oil_lamp",
@@ -76,6 +79,7 @@ object StartingWorld {
             label = "油灯",
             x = 1200, y = 500, z = 80,
             attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
+            shape = Shapes.box(15, 15, 25),
         ),
         Entity(
             id = "hearth",
@@ -83,6 +87,7 @@ object StartingWorld {
             label = "壁炉",
             x = 1000, y = 0, z = 0,
             attributes = mapOf("状态" to "烧着"),
+            shape = Shapes.box(150, 60, 120),
         ),
         Entity(
             id = "cellar_door",
@@ -90,6 +95,7 @@ object StartingWorld {
             label = "地窖门",
             x = 1300, y = 100, z = 0,
             attributes = mapOf("状态" to "关着"),
+            shape = Shapes.box(80, 5, 100),
         ),
         Entity(
             id = PLAYER,
@@ -97,6 +103,7 @@ object StartingWorld {
             label = "你",
             x = 1200, y = 300, z = 0,
             attributes = mapOf("两手" to "空着", "腰间" to "挂着一把短柄斧"),
+            shape = Shapes.box(40, 25, 170),
             // 人设卡（§3.5）。**「交互范围」这一张就是「够不够得着」那条线的来源**——距离在这里
             // 已经是格了（写卡那一步换算，基准 1 格 = 1 米，附录 A.12），判定只读，不做算术。
             // 没有这一张卡的故事就不给这一行，由模型按情境判（A.6）。
@@ -114,6 +121,7 @@ object StartingWorld {
             // 腰间：90 厘米。
             x = 1200, y = 300, z = 90,
             attributes = mapOf("状态" to "刃口有些卷"),
+            shape = Shapes.box(30, 5, 10),
         ),
         Entity(
             id = "rag",
@@ -121,6 +129,7 @@ object StartingWorld {
             label = "抹布",
             x = 1200, y = 300, z = 90,
             attributes = mapOf("状态" to "半干"),
+            shape = Shapes.box(25, 25, 5),
         ),
     )
 }

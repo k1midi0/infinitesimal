@@ -2,6 +2,10 @@ package io.github.k1midi0.infinitesimal.spatial
 
 import io.github.k1midi0.infinitesimal.world.CM_PER_METRE
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.PointCluster
+import io.github.k1midi0.infinitesimal.world.Shapes
+import io.github.k1midi0.infinitesimal.world.Voxel
+import io.github.k1midi0.infinitesimal.world.VoxelShape
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import kotlin.math.PI
@@ -43,6 +47,41 @@ class RegionTest {
         assertEquals(-1, metreCell(-50))
         assertEquals(-1, metreCell(-100))
         assertEquals(-2, metreCell(-101))
+    }
+
+    /**
+     * 形状接进几何：**一样东西从此占的是"它占哪几格"，不是"它坐标上哪一个点"**。
+     *
+     * 这张桌子 200 厘米长，所以它压在两个米格上。而它只有 80 厘米高，所以只占 z=0 那一层——斜着
+     * 往上走的射线从它上面过去，**那是对的**，桌子就那么高。§14 里那条「单层家具挡不住射线」的读数
+     * 因此没有被推翻，它现在有了原因。
+     */
+    @Test
+    fun aShapeMakesOneThingOccupySeveralMetreCells() {
+        val table = Entity("t", "家具", "桌", 1200, 400, 0, shape = Shapes.table(200, 100, 80))
+        assertEquals(setOf(Cell3(12, 4, 0), Cell3(13, 4, 0)), table.occupiedCells())
+    }
+
+    /**
+     * **没有形状的东西照样占它自己那一格。**
+     *
+     * 这条是回归钉：`shape == null` 的意思是"还没建模"，不是"没有体积"。少了兜底，所有还没建模的
+     * 东西会一起从空间框里消失——而那种回归在界面上看起来只是"东西变少了"。
+     */
+    @Test
+    fun aThingWithoutAShapeStillOccupiesExactlyItsOwnCell() {
+        val rock = Entity("r", "东西", "石", 1200, 400, 50)
+        assertEquals(setOf(Cell3(12, 4, 0)), rock.occupiedCells())
+    }
+
+    @Test
+    fun pointMassCountsAsOccupancyToo() {
+        // 质点也是"在这儿"：一颗蓝莓挡不住谁，但它得算在这片框里（附录 A.13）。
+        val berry = Entity(
+            "b", "东西", "蓝莓", 1205, 405, 5,
+            shape = VoxelShape(pointMass = listOf(PointCluster(Voxel(0, 0, 0), 3))),
+        )
+        assertEquals(setOf(Cell3(12, 4, 0)), berry.occupiedCells())
     }
 
     private fun world(vararg e: Entity) = World.from(WorldSnapshot(e.toList()))

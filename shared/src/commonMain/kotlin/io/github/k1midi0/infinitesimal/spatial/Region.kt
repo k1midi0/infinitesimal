@@ -81,11 +81,14 @@ class Region internal constructor(
         return insidePolygon(x, y) || onBoundary(x, y)
     }
 
-    /** 那样东西算不算在这片里：**格子在框内，或者它是被射线打中的那一个**。 */
-    fun covers(entity: Entity): Boolean {
-        val cell = entity.cell()
-        return entity.id in hitIds || contains(cell.x, cell.y)
-    }
+    /**
+     * 那样东西算不算在这片里：**它占的格子有任何一个落在框内，或者它是被射线打中的那一个**。
+     *
+     * 用 [occupiedCells] 而不是它坐标上那一个点：一张两米长的桌子，只要有一头伸进框里，它就该在
+     * 清单上——报一个"半张桌子在这儿"比报"这儿没有桌子"坏得多。
+     */
+    fun covers(entity: Entity): Boolean =
+        entity.id in hitIds || entity.occupiedCells().any { contains(it.x, it.y) }
 
     fun cells(): List<Cell> {
         if (degenerate) {
@@ -225,7 +228,14 @@ object RegionBuilder {
         // **单位在这里换一次，之后整条射线链上全是米格。** 世界把坐标存成厘米（一张桌子高 80 厘米
         // 是它的事实），而射线、凸包、包围框按 1 米格走（附录 A.12）。两者不是两套数据，是同一份
         // 坐标的两种分辨率——所以换算是**一处**，不是散在每一条 `abs()` 里。
-        val placed = entities.map { it to it.cell() }
+        //
+        // **阻挡面按"每样东西占哪几格"建一次**，不是每走一步去问每样东西一遍。差别不只是快：
+        // 建一次之后，"一格被两样东西压着"这件事只在这里决一次（先遇到的那样赢），而不是每一步
+        // 各决一次、结果还可能不一样。
+        val blockers = mutableMapOf<Cell3, String>()
+        for (e in entities) {
+            for (c in e.occupiedCells()) blockers.putIfAbsent(c, e.id)
+        }
         val points = mutableListOf<RayPoint>()
         for (c in centers) {
             val origin = c.cell()
@@ -244,12 +254,11 @@ object RegionBuilder {
                         val x = origin.x + (ux * t).roundToInt()
                         val y = origin.y + (uy * t).roundToInt()
                         val z = origin.z + (uz * t).roundToInt()
-                        val blocker = placed.firstOrNull { (e, cell) ->
-                            e.id != c.id && cell.x == x && cell.y == y && cell.z == z &&
-                                maxOf(abs(cell.x - origin.x), abs(cell.y - origin.y), abs(cell.z - origin.z)) > reach
-                        }?.first
-                        if (blocker != null) {
-                            landed = RayPoint(x, y, z, hit = true, blockerId = blocker.id)
+                        val blockerId = blockers[Cell3(x, y, z)]
+                        if (blockerId != null && blockerId != c.id &&
+                            maxOf(abs(x - origin.x), abs(y - origin.y), abs(z - origin.z)) > reach
+                        ) {
+                            landed = RayPoint(x, y, z, hit = true, blockerId = blockerId)
                             break
                         }
                     }
