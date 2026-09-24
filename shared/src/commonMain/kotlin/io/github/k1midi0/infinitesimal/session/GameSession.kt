@@ -4,6 +4,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.k1midi0.infinitesimal.config.EndpointConfig
+import io.github.k1midi0.infinitesimal.director.Arrangement
+import io.github.k1midi0.infinitesimal.director.Director
 import io.github.k1midi0.infinitesimal.judge.Consequence
 import io.github.k1midi0.infinitesimal.judge.Judge
 import io.github.k1midi0.infinitesimal.judge.JudgeRequest
@@ -70,6 +72,14 @@ class GameSession(
     private val renderer = Renderer(config, world)
     private val judge = Judge(config)
 
+    /**
+     * 导演（§8）。**它自己把请求落到 [SystemId.DIRECTOR] 那个缓存池**，所以传进去的还是原配置。
+     *
+     * 它与判定共用同一个客户端配置，但用户 id 不同——那是"同一个模型、两套提示词、两个缓存池"，
+     * 不是两个模型（§10.1）。
+     */
+    private val director = Director(config)
+
     /** 装配证据。**FIM 默认关闭**（§14.4：五次里只有两次可用），这里也用它。 */
     private val inserter = DetailInserters.of(config)
 
@@ -121,15 +131,28 @@ class GameSession(
         private set
 
     /**
+     * 时间轴改动了几次。**它没有别的用途，就是给界面一个会变的信号。**
+     *
+     * 原因是 `world.timeline` 不是可观察状态：[nextStop] 每次读的是它当下的样子，而 Compose 只会在它
+     * 观察到的状态变化时重算。少了这个计数器，导演刚排完事，按钮上写的还是「没有可等的」。
+     */
+    var timelineRevision by mutableStateOf(0)
+        private set
+
+    /**
      * 时间轴上最早会因为到期而必须停下的时刻，没有就是 `null`。
      *
      * 界面用它决定"等到下一件事"那个按钮能不能按。**按下之后会发生什么，全看这一条**——没有可等的
      * 时候推进时间是凭空造出一段没人看见的时间（见 [FastForward.runToNext]）。
      */
-    val nextStop: WorldTime? get() = FastForward.nextStop(world)
+    val nextStop: WorldTime?
+        get() {
+            timelineRevision // 订阅：时间轴一动，这一条就要重算
+            return FastForward.nextStop(world)
+        }
 
     /** 整场跑掉的模型调用。固化命中不会让它增加——这是"固化生效"唯一的客观证据。 */
-    val requestCount: Int get() = renderer.requestCount + judge.requestCount
+    val requestCount: Int get() = renderer.requestCount + judge.requestCount + director.requestCount
 
     /**
      * 这一局的预设库（附录 A.14）。
@@ -246,6 +269,7 @@ class GameSession(
     suspend fun waitUntilNextNow() {
         val stop = FastForward.runToNext(world)
         clock = world.clock
+        timelineRevision++
 
         if (stop == null) {
             say(LogLine.Kind.NOTE, "（时间轴上没有将来要发生的事，等不到什么）")
@@ -256,6 +280,39 @@ class GameSession(
         stop.happened.forEach { say(LogLine.Kind.NOTE, "· ${it.what}") }
         // 到期的那些**已经从时间轴上取走**（时间轴是计划，不是记录）。它们该进记录层——**记录层还
         // 没有**（§1.5），所以此刻它们只落在日志里，这也是"刚才那段时间里发生过什么"唯一的去处。
+    }
+
+    /**
+     * 「让导演排一排」（§8）。**宿主能力，不是世界观里的动作**——和上面的等待同类。
+     *
+     * 现在它是手动按的，因为导演的**自动触发**（时间轴到期 / 剧情跑偏，§8.2）与**任务队列**
+     * （§8.3.2：全局一个、串行、界面要显示"世界中…"）都还没做。按一次排在前面，比先做队列再拿它当
+     * 第一个消费者要省事：队列那条路要解决的问题（并发写、积压、没有提示）现在都还不存在。
+     */
+    fun arrange(scope: CoroutineScope) {
+        run(scope, "导演在安排将来的事…") { arrangeNow() }
+    }
+
+    /** 挂起版：给 spike 直接 await 用。 */
+    suspend fun arrangeNow() {
+        when (val result = director.arrange(world, PLAYER)) {
+            is Arrangement.Done -> {
+                timelineRevision++
+                say(LogLine.Kind.NOTE, "（导演排下了 ${result.entries.size} 件事）")
+                result.entries.sortedBy { it.dueAt.minutes }.forEach {
+                    say(LogLine.Kind.NOTE, "· ${it.dueAt}　${it.what}")
+                }
+            }
+
+            is Arrangement.FailedProtocol -> {
+                // **协议内的失败就说自己是协议内的失败**（§1.5 第三条）：导演没排成不是"世界拒绝了"，
+                // 是这一层出了问题，两件事不能用同一句话呈现。
+                say(
+                    LogLine.Kind.PROBLEM,
+                    "（导演没排成：${result.problems.joinToString("；")}）",
+                )
+            }
+        }
     }
 
     /**
@@ -277,6 +334,7 @@ class GameSession(
             } finally {
                 entities = world.all()
                 clock = world.clock
+                timelineRevision++
                 busy = false
                 status = ""
             }

@@ -144,6 +144,19 @@ private fun TopBar(session: GameSession) {
         ) {
             Text(if (next == null) "没有可等的" else "等到 ${next.short}")
         }
+        /*
+         * 「让导演排一排」（§8）。
+         *
+         * 它是一个**手动**的触发，而设计里导演该由两类事件唤醒（时间轴到期、剧情跑偏，§8.2）。
+         * 现在手动按，是因为那两条路都还要先有一个消费者才谈得上——而队列（§8.3.2）要解决的问题
+         * （并发写、积压、"世界中…"的提示）在只有一个调用点的时候都还不存在。
+         */
+        TextButton(
+            onClick = { session.arrange(scope) },
+            enabled = !session.busy && session.pending == null,
+        ) {
+            Text("让导演排一排")
+        }
         Spacer(Modifier.weight(1f))
         if (session.selection.isNotEmpty()) {
             Text(

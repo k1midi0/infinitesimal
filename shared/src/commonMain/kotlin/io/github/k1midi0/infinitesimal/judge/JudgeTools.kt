@@ -4,6 +4,9 @@ import io.github.k1midi0.infinitesimal.llm.FunctionSpec
 import io.github.k1midi0.infinitesimal.llm.JsonSchema
 import io.github.k1midi0.infinitesimal.llm.PropertySchema
 import io.github.k1midi0.infinitesimal.llm.ToolDefinition
+import io.github.k1midi0.infinitesimal.llm.int
+import io.github.k1midi0.infinitesimal.llm.text
+import io.github.k1midi0.infinitesimal.llm.tool
 
 /**
  * 判定系统交给模型的那几只"手"。
@@ -87,30 +90,11 @@ object JudgeTools {
     const val REJECT = "reject"
 
     /**
-     * 造一只工具。
+     * 造一只工具的定义搬去了 `llm/ToolDeclarations.kt`。
      *
-     * `optional` 里的名字**不进 `required`**。这是后加的一个口子：原先这里把所有属性一股脑塞进
-     * `required`，于是"可选参数"根本表达不出来。`widen_view` 的 `direction` 就是第一个真正可选的
-     * 参数——填了只往那边看，不填是整体看远一圈，两种都是合法的调用。
+     * 导演也要造工具，而"哪些参数可选"这条规则不该有两份——写两遍，漂移的方式会是其中一处忘了从
+     * `required` 里减掉，于是那个参数**静默地变成必填**。
      */
-    private fun tool(
-        name: String,
-        description: String,
-        vararg properties: Pair<String, PropertySchema>,
-        optional: List<String> = emptyList(),
-    ) = ToolDefinition(
-        function = FunctionSpec(
-            name = name,
-            description = description,
-            parameters = JsonSchema(
-                properties = properties.toMap(),
-                required = properties.map { it.first } - optional.toSet(),
-            ),
-        ),
-    )
-
-    private fun int(name: String, description: String) = name to PropertySchema("integer", description)
-    private fun text(name: String, description: String) = name to PropertySchema("string", description)
 
     private val MODEL = tool(
         MODEL_SHAPE,
