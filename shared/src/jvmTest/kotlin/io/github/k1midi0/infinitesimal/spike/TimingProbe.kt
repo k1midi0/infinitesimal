@@ -56,13 +56,22 @@ class TimingProbe {
         val retries: Int,
         val queryRounds: Int,
         val wallMs: Long,
+        /** 第一步报出来的东西。**null = 它在第一步就驳回了**——那正是便宜的那条路。 */
+        val aligned: List<String>?,
+        /** 驳回的理由原话。**假驳回必须看得到它说了什么**，否则只能猜。 */
+        val reason: String?,
     )
 
     private class Scenario(val name: String, val utterance: String)
 
     private val scenarios = listOf(
         Scenario("甲 只落在自己身上", "我低头理了理衣襟。"),
-        Scenario("乙 手边的东西", "我把桌上那杯麦酒端起来。"),
+        // **名字与实体的 label 逐字对得上**（实体是 `wine_cup`／酒杯）。这是基准线。
+        Scenario("乙 叫得出名字", "我把桌上那只酒杯端起来。"),
+        // **说法与 label 对不上**（玩家说"麦酒"，实体是"酒杯"）。开局世界里东西**故意不带描述**
+        // （逼玩家点了才渲染），所以判定手里只有 label——同义说法会不会被驳掉，是独立的一件事，
+        // 不能混进乙里量。它是玩家最自然的说法，驳掉它就是最糟的一种假驳回。
+        Scenario("丁 同义说法", "我把桌上那杯麦酒端起来。"),
         Scenario("丙 三条街以外", "我把三条街外那家店里的杯子拿过来。"),
     )
 
@@ -101,6 +110,9 @@ class TimingProbe {
                     retries = t.retries,
                     queryRounds = t.queryRounds,
                     wallMs = wall,
+                    aligned = judge.alignedTargets,
+                    reason = (judgment as? io.github.k1midi0.infinitesimal.judge.Judgment.RejectedWorld)
+                        ?.reason,
                 )
                 rows += row
                 println(
@@ -118,8 +130,10 @@ class TimingProbe {
             println(
                 "  ${pad(r.scenario, 20)} 第 ${r.round} 轮" +
                     "  第一步 ${pad(r.alignMs.toString(), 6)}  第二步 ${pad(r.effectMs.toString(), 6)}" +
-                    "  共 ${pad(r.wallMs.toString(), 6)} ms  ${r.outcome}",
+                    "  共 ${pad(r.wallMs.toString(), 6)} ms  ${pad(r.outcome, 10)}" +
+                    "  第一步报的 ${r.aligned?.joinToString("+") ?: "（就地驳回）"}",
             )
+            r.reason?.let { println("        ↳ 理由：$it") }
         }
 
         println("\n════════ 合计（${rows.size} 次判定）════════")
