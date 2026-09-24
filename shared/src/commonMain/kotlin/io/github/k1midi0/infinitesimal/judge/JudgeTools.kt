@@ -7,6 +7,7 @@ import io.github.k1midi0.infinitesimal.llm.ToolDefinition
 import io.github.k1midi0.infinitesimal.llm.int
 import io.github.k1midi0.infinitesimal.llm.text
 import io.github.k1midi0.infinitesimal.llm.tool
+import io.github.k1midi0.infinitesimal.world.TerrainBox
 
 /**
  * 判定系统交给模型的那几只"手"。
@@ -76,6 +77,20 @@ object JudgeTools {
     const val DESTROY = "destroy"
     const val SPAWN = "spawn"
     const val REPLACE = "replace"
+
+    /**
+     * **三只改地形的手**（第八类后果，附录 A.15）。
+     *
+     * 它们与上面那几只同批：`Committer` 一次裁一批、一起落库，所以"把桌子推开"与"把桌底下的地挖了"
+     * 要么一起生效、要么一起不生效。
+     *
+     * 三只收**同一个长方体**（[box]），单位是**地形格**（50 厘米一格）——不是体素、不是米。收同一个
+     * 形状的理由很实际：模型只有一套坐标要学，写反了也没关系。
+     */
+    const val FILL_TERRAIN = "fill_terrain"
+    const val DIG_TERRAIN = "dig_terrain"
+    const val REPLACE_TERRAIN = "replace_terrain"
+
     const val AFFECT = "affect"
 
     /**
@@ -143,6 +158,42 @@ object JudgeTools {
         text("b", "那一样东西的 id"),
     )
 
+    /**
+     * 三只框选地形的手收的**同一个长方体**（附录 A.15）。
+     *
+     * 六个参数的说明只有这一份：三个工具各写一遍的话，漂移的方式会是其中一处把 x1 与 x2 说反，
+     * 而模型学的是它读到的那一处。写反本身不危险——代码自己取大小（[TerrainBox.minX]）——但
+     * "单位是地形格而不是米"这条要是漏了一处，模型会照着米填，于是框大出五倍而不报错。
+     */
+    private fun box(): Array<Pair<String, PropertySchema>> = arrayOf(
+        int("x1", "框一角的地形格 x"), int("y1", "框一角的地形格 y"), int("z1", "框一角的地形格 z"),
+        int("x2", "对角的地形格 x"), int("y2", "对角的地形格 y"), int("z2", "对角的地形格 z"),
+    )
+
+    private val FILL_TOOL = tool(
+        FILL_TERRAIN,
+        "在框里**铺**上一种材质。**只填空的格**——已经有材质的地方一格不动，所以它是「铺一条路」" +
+            "「铺一层石地板」，而不是「覆盖」。单位是地形格（50 厘米一格），六个坐标写的就是那六个格。",
+        *box(),
+        text("material", "铺什么材质。id 从【世界材质表】里原样取"),
+    )
+
+    private val DIG_TOOL = tool(
+        DIG_TERRAIN,
+        "把框里的地形**挖掉**（那一格从此没有材质，也就是空的）。这是「挖一个坑」「凿开一堵土壁」。" +
+            "**世界最底下那层岩层挖不动**——框碰到它会被驳回并把话说清楚，把框抬上来再试。",
+        *box(),
+    )
+
+    private val REPLACE_TOOL = tool(
+        REPLACE_TERRAIN,
+        "把框里所有 `from` 那种材质**换**成 `to`。这是「烧焦一片草地」「把石板路掀成土路」——" +
+            "它**只动 from 那一种**，框里别的材质原样留着。",
+        *box(),
+        text("from", "要换掉的材质 id。框里不是这个材质的格不动"),
+        text("to", "换成什么材质 id"),
+    )
+
     /** 第一步能用的手：**只有这几只**。 */
     val TARGETING: List<ToolDefinition> = listOf(
         tool(
@@ -205,6 +256,12 @@ object JudgeTools {
             text("label", "新东西的名字"),
             int("x", "体素 x"), int("y", "体素 y"), int("z", "体素 z"),
         ),
+        // ── 改地形（第八类，附录 A.15）──────────────────────────────────────────────
+        // 放在这里是因为它们与上面那几只是同一类：**都在提议改世界**。下面那几只手（affect /
+        // no_change / reject）不是。
+        FILL_TOOL,
+        DIG_TOOL,
+        REPLACE_TOOL,
         tool(
             AFFECT,
             "记下这次动作**影响到了哪个角色**。每影响一个就调一次。玩家自己不用记。",

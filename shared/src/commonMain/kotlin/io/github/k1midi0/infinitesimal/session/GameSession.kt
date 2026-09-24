@@ -442,7 +442,14 @@ class GameSession(
 
                 // **描述作废**，不是重新渲染（§7.1）。把它们从表里剔掉，界面上它们就退回"还没看过"。
                 // 下一次观察才会真的再烧一次——而且只烧玩家真的去看了的那几个。
-                val stale = judgment.consequences.map { it.targetId }.toSet() + judgment.affected
+                //
+                // **只看 [Consequence.EntityConsequence]。** 地形那几条后果没有 `targetId`，也不该
+                // 让任何东西的描述作废：描述只讲物体自身（§7.6），脚下的土被挖掉不改变杯子长什么样
+                // ——见 `Consequence.TerrainConsequence` 的注释。
+                val stale = judgment.consequences
+                    .filterIsInstance<Consequence.EntityConsequence>()
+                    .map { it.targetId }
+                    .toSet() + judgment.affected
                 observations = observations - stale
                 stale.forEach { if (world.byId(it) != null) say(LogLine.Kind.NOTE, "   ${name(it)}的描述作废了，下次看它才会重渲染") }
             }
@@ -501,7 +508,18 @@ class GameSession(
         is Consequence.Spawn -> "出现了「${c.entity.label}」"
         is Consequence.Replace -> "${name(c.oldId)} 变成了「${c.entity.label}」（另一个东西）"
         is Consequence.SetShape -> "${name(c.id)} 有了形状（占 ${c.shape.cellCount} 个格）"
+        // ── 地形（第八类，附录 A.15）────────────────────────────────────────────────
+        // 玩家的日志里不出现"地形格"这种系统词？**这里出现是有意的**：地形改动没有"一样东西"可以
+        // 指代，玩家能对上的只有位置。等界面能画地形之后，这一行应该换成坐标。
+        is Consequence.FillTerrain ->
+            "这一片地上铺了${materialName(c.material)}（框里 ${c.box.cellCount} 个格）"
+        is Consequence.DigTerrain -> "这一片地被挖空了（框里 ${c.box.cellCount} 个格）"
+        is Consequence.ReplaceTerrain ->
+            "这一片里的${materialName(c.from)}变成了${materialName(c.to)}（框里 ${c.box.cellCount} 个格）"
     }
+
+    /** 材质 id → 给人看的名字。表里找不到就原样回那个 id——**不编一个名字出来**。 */
+    private fun materialName(id: String): String = world.materials.byId(id)?.name ?: id
 
     /** 给界面显示"这是什么、在哪"。**位置只来自坐标**——关系不存成事实（附录 A.5）。 */
     fun subtitleOf(entity: Entity): String =

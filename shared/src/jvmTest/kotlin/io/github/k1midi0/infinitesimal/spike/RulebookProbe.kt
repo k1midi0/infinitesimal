@@ -267,6 +267,9 @@ class RulebookProbe {
         is Consequence.Spawn -> "新增 ${c.entity.id}"
         is Consequence.Replace -> "${c.oldId} 换成 ${c.entity.id}"
         is Consequence.SetShape -> "造了形状 ${c.id}（${c.shape.cellCount} 格）"
+        is Consequence.FillTerrain -> "铺地形 ${c.box.cellCount} 格 ${c.material}"
+        is Consequence.DigTerrain -> "挖地形 ${c.box.cellCount} 格"
+        is Consequence.ReplaceTerrain -> "换地形 ${c.box.cellCount} 格 ${c.from}→${c.to}"
     }
 
     private fun aggregate(rows: List<Row>) {

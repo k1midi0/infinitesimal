@@ -19,6 +19,7 @@ import io.github.k1midi0.infinitesimal.spatial.distanceBetween
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.VOXEL_CM
+import io.github.k1midi0.infinitesimal.world.TerrainBox
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.rendered
 import kotlinx.coroutines.flow.onEach
@@ -826,6 +827,12 @@ class Judge(
             appendLine()
             append(it)
         }
+        // 材质表（A.15）。放在这里是因为它与规则书同级：**世界级的事实、一局里不变**，所以它进
+        // 共用前缀是安全的（会变的东西一律不许进来，§7.5）。三只改地形的手要从这里取材质 id。
+        MaterialView.forPrefix(world).takeIf { it.isNotEmpty() }?.let {
+            appendLine()
+            append(it)
+        }
     }
 
     private fun targetingPrompt(
@@ -1054,7 +1061,7 @@ class Judge(
     private fun parseEffect(call: ToolCallRequest): Parsed {
         fun <T> decodeInto(serializer: KSerializer<T>, build: (T) -> Parsed): Parsed {
             val value = decode(serializer, call)
-                ?: return Parsed.Bad("${call.name} 的参数不是合法 JSON：${call.arguments.take(160)}")
+                ?: return Parsed.Bad("${call.name} 的参数读不出来（缺字段，或者类型不对）：${call.arguments.take(160)}")
             return build(value)
         }
 
@@ -1081,6 +1088,18 @@ class Judge(
 
             JudgeTools.REPLACE -> decodeInto(ReplaceArgs.serializer()) {
                 Parsed.Effect(Consequence.Replace(it.oldId, it.toEntity()))
+            }
+
+            JudgeTools.FILL_TERRAIN -> decodeInto(BoxArgs.serializer()) {
+                Parsed.Effect(Consequence.FillTerrain(it.toBox(), it.material))
+            }
+
+            JudgeTools.DIG_TERRAIN -> decodeInto(BoxArgs.serializer()) {
+                Parsed.Effect(Consequence.DigTerrain(it.toBox()))
+            }
+
+            JudgeTools.REPLACE_TERRAIN -> decodeInto(BoxArgs.serializer()) {
+                Parsed.Effect(Consequence.ReplaceTerrain(it.toBox(), it.from, it.to))
             }
 
             JudgeTools.AFFECT -> decodeInto(AffectArgs.serializer()) { Parsed.Affects(it.actor) }
@@ -1162,5 +1181,25 @@ class Judge(
 
 /** `distance` 的两个 id。**两个都必填**——"离某样东西多远"少一半是问不出来的。 */
 @Serializable private data class DistanceArgs(val a: String = "", val b: String = "")
+
+/**
+ * 三只框选地形的手收的同一个长方体（附录 A.15）。
+ *
+ * **六个坐标刻意不给默认值。** 其余每只手的参数都有默认值，漏填的落点是"id 是空的"→ `Committer`
+ * 驳回并说清哪一条坏了。这里不行：六个坐标全部默认成 0 的话，一个漏填 `z2` 的框会**静默地**变成
+ * "从 z1 到 0"的一根竖井，那是个合法的框，于是它照样被提交，而模型从来不知道自己的参数掉了一半。
+ *
+ * 不给默认值，缺字段就在**解码**这一步失败：`Parsed.Bad` → 退回重试。这是唯一一处"宁可读不出来，
+ * 也不要一个看起来合理的默认值"。
+ */
+@Serializable private data class BoxArgs(
+    val x1: Int, val y1: Int, val z1: Int,
+    val x2: Int, val y2: Int, val z2: Int,
+    val material: String = "",
+    val from: String = "",
+    val to: String = "",
+) {
+    fun toBox(): TerrainBox = TerrainBox(x1, y1, z1, x2, y2, z2)
+}
 
 @Serializable private data class RejectArgs(val reason: String = "")

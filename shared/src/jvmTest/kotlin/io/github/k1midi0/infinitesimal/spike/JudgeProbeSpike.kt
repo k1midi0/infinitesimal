@@ -47,6 +47,10 @@ class JudgeProbeSpike {
         is Consequence.SetShape ->
             "SetShape → ${c.id}  ${c.shape.cellCount} 格  最大角 (${c.shape.extent.x}, ${c.shape.extent.y}, " +
                 "${c.shape.extent.z})  [${c.level}]"
+        // 地形那三类没有 `level`——那是刻意的，见 `Consequence.TerrainConsequence` 的注释。
+        is Consequence.FillTerrain -> "FillTerrain → ${c.box.cellCount} 格铺 ${c.material}"
+        is Consequence.DigTerrain -> "DigTerrain → ${c.box.cellCount} 格挖空"
+        is Consequence.ReplaceTerrain -> "ReplaceTerrain → ${c.box.cellCount} 格 ${c.from}→${c.to}"
     }
 
     @Test
