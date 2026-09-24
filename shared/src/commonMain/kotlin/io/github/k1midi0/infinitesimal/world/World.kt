@@ -6,8 +6,9 @@ package io.github.k1midi0.infinitesimal.world
  * 它**只做状态**——不碰模型、不碰文件、不碰界面。渲染器读它，判定与导演写它，而所有写入都从这里
  * 经过，所以"世界里到底有什么"永远只有一个答案。
  *
- * 现在有三种东西：[Entity]、[clock]（世界时间）、[timeline]（未来的事，§8.1）。体素形状表还不是
- * 独立的一种——它挂在实体自己的 [Entity.shape] 上。
+ * 现在有五种东西：[Entity]、[clock]（世界时间）、[timeline]（未来的事，§8.1）、[terrain]（地形层）
+ * 与 [zoning]（区划层），外加一张只读的 [materials]（材质表）。体素形状表还不是独立的一种——它挂在
+ * 实体自己的 [Entity.shape] 上。
  */
 class World private constructor(
     private var entities: MutableMap<String, Entity>,
@@ -30,6 +31,21 @@ class World private constructor(
      * 时间轴：未来的事（§8.1）。导演写它，快进读它。
      */
     val timeline: Timeline = Timeline.empty(),
+    /**
+     * 材质表（附录 A.15）：按 id 查的一张只读表。**它与预设库并列，不是预设的一种。**
+     */
+    val materials: MaterialTable = MaterialTable(),
+    /**
+     * 地形层（附录 A.15）：一格一个材质 id，稀疏存。
+     *
+     * **它与实体表不重叠**，因为物体在地形**表面之上**——地板物体、桌上的东西，都在地形之上，
+     * 不是埋在它里面。
+     */
+    val terrain: Terrain = Terrain.empty(),
+    /**
+     * 区划层（附录 A.16）：导演的涂鸦，但它是**世界事实**，不是另存的一份笔记（§3.2.4）。
+     */
+    val zoning: Zoning = Zoning.empty(),
 ) {
 
     fun all(): List<Entity> = entities.values.toList()
@@ -73,8 +89,15 @@ class World private constructor(
         entities.remove(id)
     }
 
-    fun snapshot(): WorldSnapshot =
-        WorldSnapshot(entities.values.toList(), rulebook, clock, timeline.snapshot())
+    fun snapshot(): WorldSnapshot = WorldSnapshot(
+        entities = entities.values.toList(),
+        rulebook = rulebook,
+        clock = clock,
+        timeline = timeline.snapshot(),
+        materials = materials,
+        terrain = terrain.snapshot(),
+        zoning = zoning.snapshot(),
+    )
 
     companion object {
 
@@ -93,6 +116,9 @@ class World private constructor(
             snapshot.rulebook,
             snapshot.clock,
             Timeline.from(snapshot.timeline),
+            snapshot.materials,
+            Terrain.from(snapshot.terrain),
+            Zoning.from(snapshot.zoning),
         )
     }
 }

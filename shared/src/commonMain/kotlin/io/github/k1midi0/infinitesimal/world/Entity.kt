@@ -109,4 +109,10 @@ data class WorldSnapshot(
     val clock: WorldTime = World.StartingClock,
     /** 时间轴（§8.1）。 */
     val timeline: TimelineSnapshot = TimelineSnapshot(),
+    /** 材质表（附录 A.15）。默认是开局那七种。 */
+    val materials: MaterialTable = MaterialTable(),
+    /** 地形层（附录 A.15）。**稀疏**——空快照就是"整个世界还没有地形"。 */
+    val terrain: TerrainSnapshot = TerrainSnapshot(),
+    /** 区划层（附录 A.16）。**留白是合法的**，空快照就是全留白。 */
+    val zoning: ZoningSnapshot = ZoningSnapshot(),
 )

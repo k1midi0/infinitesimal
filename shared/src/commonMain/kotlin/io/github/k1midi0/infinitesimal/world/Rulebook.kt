@@ -46,10 +46,19 @@ data class Rulebook(
     val isEmpty: Boolean get() = entries.isEmpty()
 }
 
-/** 三个默认优先级，以及"一个实体算角色还是算物品"的判据。 */
+/** 四个默认优先级，以及"一个实体算角色还是算物品"的判据。 */
 object RulebookDefaults {
 
     const val WORLD = 10
+
+    /**
+     * **材质排在中间**（附录 A.15，2026-09-26 定）。
+     *
+     * 世界规则最泛（这个世界的火会烧起来），材质比某个具体角色更基本（石头不会被火点着），而具体到
+     * 某个人身上的规则最该赢。四个数字的相对顺序是这一整个机制的全部内容，所以它们写在一起。
+     */
+    const val MATERIAL = 15
+
     const val CHARACTER = 20
     const val OBJECT = 30
 
