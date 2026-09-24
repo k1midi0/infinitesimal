@@ -16,6 +16,7 @@ import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
+import io.github.k1midi0.infinitesimal.world.WorldTime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.time.TimeSource
@@ -109,6 +110,23 @@ class GameSession(
 
     val focusedEntity: Entity? get() = focused?.let { world.byId(it) }
     val focusedObservation: Renderer.Observation? get() = focused?.let { observations[it] }
+
+    /**
+     * 世界现在是什么时候（§8.1）。界面直接显示它。
+     *
+     * 它必须是一个**推给界面的状态**，不能靠界面去问 [World]——世界不是可观察的，界面每天亮着的那
+     * 行字就会一直停在开局的那一刻。
+     */
+    var clock by mutableStateOf(world.clock)
+        private set
+
+    /**
+     * 时间轴上最早会因为到期而必须停下的时刻，没有就是 `null`。
+     *
+     * 界面用它决定"等到下一件事"那个按钮能不能按。**按下之后会发生什么，全看这一条**——没有可等的
+     * 时候推进时间是凭空造出一段没人看见的时间（见 [FastForward.runToNext]）。
+     */
+    val nextStop: WorldTime? get() = FastForward.nextStop(world)
 
     /** 整场跑掉的模型调用。固化命中不会让它增加——这是"固化生效"唯一的客观证据。 */
     val requestCount: Int get() = renderer.requestCount + judge.requestCount
@@ -214,6 +232,33 @@ class GameSession(
     }
 
     /**
+     * 「等到下一件事」（§8.1）。**宿主能力，不是世界观里的动作**（§4.5）——时间是玩家身上挂着的那
+     * 一层东西，和存档、读档、查看器同类。
+     *
+     * 它**只停一次**：走到最早到期的那一刻就交回控制权。要接着等就再按一次。理由在
+     * [FastForward.run] 上——停下来意味着"该有人看一眼了"。
+     */
+    fun waitUntilNext(scope: CoroutineScope) {
+        run(scope, "等…") { waitUntilNextNow() }
+    }
+
+    /** 挂起版：给 spike 直接 await 用。 */
+    suspend fun waitUntilNextNow() {
+        val stop = FastForward.runToNext(world)
+        clock = world.clock
+
+        if (stop == null) {
+            say(LogLine.Kind.NOTE, "（时间轴上没有将来要发生的事，等不到什么）")
+            return
+        }
+
+        say(LogLine.Kind.NOTE, "（你等到 ${stop.at}）")
+        stop.happened.forEach { say(LogLine.Kind.NOTE, "· ${it.what}") }
+        // 到期的那些**已经从时间轴上取走**（时间轴是计划，不是记录）。它们该进记录层——**记录层还
+        // 没有**（§1.5），所以此刻它们只落在日志里，这也是"刚才那段时间里发生过什么"唯一的去处。
+    }
+
+    /**
      * 把一次动作放到协程里，并保证三件事：**同一时刻只有一个动作**、界面上的"跑着"一定会被清掉、
      * 世界改完之后一定推一份新快照给界面。
      *
@@ -231,6 +276,7 @@ class GameSession(
                 say(LogLine.Kind.ERROR, "出错了：${t.message}")
             } finally {
                 entities = world.all()
+                clock = world.clock
                 busy = false
                 status = ""
             }

@@ -105,4 +105,8 @@ data class WorldSnapshot(
     val entities: List<Entity>,
     /** 世界自己的那份规则书（§12 第 12 项）。**默认优先级 10，最低**——它最泛。 */
     val rulebook: Rulebook = Rulebook(),
+    /** 世界时间（§8.1）。默认是开局那一刻，老快照装回来时也有个说得通的值。 */
+    val clock: WorldTime = World.StartingClock,
+    /** 时间轴（§8.1）。 */
+    val timeline: TimelineSnapshot = TimelineSnapshot(),
 )

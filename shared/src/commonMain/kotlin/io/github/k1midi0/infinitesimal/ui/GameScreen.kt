@@ -120,14 +120,30 @@ fun GameScreen(session: GameSession, modifier: Modifier = Modifier) {
 
 @Composable
 private fun TopBar(session: GameSession) {
+    val scope = rememberCoroutineScope()
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("无限小", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.width(12.dp))
         Text(
-            "世界里 ${session.entities.size} 样东西｜模型调用 ${session.requestCount} 次",
+            "${session.clock}｜世界里 ${session.entities.size} 样东西｜模型调用 ${session.requestCount} 次",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.width(8.dp))
+        /*
+         * 「等到下一件事」（§8.1）。
+         *
+         * **没有可等的事时按钮是禁的，而不是按下去往前推一小时。** 时间轴上没有将来，说明的是"没人
+         * 安排过接下来会发生什么"，不是一个可以被绕过的障碍——凭空推进去会造出一段谁都没看见的时间，
+         * 而那种空白在日志里和"真的无事发生"长得一模一样。
+         */
+        val next = session.nextStop
+        TextButton(
+            onClick = { session.waitUntilNext(scope) },
+            enabled = !session.busy && session.pending == null && next != null,
+        ) {
+            Text(if (next == null) "没有可等的" else "等到 ${next.short}")
+        }
         Spacer(Modifier.weight(1f))
         if (session.selection.isNotEmpty()) {
             Text(

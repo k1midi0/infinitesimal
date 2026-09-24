@@ -6,8 +6,8 @@ package io.github.k1midi0.infinitesimal.world
  * 它**只做状态**——不碰模型、不碰文件、不碰界面。渲染器读它，判定与导演写它，而所有写入都从这里
  * 经过，所以"世界里到底有什么"永远只有一个答案。
  *
- * 目前只有 [Entity] 一种东西。角色、时间轴、体素形状表都还没进来，它们会在有真实需要时加，而不是
- * 先摆好空壳。
+ * 现在有三种东西：[Entity]、[clock]（世界时间）、[timeline]（未来的事，§8.1）。体素形状表还不是
+ * 独立的一种——它挂在实体自己的 [Entity.shape] 上。
  */
 class World private constructor(
     private var entities: MutableMap<String, Entity>,
@@ -18,6 +18,18 @@ class World private constructor(
      * 物理法则能不能被一次动作改掉"，答案是不。
      */
     var rulebook: Rulebook = Rulebook(),
+    /**
+     * 世界时间（§8.1）。
+     *
+     * **它在 world 层而不是 session 层**：时间是世界的事实之一——"现在是第几天傍晚"与"桌上有一把
+     * 斧子"是同一类东西，两者都必须存下来、都必须只有一个答案。`session/` 做的是**推进**它，不是
+     * 拥有它。
+     */
+    var clock: WorldTime = StartingClock,
+    /**
+     * 时间轴：未来的事（§8.1）。导演写它，快进读它。
+     */
+    val timeline: Timeline = Timeline.empty(),
 ) {
 
     fun all(): List<Entity> = entities.values.toList()
@@ -61,13 +73,26 @@ class World private constructor(
         entities.remove(id)
     }
 
-    fun snapshot(): WorldSnapshot = WorldSnapshot(entities.values.toList(), rulebook)
+    fun snapshot(): WorldSnapshot =
+        WorldSnapshot(entities.values.toList(), rulebook, clock, timeline.snapshot())
 
     companion object {
 
+        /**
+         * 开局那一刻：**第 1 天 18:00**。
+         *
+         * 它是**内容**，不是配置——开局那张酒馆写的是"深秋傍晚、屋里点着四盏油灯"（[Rules][StartingWorld]），
+         * 时间就得是傍晚。两处对不上，模型第一句话就会露馅。
+         */
+        val StartingClock: WorldTime = WorldTime.of(day = 1, hour = 18)
+
         fun empty(): World = World(mutableMapOf())
 
-        fun from(snapshot: WorldSnapshot): World =
-            World(snapshot.entities.associateByTo(mutableMapOf()) { it.id }, snapshot.rulebook)
+        fun from(snapshot: WorldSnapshot): World = World(
+            snapshot.entities.associateByTo(mutableMapOf()) { it.id },
+            snapshot.rulebook,
+            snapshot.clock,
+            Timeline.from(snapshot.timeline),
+        )
     }
 }
