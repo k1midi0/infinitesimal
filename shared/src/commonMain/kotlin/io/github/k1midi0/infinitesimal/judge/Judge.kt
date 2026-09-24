@@ -12,6 +12,7 @@ import io.github.k1midi0.infinitesimal.llm.ThinkingRequest
 import io.github.k1midi0.infinitesimal.llm.ToolCall
 import io.github.k1midi0.infinitesimal.llm.Usage
 import io.github.k1midi0.infinitesimal.spatial.Direction
+import io.github.k1midi0.infinitesimal.spatial.distanceBetween
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.VOXEL_CM
@@ -23,6 +24,7 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.math.abs
 import kotlin.time.TimeSource
 
 /**
@@ -228,6 +230,15 @@ class Judge(
         private set
 
     /**
+     * 最近一次判定里模型用 [JudgeTools.DISTANCE] 问过哪些对，按调用顺序。空列表 = 一次都没问。
+     *
+     * **这一栏本身就是一条诊断**：判"够不够得着"却不问距离，它就会自己拿坐标推式子——实测里那次
+     * 花了四千多个思维 token、22 秒（§14.24）。有对还是零对，一眼就能分开。
+     */
+    var distancePairs: List<String> = emptyList()
+        private set
+
+    /**
      * 最近一次判定里，**第二步最后一轮**的用量。
      *
      * `completion_tokens_details.reasoning_tokens` 是这一层唯一能证明"它想了多久"的东西，而
@@ -263,11 +274,14 @@ class Judge(
         retryNotes: List<String> = emptyList(),
         view: ViewBudget = ViewBudget(world, request.actorId, request.centers),
         calc: CalcLog = CalcLog(),
+        /** 问过哪些对之间的距离。与 [calc] 同一条理由：这次动作的属性，两步共用一份。 */
+        distances: DistanceLog = DistanceLog(),
         /** 这是第几次尝试（1 起）。**只用来记账**——重试与首次在结果表上长得一样，只有这里分得开。 */
         attempt: Int = 1,
     ): TargetAlignment {
         val variables = Variables.of(world, listOf(request.actorId) + request.selected)
         val answered = call(
+            world = world,
             tools = JudgeTools.TARGETING,
             user = targetingPrompt(world, request, retryNotes, view, variables),
             // 快速档：对齐不需要推理。**只有这一档 temperature 才生效**，而这里也不需要温度。
@@ -278,6 +292,7 @@ class Judge(
             // 第一步不建模（`model_shape` 只挂在 EFFECTS 那组里），给一份空的只是为了让这一步与第二步
             // 走同一条 `call`。
             shaped = ShapeLog(),
+            distances = distances,
             stage = Stage.ALIGN,
             attempt = attempt,
         )
@@ -338,13 +353,16 @@ class Judge(
         view: ViewBudget = ViewBudget(world, request.actorId, request.centers),
         calc: CalcLog = CalcLog(),
         shapeLog: ShapeLog = ShapeLog(),
+        /** 问过哪些对之间的距离。与 [calc] 同一条理由：这次动作的属性，两步共用一份。 */
+        distances: DistanceLog = DistanceLog(),
         /** 这是第几次尝试（1 起）。**只用来记账**。 */
         attempt: Int = 1,
     ): Verdict {
         val variables = Variables.of(world, listOf(request.actorId) + targets)
         val answered = call(
+            world = world,
             tools = JudgeTools.EFFECTS,
-            user = effectPrompt(world, request, targets, retryNotes, view, variables),
+            user = effectPrompt(world, request, targets, retryNotes, view, variables, distances),
             // 思考档：整套设计把"物理推理"整个交给了模型（附录 A.4——现实无法用代码模拟），
             // 这里就是那件事发生的地方，也是全系统里最该让它想清楚的一处。
             thinking = ThinkingRequest.of(ThinkingMode.Always, effort),
@@ -352,6 +370,7 @@ class Judge(
             variables = variables,
             calc = calc,
             shaped = shapeLog,
+            distances = distances,
             stage = Stage.EFFECT,
             attempt = attempt,
         )
@@ -437,6 +456,7 @@ class Judge(
             viewDirections = view.asked
             alignedTargets = turn.alignedTargets
             calcExpressions = turn.calc.expressions
+            distancePairs = turn.distances.pairs
         }
     }
 
@@ -483,6 +503,11 @@ class Judge(
         internal val shaped = ShapeLog()
 
         /**
+         * 这次判定里问过哪些对之间的距离。与 [calc] 同一个位置、同一条理由：这次动作的属性，两步共用。
+         */
+        internal val distances = DistanceLog()
+
+        /**
          * 第一步：对齐指向对象。
          *
          * 返回 [TargetAlignment.Malformed] 表示**重试用尽**（不是"这一次格式不对"）——模型修不好
@@ -492,7 +517,7 @@ class Judge(
             var problems = listOf<String>()
             for (attempt in 1..maxAttempts) {
                 alignAttempts = attempt
-                when (val alignment = alignTargets(world, request, problems, view, calc, attempt)) {
+                when (val alignment = alignTargets(world, request, problems, view, calc, distances, attempt)) {
                     is TargetAlignment.Aligned -> {
                         alignedTargets = alignment.targets
                         return alignment
@@ -521,7 +546,7 @@ class Judge(
             for (attempt in 1..maxAttempts) {
                 when (
                     val verdict = proposeEffects(
-                        world, request, targets, problems.toList(), view, calc, shaped, attempt,
+                        world, request, targets, problems.toList(), view, calc, shaped, distances, attempt,
                     )
                 ) {
                     is Verdict.Rejected ->
@@ -572,6 +597,7 @@ class Judge(
     // ── 请求构造 ───────────────────────────────────────────────────────────────────
 
     private suspend fun call(
+        world: World,
         tools: List<io.github.k1midi0.infinitesimal.llm.ToolDefinition>,
         user: String,
         thinking: ThinkingRequest,
@@ -579,6 +605,8 @@ class Judge(
         variables: Map<String, Double>,
         calc: CalcLog,
         shaped: ShapeLog,
+        /** 这一次判定里问过哪些对之间的距离。与 [calc] 同一个位置、同一条理由：两步共用一份。 */
+        distances: DistanceLog,
         /** 这一次调用属于哪一步。**只用来记账**——两步的账必须分得开，否则"钱花在哪"还是猜。 */
         stage: Stage,
         /** 这是第几次尝试（1 起）。**只用来记账**。 */
@@ -594,7 +622,8 @@ class Judge(
          * 原先那个写死 `WIDEN_VIEW` 的判断会让它被当成一条后果，然后整轮判定报协议内失败。
          */
         fun isQuery(name: String): Boolean =
-            name == JudgeTools.WIDEN_VIEW || name == JudgeTools.CALC || name == JudgeTools.MODEL_SHAPE
+            name == JudgeTools.WIDEN_VIEW || name == JudgeTools.CALC ||
+                name == JudgeTools.MODEL_SHAPE || name == JudgeTools.DISTANCE
 
         var round = 0
         while (true) {
@@ -659,6 +688,8 @@ class Judge(
 
                     JudgeTools.MODEL_SHAPE -> modelShape(c, shaped)
 
+                    JudgeTools.DISTANCE -> measure(c, world, distances)
+
                     else ->
                         // 同一轮里既报了东西又要查询。**不能把这个报的东西丢掉**——它是模型
                         // 已经做出的判断，而这一轮之后它没有理由再报一次。
@@ -696,6 +727,41 @@ class Judge(
      * 回给它的**只有尺寸与格数，不回那张网格**：判定不需要看见格子，它需要的是"这样东西多大"；而一
      * 整张网格会吃掉这一轮里本该留给后果列表的注意力。
      */
+    /**
+     * 把一次 `distance` 的结果写成一句回给模型的话。
+     *
+     * **问不出来不是协议内失败**，与 [calculate] 同一条理由：id 抄错了是模型下一轮自己就能修的一步。
+     * 把它当成 `Malformed` 会让整轮判定重来，而重来的时候它手里并没有"是哪个 id 错了"这条信息。
+     *
+     * 回的是**三个数**，不是一个"距离"——理由写在 [io.github.k1midi0.infinitesimal.spatial.Distance]
+     * 上：规矩书说的"一格以内"指的是格距，高度差是另一回事。合成一个标量等于替规矩做了决定，而规矩
+     * 是内容、会改。
+     */
+    private fun measure(call: RawCall, world: World, log: DistanceLog): String {
+        val args = decode(DistanceArgs.serializer(), call)
+            ?: return "${JudgeTools.DISTANCE} 的参数不是合法 JSON：${call.arguments.take(160)}"
+        val a = world.byId(args.a) ?: return "没有 id 是「${args.a}」的东西——id 要从清单里原样抄。"
+        val b = world.byId(args.b) ?: return "没有 id 是「${args.b}」的东西——id 要从清单里原样抄。"
+        val d = distanceBetween(a, b)
+        val answer = buildString {
+            append("${a.label}（${a.id}） 到 ${b.label}（${b.id}）：")
+            append("**格距 ${d.cells} 格**（地图格子，一格一米，取横向与纵向里大的那个）")
+            append("；横向差 ${abs(d.dxCm)} 厘米、纵向差 ${abs(d.dyCm)} 厘米")
+            append("；高度差 ${abs(d.dzCm)} 厘米（")
+            append(
+                when {
+                    d.dzCm > 0 -> "${b.label} 比 ${a.label} 高"
+                    d.dzCm < 0 -> "${b.label} 比 ${a.label} 低"
+                    else -> "两者同高"
+                },
+            )
+            append("）；直线距离 ${d.straightCm} 厘米")
+        }
+        // **记的是答案原文，不只是"问过"**：第二步要靠它把第一步问过的答案带上，免得再问一遍。
+        log.record(a.id, b.id, answer)
+        return answer
+    }
+
     private suspend fun modelShape(call: RawCall, log: ShapeLog): String {
         val args = decode(ModelArgs.serializer(), call)
             ?: return "${JudgeTools.MODEL_SHAPE} 的参数不是合法 JSON：${call.arguments.take(160)}"
@@ -812,6 +878,7 @@ class Judge(
         retryNotes: List<String>,
         view: ViewBudget,
         variables: Map<String, Double>,
+        distances: DistanceLog,
     ): String =
         buildString {
             append(sharedPrefix(world, request, view))
@@ -823,6 +890,13 @@ class Judge(
                 targets.forEach { appendLine("- $it") }
             }
             appendTargetCards(world, request.actorId, targets)
+            // **第一步问过的距离带过来。** 同一次动作的两步看的是同一个世界，答案不会变；不带上，
+            // 模型就会把同一个问题再问一遍——实测里那多烧一整次往返（§14.25）。
+            if (distances.answers.isNotEmpty()) {
+                appendLine()
+                appendLine("【这一步之前已经问过的距离】（不必再问一遍，同一次动作里答案不会变）")
+                distances.answers.forEach { appendLine("· $it") }
+            }
             RulebookView.forTargets(world, request.actorId, targets).takeIf { it.isNotEmpty() }?.let {
                 append(it)
             }
@@ -1106,5 +1180,8 @@ class Judge(
 
 /** `calc` 的参数。**只有一个字符串**——schema 只支持扁平类型，而表达式本来就是一个字符串。 */
 @Serializable private data class CalcArgs(val expression: String = "")
+
+/** `distance` 的两个 id。**两个都必填**——"离某样东西多远"少一半是问不出来的。 */
+@Serializable private data class DistanceArgs(val a: String = "", val b: String = "")
 
 @Serializable private data class RejectArgs(val reason: String = "")

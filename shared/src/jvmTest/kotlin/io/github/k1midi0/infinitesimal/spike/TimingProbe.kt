@@ -60,6 +60,10 @@ class TimingProbe {
         val aligned: List<String>?,
         /** 驳回的理由原话。**假驳回必须看得到它说了什么**，否则只能猜。 */
         val reason: String?,
+        /** 这一次问过哪些对之间的距离。**空 = 它又在自己推式子**。 */
+        val distances: List<String>,
+        /** 这一次用 `calc` 算过哪些式子。 */
+        val calcs: List<String>,
     )
 
     private class Scenario(val name: String, val utterance: String)
@@ -113,6 +117,8 @@ class TimingProbe {
                     aligned = judge.alignedTargets,
                     reason = (judgment as? io.github.k1midi0.infinitesimal.judge.Judgment.RejectedWorld)
                         ?.reason,
+                    distances = judge.distancePairs,
+                    calcs = judge.calcExpressions,
                 )
                 rows += row
                 println(
@@ -134,6 +140,10 @@ class TimingProbe {
                     "  第一步报的 ${r.aligned?.joinToString("+") ?: "（就地驳回）"}",
             )
             r.reason?.let { println("        ↳ 理由：$it") }
+            println(
+                "        ↳ 问距离 ${r.distances.joinToString("、").ifEmpty { "（一次都没问）" }}" +
+                    "　算式子 ${r.calcs.joinToString("、").ifEmpty { "（一次都没算）" }}",
+            )
         }
 
         println("\n════════ 合计（${rows.size} 次判定）════════")
