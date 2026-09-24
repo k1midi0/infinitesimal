@@ -234,4 +234,125 @@ class TerrainTest {
         assertEquals("草", back.materials.name(back.terrain.materialIdAt(TerrainCell(0, 0, 256))!!))
         assertTrue(back.terrain.isGenerated(ChunkKey(0, 0)))
     }
+
+    // ── 按段存 ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * **这一条是整次重构的理由。**
+     *
+     * 你定的是硬性圈里从 0 格到地面都要铺满。半径 32 米的硬性圈约 12,868 个地形格，乘 257 层是
+     * **330 万个格**——按格存是一张开局就爆掉的 map。而地下是分层的：一整列同一种材质就是**一段**。
+     *
+     * 这个 32×32 的方块是那笔算术的缩影：**26 万个格、1024 段**。
+     */
+    @Test
+    fun aFullyFilledNeighbourhoodCostsRunsNotHundredsOfThousandsOfCells() {
+        val t = Terrain.empty()
+
+        assertEquals(32 * 32 * 257, t.fill(box(0, 0, 0, 31, 31, 256), "soil", materials))
+
+        assertEquals(263_168, t.cellCount)
+        assertEquals(1_024, t.runCount)
+    }
+
+    @Test
+    fun aSolidColumnIsOneRunNotTwoHundredAndFiftySeven() {
+        val t = Terrain.empty()
+        t.fill(box(0, 0, 0, 0, 0, 256), "soil", materials)
+
+        assertEquals(257, t.cellCount)
+        assertEquals(1, t.runCount)
+        assertEquals(listOf(TerrainRun("soil", 0, 256)), t.runsAt(0, 0))
+    }
+
+    @Test
+    fun diggingTheMiddleSplitsTheColumnInTwo() {
+        val t = Terrain.empty()
+        t.fill(box(3, 3, 0, 3, 3, 10), "stone", materials)
+
+        assertEquals(3, t.dig(box(3, 3, 4, 3, 3, 6), materials))
+
+        assertEquals(listOf(TerrainRun("stone", 0, 3), TerrainRun("stone", 7, 10)), t.runsAt(3, 3))
+        assertEquals(8, t.cellCount)
+        assertEquals(2, t.runCount)
+    }
+
+    /** 挨着的同材质段**必须合并**，否则挖几下就能把一列堆成几百段。 */
+    @Test
+    fun adjacentRunsOfTheSameMaterialAreMerged() {
+        val t = Terrain.empty()
+        t.fill(box(1, 1, 0, 1, 1, 4), "soil", materials)
+        t.fill(box(1, 1, 5, 1, 1, 9), "soil", materials)
+
+        assertEquals(listOf(TerrainRun("soil", 0, 9)), t.runsAt(1, 1))
+        assertEquals(1, t.runCount)
+    }
+
+    @Test
+    fun runsOfDifferentMaterialsStayApart() {
+        val t = Terrain.empty()
+        t.fill(box(1, 1, 0, 1, 1, 4), "soil", materials)
+        t.fill(box(1, 1, 5, 1, 1, 9), "stone", materials)
+
+        assertEquals(listOf(TerrainRun("soil", 0, 4), TerrainRun("stone", 5, 9)), t.runsAt(1, 1))
+        assertEquals(2, t.runCount)
+    }
+
+    /** 替换是在一段**中间**切一刀，两头还得留着。 */
+    @Test
+    fun replacingCutsAHoleInsideARun() {
+        val t = Terrain.empty()
+        t.fill(box(0, 0, 0, 0, 0, 9), "soil", materials)
+
+        assertEquals(3, t.replace(box(0, 0, 3, 0, 0, 5), "soil", "water", materials))
+
+        assertEquals(
+            listOf(TerrainRun("soil", 0, 2), TerrainRun("water", 3, 5), TerrainRun("soil", 6, 9)),
+            t.runsAt(0, 0),
+        )
+        assertEquals(3, t.runCount)
+    }
+
+    /** **挖空的列当场从表里删掉。** 留着它是把稀疏存的收益又还回去。 */
+    @Test
+    fun aColumnThatWasDugOutCompletelyDisappears() {
+        val t = Terrain.empty()
+        t.fill(box(0, 0, 0, 3, 3, 5), "soil", materials)
+        assertEquals(16, t.columns().size)
+
+        t.dig(box(0, 0, 0, 3, 3, 5), materials)
+
+        assertEquals(0, t.columns().size)
+        assertEquals(0, t.runCount)
+        assertEquals(0, t.cellCount)
+    }
+
+    /** 一片空地 `dig` 一遍**不该留下一列空段**——那正是稀疏存要避免的东西。 */
+    @Test
+    fun diggingEmptyGroundLeavesNothingBehind() {
+        val t = Terrain.empty()
+
+        assertEquals(0, t.dig(box(0, 0, 0, 9, 9, 256), materials))
+
+        assertEquals(0, t.columns().size)
+        assertEquals(0, t.cellCount)
+        assertNull(t.materialIdAt(TerrainCell(0, 0, 256)))
+    }
+
+    @Test
+    fun aSnapshotCarriesTheRunsNotTheCells() {
+        val t = Terrain.empty()
+        t.fill(box(2, 3, 0, 2, 3, 255), "soil", materials)
+        t.set(TerrainCell(2, 3, 0), "bedrock")
+
+        val snap = t.snapshot()
+        assertEquals(1, snap.columns.size)
+        assertEquals(2, snap.columns.single().runs.size)
+
+        val back = Terrain.from(snap)
+        assertEquals(256, back.cellCount)
+        assertEquals(2, back.runCount)
+        assertEquals("bedrock", back.materialIdAt(TerrainCell(2, 3, 0)))
+        assertEquals("soil", back.materialIdAt(TerrainCell(2, 3, 255)))
+    }
 }

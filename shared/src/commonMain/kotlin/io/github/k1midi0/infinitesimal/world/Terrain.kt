@@ -15,8 +15,8 @@ const val TERRAIN_CM = 50
 const val CHUNK_CELLS = 16
 
 /**
- * 向下整除。**负数要单独处理**：Kotlin 的 `/` 向零截断（`-50 / 50 == -1`），而物理上 -50 厘米在
- * 地面**以下**那一格里，答案是 -1——但 `-1 / 50` 会给出 0，那就在地面之上了。
+ * 向下整除。**负数要单独处理**：Kotlin 的 `/` 向零截断（`-1 / 50 == 0`），而物理上 -1 厘米在地面
+ * **以下**那一格里。
  *
  * 与 `spatial/Cells.kt` 的 `metreCell` 是同一条理由，两处各写一遍是因为两个分辨率各自要用。
  */
@@ -45,10 +45,10 @@ fun chunkOf(cell: TerrainCell): ChunkKey =
  * | | 默认 | 是什么 |
  * |---|---|---|
  * | [bottom] | 0 | 世界底。**这一层是 [Material] 里 `breakable = false` 的那层岩层。** |
- * | [surface] | 256 | 默认地面。**八成的实体都站在这一层上下。** |
- * | [top] | 1024 | 世界顶。surface 以上到 top 是空中——可以往上建、往上飞，现在什么都没有。 |
+ * | [surface] | 256 | 默认地面。八成的实体都站在这一层上下。 |
+ * | [top] | 1024 | 世界顶。surface 以上到 top 是空中。 |
  *
- * 整套在**准备冒险时可以配置**：换一张地图就是换这三个数。所以它是一份数据，不是常量。
+ * 整套在**准备冒险时可以配置**，所以它是一份数据，不是常量。
  */
 @Serializable
 data class WorldDepth(
@@ -61,8 +61,6 @@ data class WorldDepth(
 
     fun contains(z: Int): Boolean = z in bottom..top
 
-    fun contains(cell: TerrainCell): Boolean = contains(cell.z)
-
     /** 一次返回**全部**问题，空列表 = 合格。 */
     fun problems(): List<String> = buildList {
         if (top <= bottom) add("世界顶（$top）不比世界底（$bottom）高")
@@ -74,7 +72,7 @@ data class WorldDepth(
  * 三个框选工具收的那个长方体（附录 A.15）。
  *
  * **三只工具收同一个形状**，包括挖去——它的参数里只是没有材质。收同一个形状的理由是模型只有一套
- * 坐标要学：`x1/y1/z1/x2/y2/z2` 六个整数，写反了也没关系（`minOf`/`maxOf` 会摆正）。
+ * 坐标要学：`x1/y1/z1/x2/y2/z2` 六个整数，写反了也没关系。
  *
  * 单位是**地形格**，不是厘米。
  */
@@ -111,64 +109,98 @@ data class TerrainBox(
 }
 
 /**
- * 一次地形改动的规模上限。**它是参数而不是常量**，理由与 [ShapeLimits] 逐字相同：地形块的大小差得
- * 远，而那个调用方会有自己的一份。
+ * 一次地形改动的规模上限。**它是参数而不是常量**，理由与 [ShapeLimits] 逐字相同。
  */
 data class TerrainLimits(
     val maxCells: Int = 64 * 64,
-    val maxHeight: Int = 64,
+    val maxHeight: Int = 1_024,
 )
 
-/** 快照里的一格。用列表而不是 `Map`：JSON 的键只能是字符串，而这个键是三个整数。 */
+/**
+ * 一列里的一段：**[from]..[to] 这些格都是 [material]**（闭区间）。
+ *
+ * ## 为什么按段存，而不是按格存
+ *
+ * 你定的是**硬性圈里从 0 格到地面都要铺满**。半径 32 米的硬性圈是 12,868 个地形格，乘上 257 层
+ * 是 **330 万个格**；按格存就是一张 330 万条的 map，光 entry 开销几百 MB，一开局就爆掉。
+ *
+ * 而地下**是分层的，不是噪点**：一列「岩层 0、石 1–180、土 181–256」是**三段**。语义一字不变
+ * （每一格都有材质），存储降两个数量级。只有玩家真的挖过、堆过的那几列段数才会涨。
+ *
+ * ## 段与段不重叠、不相邻
+ *
+ * 相邻的同材质段一律合并，所以"这一列有几段"是一个确定的数，`dig` 留下的碎段不会无限累积。
+ */
 @Serializable
-data class TerrainBlock(val cell: TerrainCell, val material: String)
+data class TerrainRun(
+    val material: String,
+    val from: Int,
+    val to: Int,
+) {
+    val length: Int get() = to - from + 1
+
+    fun covers(z: Int): Boolean = z in from..to
+}
+
+/** 一列。快照里用列表而不是 map：JSON 的键只能是字符串，而这个键是两个整数。 */
+@Serializable
+data class TerrainColumn(
+    val x: Int,
+    val y: Int,
+    val runs: List<TerrainRun> = emptyList(),
+)
 
 @Serializable
 data class TerrainSnapshot(
-    val blocks: List<TerrainBlock> = emptyList(),
+    val columns: List<TerrainColumn> = emptyList(),
     /** **已经生成过的 chunk。**"探索过"就是它（附录 A.16）。 */
     val generated: List<ChunkKey> = emptyList(),
     val depth: WorldDepth = WorldDepth(),
 )
 
 /**
- * 地形层：**一格一个材质 id，稀疏存**（附录 A.15）。
- *
- * ## 为什么稀疏
- *
- * 世界竖向 0–1024 格，而水平不设上限（A.16）。照 1024³ 铺满是一百多万个格，而**真正被写过的格
- * 不到万分之一**——地下一百多米，玩家一辈子也挖不到。所以这里存的只是**被写过的那几个格**，
- * 不在表里的格就是"没有地形"。
+ * 地形层：**一格一个材质 id，按列分段存**（附录 A.15）。
  *
  * ## "空气"不是一种材质
  *
- * 挖去就是把那一格**从表里去掉**。稀疏存天然表达这件事，不需要往表里放一个什么都不代表的 id
- * ——放了就得在所有读地形的地方多一个"这个 id 要跳过"的判断。
+ * 挖去就是把那一格**从列里去掉**。不在段里的格就是"没有地形"，不需要往表里放一个什么都不代表的
+ * id——放了就得在所有读地形的地方多一个"这个 id 要跳过"的判断。
  *
  * ## 三只工具
  *
  * - [fill]：**只填空的格**。已经有的材质不动——这是"铺一条路"。
  * - [dig]：清空。**不可破坏的格跳过去**（世界底那层岩层靠它拦住）。
- * - [replace]：把框里的 [Material] `from` 换成 `to`。这是"烧焦一片草地"。
+ * - [replace]：把框里的 `from` 换成 `to`。这是"烧焦一片草地"。
  *
- * 三只都**只动落在 [WorldDepth] 里的格**：范围外的格不存在，不该被写出来。三只都返回**真改了几个
- * 格**——返回 0 与"改成了 0 个"是两回事，而日志里要靠它分辨。
+ * 三只都**只动落在 [WorldDepth] 里的格**，都返回**真改了几个格**——返回 0 与"一个格都没动"不是
+ * 一回事。三只都是**按段算的**：一个 16×16×257 的框是六万五千个格，而真正被碰到的段只有几十条。
  */
 class Terrain private constructor(
-    private val blocks: MutableMap<TerrainCell, String>,
+    /** 每一列按 (x, y) 索引。**空列当场删掉**，所以不在表里就是"这一列什么都没有"。 */
+    private val store: MutableMap<Long, TerrainColumn>,
     private val generated: MutableSet<ChunkKey>,
     val depth: WorldDepth,
 ) {
 
-    /** 一共有几个格有材质。**它才是"这个地形有多大"的度量**，不是世界体积。 */
-    val cellCount: Int get() = blocks.size
+    /** 一共有几个格有材质。**它是个大数**（铺满的硬性圈是几百万），别拿它当内存占用的代理。 */
+    val cellCount: Int
+        get() = store.values.sumOf { column -> column.runs.sumOf { it.length } }
 
-    fun materialIdAt(cell: TerrainCell): String? = blocks[cell]
+    /** **真正占用的段数。**它才是存储规模；`cellCount ÷ runCount` 大致就是分层的压缩比。 */
+    val runCount: Int
+        get() = store.values.sumOf { it.runs.size }
+
+    fun materialIdAt(cell: TerrainCell): String? =
+        materialAt(runsAt(cell.x, cell.y), cell.z)
 
     /** 这个格有没有被写过。**与"是不是空的"是同一件事**——写过的格一定有材质。 */
-    fun isFilled(cell: TerrainCell): Boolean = blocks.containsKey(cell)
+    fun isFilled(cell: TerrainCell): Boolean = materialIdAt(cell) != null
 
-    fun all(): List<TerrainBlock> = blocks.entries.map { TerrainBlock(it.key, it.value) }
+    /** 这一列的段，**按 z 升序**。空列返回空表。 */
+    fun runsAt(x: Int, y: Int): List<TerrainRun> = store[columnKey(x, y)]?.runs ?: emptyList()
+
+    /** 世界里所有非空的列。 */
+    fun columns(): List<TerrainColumn> = store.values.toList()
 
     /**
      * 直接落一格。`null` = 清掉。
@@ -177,65 +209,62 @@ class Terrain private constructor(
      * 才是一次动作会走到的地方。
      */
     fun set(cell: TerrainCell, materialId: String?) {
-        if (materialId == null) blocks.remove(cell) else blocks[cell] = materialId
+        if (!depth.contains(cell.z)) return
+        val k = columnKey(cell.x, cell.y)
+        val after = setInColumn(store[k]?.runs ?: emptyList(), cell.z, materialId)
+        if (after.isEmpty()) store.remove(k) else store[k] = TerrainColumn(cell.x, cell.y, after)
     }
 
     /** **只填空的格。** 返回真改了几个。 */
     fun fill(box: TerrainBox, materialId: String, materials: MaterialTable): Int {
         if (materials.byId(materialId) == null) return 0
-        var n = 0
-        each(box) { cell ->
-            if (!blocks.containsKey(cell)) {
-                blocks[cell] = materialId
-                n++
-            }
-        }
-        return n
+        return edit(box) { runs, from, to -> fillInColumn(runs, from, to, materialId) }
     }
 
     /** 清空。**不可破坏的格跳过去。** 返回真改了几个。 */
-    fun dig(box: TerrainBox, materials: MaterialTable): Int {
-        var n = 0
-        each(box) { cell ->
-            val here = blocks[cell]
-            if (here != null && materials.isBreakable(here)) {
-                blocks.remove(cell)
-                n++
-            }
-        }
-        return n
-    }
+    fun dig(box: TerrainBox, materials: MaterialTable): Int =
+        edit(box) { runs, from, to -> digInColumn(runs, from, to) { materials.isBreakable(it) } }
 
     /** 把 `from` 换成 `to`。**不可破坏的格跳过去**（岩层不会被换成土）。返回真改了几个。 */
     fun replace(box: TerrainBox, from: String, to: String, materials: MaterialTable): Int {
         if (materials.byId(to) == null) return 0
-        var n = 0
-        each(box) { cell ->
-            if (blocks[cell] == from && materials.isBreakable(from)) {
-                blocks[cell] = to
-                n++
-            }
-        }
-        return n
+        return edit(box) { runs, a, b -> replaceInColumn(runs, a, b, from, to) { materials.isBreakable(it) } }
     }
 
-    /** 只走竖向范围里的格。范围外的格**不存在**，不该被写出来。 */
-    private inline fun each(box: TerrainBox, body: (TerrainCell) -> Unit) {
+    /**
+     * 逐列走一遍框，只把**真的变了**的列写回去。
+     *
+     * 一片空地被 `dig` 一遍不该留下一堆空列——那等于把稀疏存的收益又还回去。
+     */
+    private fun edit(
+        box: TerrainBox,
+        change: (runs: List<TerrainRun>, from: Int, to: Int) -> List<TerrainRun>,
+    ): Int {
+        val from = maxOf(box.minZ, depth.bottom)
+        val to = minOf(box.maxZ, depth.top)
+        if (from > to) return 0
+
+        var changed = 0
         for (x in box.minX..box.maxX) {
             for (y in box.minY..box.maxY) {
-                for (z in box.minZ..box.maxZ) {
-                    if (!depth.contains(z)) continue
-                    body(TerrainCell(x, y, z))
+                val k = columnKey(x, y)
+                val before = store[k]?.runs ?: emptyList()
+                val after = change(before, from, to)
+                if (after == before) continue
+                for (z in from..to) {
+                    if (materialAt(before, z) != materialAt(after, z)) changed++
                 }
+                if (after.isEmpty()) store.remove(k) else store[k] = TerrainColumn(x, y, after)
             }
         }
+        return changed
     }
 
     // ── chunk ─────────────────────────────────────────────────────────────────────
 
     /**
-     * **已经生成过的 chunk。**"探索过"就是它（附录 A.16）——而"探索过 = 既定事实"是这个世界里
-     * 那条硬边界：生成时随便定制，生成过之后往那里再放东西就是凭空捏造。
+     * **已经生成过的 chunk。**"探索过"就是它（附录 A.16）——而"探索过 = 既定事实"是这个世界里那条
+     * 硬边界：生成时随便定制，生成过之后往那里再放东西就是凭空捏造。
      */
     fun generatedChunks(): Set<ChunkKey> = generated.toSet()
 
@@ -245,8 +274,13 @@ class Terrain private constructor(
         generated += chunk
     }
 
-    fun snapshot(): TerrainSnapshot =
-        TerrainSnapshot(all(), generated.sortedWith(compareBy({ it.x }, { it.y })), depth)
+    fun snapshot(): TerrainSnapshot = TerrainSnapshot(
+        columns = store.values
+            .filter { it.runs.isNotEmpty() }
+            .sortedWith(compareBy({ it.x }, { it.y })),
+        generated = generated.sortedWith(compareBy({ it.x }, { it.y })),
+        depth = depth,
+    )
 
     companion object {
 
@@ -254,9 +288,131 @@ class Terrain private constructor(
             Terrain(mutableMapOf(), mutableSetOf(), depth)
 
         fun from(snapshot: TerrainSnapshot): Terrain = Terrain(
-            snapshot.blocks.associateTo(mutableMapOf()) { it.cell to it.material },
+            snapshot.columns
+                .filter { it.runs.isNotEmpty() }
+                .associateTo(mutableMapOf()) { columnKey(it.x, it.y) to it },
             snapshot.generated.toMutableSet(),
             snapshot.depth,
         )
+
+        /** 一列的主键：两个 Int 拼成一个 Long，比 `Pair` 少一次装箱。 */
+        fun columnKey(x: Int, y: Int): Long = (x.toLong() shl 32) xor (y.toLong() and 0xFFFFFFFFL)
     }
 }
+
+// ── 段运算 ────────────────────────────────────────────────────────────────────────
+//
+// 四个纯函数，与 [Terrain] 的字段无关。它们全都保证"不重叠、不相邻"这条不变式（末尾一律
+// [mergeRuns]），所以 Terrain 那边不必再查一次。
+
+/** [runs] 在 [z] 处是什么材质。段很少，线性扫比二分好读。 */
+internal fun materialAt(runs: List<TerrainRun>, z: Int): String? =
+    runs.firstOrNull { it.covers(z) }?.material
+
+/**
+ * 整理成一列：按 z 排序、合并相邻同材质、砍掉重叠部分。
+ *
+ * 它是这一层唯一的不变式守卫——四个运算都以它收尾，所以"一格里有两段"在数据上做不到。
+ */
+internal fun mergeRuns(runs: List<TerrainRun>): List<TerrainRun> {
+    val live = runs.filter { it.from <= it.to }
+    if (live.isEmpty()) return emptyList()
+    val out = mutableListOf<TerrainRun>()
+    for (r in live.sortedWith(compareBy({ it.from }, { it.to }))) {
+        val last = out.lastOrNull()
+        when {
+            last == null -> out += r
+            // 完全接不上：新起一段。
+            r.from > last.to + 1 -> out += r
+            // 接着、或者重叠，材质又一样：并进去。
+            r.material == last.material -> if (r.to > last.to) out[out.size - 1] = last.copy(to = r.to)
+            // 材质不同又重叠：只保留露在外面的尾巴。
+            r.to > last.to -> out += r.copy(from = last.to + 1)
+            else -> Unit
+        }
+    }
+    return out
+}
+
+/** `[from]..[to]` 里**还没有材质**的那些小段。 */
+internal fun gapsIn(runs: List<TerrainRun>, from: Int, to: Int): List<IntRange> {
+    val out = mutableListOf<IntRange>()
+    var cursor = from
+    for (r in runs.sortedBy { it.from }) {
+        if (r.to < from) continue
+        if (r.from > to) break
+        val head = maxOf(r.from, from)
+        if (head > cursor) out += cursor..(head - 1)
+        cursor = maxOf(cursor, r.to + 1)
+        if (cursor > to) break
+    }
+    if (cursor <= to) out += cursor..to
+    return out
+}
+
+/** 落一格。`null` = 清掉。 */
+internal fun setInColumn(runs: List<TerrainRun>, z: Int, material: String?): List<TerrainRun> {
+    val without = runs.flatMap { r ->
+        if (!r.covers(z)) {
+            listOf(r)
+        } else {
+            buildList {
+                if (r.from < z) add(TerrainRun(r.material, r.from, z - 1))
+                if (r.to > z) add(TerrainRun(r.material, z + 1, r.to))
+            }
+        }
+    }
+    return mergeRuns(if (material == null) without else without + TerrainRun(material, z, z))
+}
+
+/** 只填空的格。 */
+internal fun fillInColumn(runs: List<TerrainRun>, from: Int, to: Int, material: String): List<TerrainRun> {
+    val gaps = gapsIn(runs, from, to)
+    if (gaps.isEmpty()) return runs
+    return mergeRuns(runs + gaps.map { TerrainRun(material, it.first, it.last) })
+}
+
+/** 清空 `[from]..[to]`，跳过不可破坏的材质。 */
+internal fun digInColumn(
+    runs: List<TerrainRun>,
+    from: Int,
+    to: Int,
+    breakable: (String) -> Boolean,
+): List<TerrainRun> = mergeRuns(
+    runs.flatMap { r ->
+        val a = maxOf(r.from, from)
+        val b = minOf(r.to, to)
+        if (a > b || !breakable(r.material)) {
+            listOf(r)
+        } else {
+            buildList {
+                if (r.from < a) add(TerrainRun(r.material, r.from, a - 1))
+                if (r.to > b) add(TerrainRun(r.material, b + 1, r.to))
+            }
+        }
+    },
+)
+
+/** 把 `target` 换成 `replacement`，跳过不可破坏的材质。 */
+internal fun replaceInColumn(
+    runs: List<TerrainRun>,
+    from: Int,
+    to: Int,
+    target: String,
+    replacement: String,
+    breakable: (String) -> Boolean,
+): List<TerrainRun> = mergeRuns(
+    runs.flatMap { r ->
+        val a = maxOf(r.from, from)
+        val b = minOf(r.to, to)
+        if (a > b || r.material != target || !breakable(r.material)) {
+            listOf(r)
+        } else {
+            buildList {
+                if (r.from < a) add(TerrainRun(r.material, r.from, a - 1))
+                add(TerrainRun(replacement, a, b))
+                if (r.to > b) add(TerrainRun(r.material, b + 1, r.to))
+            }
+        }
+    },
+)
