@@ -41,17 +41,28 @@ object RegionView {
 
     fun render(world: World, region: Region, actorId: String): String {
         val actor = world.byId(actorId)
-        val layer = actor?.z ?: 0
+        val layer = actor?.cell()?.z ?: 0
 
         // **covers 而不是 contains**：被射线打中的东西一定算在片里，哪怕它的格子落在凸包边界上
         // （它几乎总在边界上——挡住射线的那样东西，定义的就是这片空间的边）。
         val inside = world.all().filter { region.covers(it) }
-        val onLayer = inside.filter { it.z == layer }.sortedWith(compareBy({ it.y }, { it.x }))
-        val otherLayers = inside.filter { it.z != layer }
+
+        // **网格画发起者所在那一米层上的东西。**
+        //
+        // 试过按附录 A.5 那句「俯视图只画 `parent` 为空的顶层物体」来过滤，结果是**网格整个空了**：
+        // 这份内容里木桌挂着 `tavern_hall`、酒杯挂着木桌，一个 `parent` 为空的都没有（除非把房间
+        // 本身框进来）。A.5 那句是照"`parent` 只表示装着关系"写的，而这份内容里 `parent` 同时承担
+        // 了"在哪个地点"——**两种关系挤在同一个字段上**，这一条记在 §12 里等定。
+        //
+        // 所以暂时按层过滤，再把"一个格子里站着好几样"的挑一个出来（下面 [byCell]）。
+        val onLayer = inside
+            .filter { it.cell().z == layer }
+            .sortedWith(compareBy({ it.cell().y }, { it.cell().x }))
+        val onLayerIds = onLayer.map { it.id }.toSet()
 
         // 发起者永远用 @，其余按出现顺序发字母。字母是这一份输出的局部约定，不是世界里的 id。
         val symbols = mutableMapOf<String, Char>()
-        actor?.let { if (it in onLayer) symbols[it.id] = '@' }
+        actor?.let { if (it.id in onLayerIds) symbols[it.id] = '@' }
         var next = 'a'
         for (e in onLayer) {
             if (e.id in symbols) continue
@@ -59,9 +70,23 @@ object RegionView {
             next = if (next == 'z') 'a' else next + 1
         }
 
+        // 一个米格里可能站着好几样东西（木桌和它上面的酒杯是同一个 (x,y)）。**网格画最靠下的那
+        // 一个**——它是一张"地上有什么"的图，桌子占着那一格；酒杯的高度在下面的清单里，那里写得下
+        // 一个精确的厘米数，而格子里只有两个字符。
+        //
+        // 发起者例外：它永远是 @，否则挂在它身上的斧子与抹布会把它自己顶掉。
+        val byCell = onLayer.groupBy { it.cell() }
+        val drawn = byCell.mapValues { (_, here) ->
+            here.firstOrNull { it.id == actor?.id } ?: here.minByOrNull { it.z } ?: here.first()
+        }
+        val drawnIds = drawn.values.map { it.id }.toSet()
+        // 第二份清单是**这一层之外**的东西。落在同一格、却没被画出来的那几个（酒杯、斧子、抹布）
+        // 已经在上面那份清单里了，再列一遍是同一件事说两遍。
+        val listed = inside.filterNot { it.id in onLayerIds }
+
         return buildString {
             appendLine("【空间框】发起者与这次动作指向的东西所在的那一片")
-            appendLine("一格约合现实中的一米。")
+            appendLine("一格约合现实中的一米。**下面清单里的坐标是厘米**，一格就是 100 厘米。")
             appendLine(
                 "范围 x ${region.minX}..${region.maxX}（${region.width} 格），" +
                     "y ${region.minY}..${region.maxY}（${region.height} 格）；" +
@@ -76,7 +101,7 @@ object RegionView {
                 for (y in region.minY..region.maxY) {
                     append(("  y=$y").padEnd(8))
                     for (x in region.minX..region.maxX) {
-                        val here = onLayer.firstOrNull { it.x == x && it.y == y }
+                        val here = drawn[Cell3(x, y, layer)]
                         append(
                             when {
                                 here != null -> pad(symbols[here.id].toString())
@@ -95,17 +120,20 @@ object RegionView {
             }
             appendLine()
 
-            appendLine("【层 $layer 上的东西】")
+            appendLine("【层 $layer 上的东西】（一层 = 1 米）")
             if (onLayer.isEmpty()) {
                 appendLine("（没有）")
             } else {
-                for (e in onLayer) appendLine("  ${symbols[e.id]} ${describe(world, e)}")
+                for (e in onLayer) {
+                    val mark = if (e.id in drawnIds) symbols[e.id].toString() else "·"
+                    appendLine("  $mark ${describe(world, e)}")
+                }
             }
             appendLine()
 
-            if (otherLayers.isNotEmpty()) {
-                appendLine("【别的层上的东西】")
-                for (e in otherLayers) appendLine("  · ${describe(world, e)}")
+            if (listed.isNotEmpty()) {
+                appendLine("【这一片里、但不在这一层上的】")
+                for (e in listed) appendLine("  · ${describe(world, e)}")
                 appendLine()
             }
 
@@ -117,7 +145,9 @@ object RegionView {
         return buildString {
             append(e.label)
             append("   id=").append(e.id)
-            append("   (").append(e.x).append(", ").append(e.y).append(") 层").append(e.z)
+            // **坐标印成厘米**：世界存的就是厘米，而"够不够得着"要算的正是它。格子那边的粗粒度
+            // 留给网格，精度留在这里。
+            append("   (").append(e.x).append(", ").append(e.y).append(", ").append(e.z).append(") 厘米")
             if (parent != null) append("，在「").append(parent).append("」上")
         }
     }

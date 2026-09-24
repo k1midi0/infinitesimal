@@ -55,11 +55,11 @@ class RegionProbe {
         val world = World.from(
             WorldSnapshot(
                 StartingWorld.tavern() + listOf(
-                    Entity(id = "far_cup", kind = "器具", label = "远处的酒杯", x = 40, y = 30, z = 0),
+                    Entity(id = "far_cup", kind = "器具", label = "远处的酒杯", x = 4000, y = 3000, z = 0),
                 ),
             ),
         )
-        show("⑤ 目标在 (40, 30)", world, listOf("player", "far_cup"))
+        show("⑤ 目标在 (40, 30) 米", world, listOf("player", "far_cup"))
         show("⑥ ⑤扩大一次", world, listOf("player", "far_cup"), widenings = 1)
     }
 
@@ -67,7 +67,7 @@ class RegionProbe {
     fun obstaclesActuallyBite() {
         // 一条**跨层的墙**摆在东边。用来对照 [io.github.k1midi0.infinitesimal.spatial.RegionTest]
         // 里那两条：跨层的墙收得住框，单层的家具收不住。
-        val wall = (0..8).flatMap { y -> (-3..3).map { z -> Entity("w_${y}_$z", "墙", "墙", 13, y, z) } }
+        val wall = (0..8).flatMap { y -> (-3..3).map { z -> Entity("w_${y}_$z", "墙", "墙", 1300, y * 100, z * 100) } }
         val world = World.from(WorldSnapshot(StartingWorld.tavern() + wall))
         show("⑦ 东边一堵跨层的墙", world, listOf("player", "wine_cup"))
     }

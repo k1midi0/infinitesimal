@@ -2,6 +2,7 @@ package io.github.k1midi0.infinitesimal.spike
 
 import io.github.k1midi0.infinitesimal.spatial.RegionBuilder
 import io.github.k1midi0.infinitesimal.spatial.RegionView
+import io.github.k1midi0.infinitesimal.spatial.cell
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
@@ -46,15 +47,21 @@ class FrameProbe {
 
     /** 与 `JudgeWidenProbe` 的乙、丁、丙三个场景同形，读数才能横向比。 */
     private fun windows(): List<Pair<String, List<Entity>>> = listOf(
-        "乙 差一格在框外：扫帚在 (16,3)，玩家在 (12,3)" to
-            listOf(Entity("broom", "器具", "靠在墙上的扫帚", 16, 3, 0)),
-        "丁 八格开外：井与杯子都在 (20,8)，玩家在 (12,3)" to listOf(
-            Entity("town_well", "地点", "街心的水井", 20, 8, 0, attributes = mapOf("井水" to "冰凉")),
-            Entity("well_cup", "器具", "粗陶杯", 20, 8, 1, parent = "town_well"),
+        "乙 差一格在框外：扫帚在 (1600,300)，玩家在 (1200,300)" to
+            listOf(Entity("broom", "器具", "靠在墙上的扫帚", 1600, 300, 0)),
+        "丁 八格开外：井与杯子都在 (2000,800)，玩家在 (1200,300)" to listOf(
+            Entity("town_well", "地点", "街心的水井", 2000, 800, 0, attributes = mapOf("井水" to "冰凉")),
+            Entity("well_cup", "器具", "粗陶杯", 2000, 800, 100, parent = "town_well"),
         ),
         "丙 对照：手边的酒杯" to emptyList(),
     )
 
+    /**
+     * 切比雪夫距离，**按米格算**。
+     *
+     * 厘米坐标下直接减出来的数字是厘米，而这个探针要的是"几格"——那正是 [Cell3] 存在的理由：
+     * 米格是厘米的一种视图，不是另一份数据。
+     */
     private fun cheb(a: Entity, b: Entity): Int =
-        maxOf(abs(b.x - a.x), abs(b.y - a.y), abs(b.z - a.z))
+        maxOf(abs(a.cell().x - b.cell().x), abs(a.cell().y - b.cell().y), abs(a.cell().z - b.cell().z))
 }

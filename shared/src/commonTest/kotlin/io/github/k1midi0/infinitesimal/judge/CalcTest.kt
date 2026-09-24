@@ -125,12 +125,13 @@ class CalcTest {
         // 「两手=空着」是属性，但不是数，同样不出现。
         assertTrue(variables.keys.none { it == "player.两手" }, variables.keys.toString())
         // **坐标也在。** 实测（§14.19）里模型第一件想算的事就是"隔多远"——它写的是
-        // `broom.x - player.x`；当时变量表里没有坐标，那一次白调了。
-        assertEquals(12.0, variables["oak_table.x"])
-        assertEquals(4.0, variables["oak_table.y"])
+        // `broom.x - player.x`；当时变量表里没有坐标，那一次白调了。**单位是厘米**（附录 A.2），
+        // 与它要算的那个差值同单位，所以减出来直接就是厘米，不必再换算。
+        assertEquals(1200.0, variables["oak_table.x"])
+        assertEquals(400.0, variables["oak_table.y"])
         assertEquals(0.0, variables["oak_table.z"])
-        assertEquals(12.0, variables["player.x"])
-        assertEquals(3.0, variables["player.y"])
+        assertEquals(1200.0, variables["player.x"])
+        assertEquals(300.0, variables["player.y"])
     }
 
     @Test

@@ -81,7 +81,7 @@ class JudgeProbeSpike {
             // ⑥ **唯一一个只有 widen_view 能解决的局面**：扫帚在 (16,3)，比默认那一片（x 9..15）
             //    刚好差一格。框外那句话被删掉之后，它**在提示词里一个字都没有**——模型想报出它，
             //    除了调 widen_view 把框扩过去，没有第二条路。
-            world.put(Entity("broom", "器具", "靠在墙上的扫帚", 16, 3, 0))
+            world.put(Entity("broom", "器具", "靠在墙上的扫帚", 1600, 300, 0))
             widened = run(judge, world, "我拿起靠在墙上那把扫帚。", selected = emptyList())
             widenedWidenings = judge.viewWidenings
             println("═".repeat(100))
@@ -225,7 +225,7 @@ class JudgeProbeSpike {
 
     private fun seedWorld(): List<Entity> = listOf(
         Entity(
-            id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 10, y = 0, z = 0,
+            id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 1000, y = 0, z = 0,
             attributes = mapOf("地面" to "夯土", "光照" to "几盏油灯"),
             background = """
                 这里是「醉猫」酒馆，边境小镇灰渡唯一还在营业的酒馆，木石结构，建成约二十年。
@@ -233,35 +233,35 @@ class JudgeProbeSpike {
             """.trimIndent(),
         ),
         Entity(
-            id = "oak_table", kind = "家具", label = "木桌", x = 12, y = 4, z = 0,
+            id = "oak_table", kind = "家具", label = "木桌", x = 1200, y = 400, z = 0,
             parent = "tavern_hall",
             attributes = mapOf("材质" to "橡木", "状态" to "完好"),
             sentences = listOf("橡木桌呈深褐色，表面打磨得光滑，木纹清晰而紧密地延展。", "四条桌腿厚实笔直，整体高约零点八米。"),
         ),
         Entity(
-            id = "wine_cup", kind = "器具", label = "酒杯", x = 12, y = 4, z = 1,
+            id = "wine_cup", kind = "器具", label = "酒杯", x = 1200, y = 400, z = 80,
             parent = "oak_table",
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
             sentences = listOf("深色木制杯身，表面可见木纹，杯口边缘有几道划痕。"),
         ),
         Entity(
-            id = "oil_lamp", kind = "器具", label = "油灯", x = 12, y = 5, z = 1,
+            id = "oil_lamp", kind = "器具", label = "油灯", x = 1200, y = 500, z = 80,
             parent = "oak_table",
             attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
             sentences = listOf("铁架上扣着一只发黄的玻璃罩，罩口有烟熏的痕迹。"),
         ),
         Entity(
-            id = "player", kind = "角色", label = "你", x = 12, y = 3, z = 0,
+            id = "player", kind = "角色", label = "你", x = 1200, y = 300, z = 0,
             parent = "tavern_hall",
             attributes = mapOf("两手" to "空着", "腰间" to "挂着一把短柄斧"),
         ),
         // **身上带着的东西也是实体**，靠 parent 挂在角色下面——统一 Actor 的用法（§3.1）。
         Entity(
-            id = "axe", kind = "器具", label = "短柄斧", x = 12, y = 3, z = 1,
+            id = "axe", kind = "器具", label = "短柄斧", x = 1200, y = 300, z = 90,
             parent = "player", attributes = mapOf("状态" to "刃口有些卷"),
         ),
         Entity(
-            id = "rag", kind = "器具", label = "抹布", x = 12, y = 3, z = 1,
+            id = "rag", kind = "器具", label = "抹布", x = 1200, y = 300, z = 90,
             parent = "player", attributes = mapOf("状态" to "半干"),
         ),
     )

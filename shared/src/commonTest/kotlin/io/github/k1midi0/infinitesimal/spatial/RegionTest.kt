@@ -1,5 +1,6 @@
 package io.github.k1midi0.infinitesimal.spatial
 
+import io.github.k1midi0.infinitesimal.world.CM_PER_METRE
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
@@ -16,8 +17,33 @@ import kotlin.test.assertTrue
  */
 class RegionTest {
 
-    private fun thing(id: String, x: Int, y: Int, z: Int = 0) =
-        Entity(id = id, kind = "东西", label = id, x = x, y = y, z = z)
+    /**
+     * 一个东西，**参数是米**。
+     *
+     * 测试里读的是"在 (12,3)"这样的格，而世界存的是厘米——换算放在这一个函数里，是为了让这一整个
+     * 文件继续按格说话。它同时钉住另一件事：**厘米与米格之间确实只差这一处换算**。
+     */
+    private fun thing(id: String, x: Int, y: Int, z: Int = 0) = Entity(
+        id = id, kind = "东西", label = id,
+        x = x * CM_PER_METRE, y = y * CM_PER_METRE, z = z * CM_PER_METRE,
+    )
+
+    /**
+     * 厘米 → 米格。
+     *
+     * 这是整个世界坐标体系里**唯一一处单位换算**，所以它值得被单独钉住——尤其是负数那一格：
+     * Kotlin 的 `/` 向零截断（`-50 / 100 == 0`），而物理上 -50 厘米在地面**以下**那一格里。
+     */
+    @Test
+    fun centimetresTurnIntoMetreCellsByFlooring() {
+        assertEquals(0, metreCell(0))
+        assertEquals(0, metreCell(99))
+        assertEquals(1, metreCell(100))
+        assertEquals(12, metreCell(1200))
+        assertEquals(-1, metreCell(-50))
+        assertEquals(-1, metreCell(-100))
+        assertEquals(-2, metreCell(-101))
+    }
 
     private fun world(vararg e: Entity) = World.from(WorldSnapshot(e.toList()))
 
@@ -27,8 +53,8 @@ class RegionTest {
         for (id in centers) {
             val e = requireNotNull(world.byId(id))
             assertTrue(
-                r.contains(e.x, e.y),
-                "框 $r 里没有 $id 自己（在 ${e.x}, ${e.y}）——凸包把它关在外面了",
+                r.contains(e.cell().x, e.cell().y),
+                "框 $r 里没有 $id 自己（在 ${e.x}, ${e.y} 厘米）——凸包把它关在外面了",
             )
         }
     }
@@ -210,7 +236,7 @@ class RegionTest {
         assertTrue(r.hitIds.isNotEmpty(), "墙该被射线打中：$r")
         for (id in r.hitIds) {
             val e = requireNotNull(w.byId(id))
-            assertTrue(r.covers(e), "$id 把射线挡下来了，却不在这片里（在 ${e.x}, ${e.y}, 层 ${e.z}）")
+            assertTrue(r.covers(e), "$id 把射线挡下来了，却不在这片里（在 ${e.x}, ${e.y}, ${e.z} 厘米）")
         }
 
         // 穿越法是半开的，只判内部——照那样算，凸包整条边上每一格都会被判成框外，而被打中的东西

@@ -36,7 +36,7 @@ class CharacterCardPromptTest {
         WorldSnapshot(
             StartingWorld.tavern() + Entity(
                 id = "drunk", kind = "角色", label = "醉汉",
-                x = 12, y = 5, z = 0, parent = "tavern_hall",
+                x = 1200, y = 500, z = 0, parent = "tavern_hall",
                 cards = listOf(CharacterCard("身份", drunkCard)),
             ),
         ),

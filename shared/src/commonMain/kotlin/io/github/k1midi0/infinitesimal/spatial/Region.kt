@@ -82,7 +82,10 @@ class Region internal constructor(
     }
 
     /** 那样东西算不算在这片里：**格子在框内，或者它是被射线打中的那一个**。 */
-    fun covers(entity: Entity): Boolean = entity.id in hitIds || contains(entity.x, entity.y)
+    fun covers(entity: Entity): Boolean {
+        val cell = entity.cell()
+        return entity.id in hitIds || contains(cell.x, cell.y)
+    }
 
     fun cells(): List<Cell> {
         if (degenerate) {
@@ -219,8 +222,13 @@ object RegionBuilder {
         /** 一个扇区一项的档位。同一档的射线长 `3k`。 */
         levels: IntArray,
     ): Region {
+        // **单位在这里换一次，之后整条射线链上全是米格。** 世界把坐标存成厘米（一张桌子高 80 厘米
+        // 是它的事实），而射线、凸包、包围框按 1 米格走（附录 A.12）。两者不是两套数据，是同一份
+        // 坐标的两种分辨率——所以换算是**一处**，不是散在每一条 `abs()` 里。
+        val placed = entities.map { it to it.cell() }
         val points = mutableListOf<RayPoint>()
         for (c in centers) {
+            val origin = c.cell()
             for (sector in Direction.ALL.indices) {
                 val k = levels[sector]
                 val rayLen = DEFAULT_RAY * k
@@ -233,22 +241,22 @@ object RegionBuilder {
                 for ((ux, uy, uz) in Direction.ALL[sector].directions(k)) {
                     var landed: RayPoint? = null
                     for (t in 1..rayLen) {
-                        val x = c.x + (ux * t).roundToInt()
-                        val y = c.y + (uy * t).roundToInt()
-                        val z = c.z + (uz * t).roundToInt()
-                        val blocker = entities.firstOrNull { e ->
-                            e.id != c.id && e.x == x && e.y == y && e.z == z &&
-                                maxOf(abs(e.x - c.x), abs(e.y - c.y), abs(e.z - c.z)) > reach
-                        }
+                        val x = origin.x + (ux * t).roundToInt()
+                        val y = origin.y + (uy * t).roundToInt()
+                        val z = origin.z + (uz * t).roundToInt()
+                        val blocker = placed.firstOrNull { (e, cell) ->
+                            e.id != c.id && cell.x == x && cell.y == y && cell.z == z &&
+                                maxOf(abs(cell.x - origin.x), abs(cell.y - origin.y), abs(cell.z - origin.z)) > reach
+                        }?.first
                         if (blocker != null) {
                             landed = RayPoint(x, y, z, hit = true, blockerId = blocker.id)
                             break
                         }
                     }
                     points += landed ?: RayPoint(
-                        c.x + (ux * rayLen).roundToInt(),
-                        c.y + (uy * rayLen).roundToInt(),
-                        c.z + (uz * rayLen).roundToInt(),
+                        origin.x + (ux * rayLen).roundToInt(),
+                        origin.y + (uy * rayLen).roundToInt(),
+                        origin.z + (uz * rayLen).roundToInt(),
                         hit = false,
                     )
                 }

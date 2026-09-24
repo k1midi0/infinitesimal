@@ -66,7 +66,7 @@ class JudgeWidenProbe {
         Scenario(
             "乙 差一格在框外",
             "我拿起靠在墙上那把扫帚。",
-            listOf(Entity("broom", "器具", "靠在墙上的扫帚", 16, 3, 0)),
+            listOf(Entity("broom", "器具", "靠在墙上的扫帚", 1600, 300, 0)),
         ),
         Scenario("丙 手边（对照）", "我拿起桌上那杯麦酒。", emptyList()),
         // **只落在发起者自己身上的动作。** 它验的是「发起者本人也是对象」那条新规则：第一步该报
@@ -77,8 +77,9 @@ class JudgeWidenProbe {
             "丁 八格开外",
             "我把街心那口井边放着的杯子拿过来。",
             listOf(
-                Entity("town_well", "地点", "街心的水井", 20, 8, 0, attributes = mapOf("井水" to "冰凉")),
-                Entity("well_cup", "器具", "粗陶杯", 20, 8, 1, parent = "town_well"),
+                Entity("town_well", "地点", "街心的水井", 2000, 800, 0, attributes = mapOf("井水" to "冰凉")),
+                // 井沿一米高，杯子搁在井沿上。
+                Entity("well_cup", "器具", "粗陶杯", 2000, 800, 100, parent = "town_well"),
             ),
         ),
     )

@@ -30,12 +30,19 @@ object StartingWorld {
         ),
     )
 
+    /**
+     * 开局那张酒馆。
+     *
+     * **坐标是厘米**（附录 A.2，2026-09-24 改的）。高度不再是"第几层"，而是真实的高度：桌面 80
+     * 厘米，所以酒杯就在 z=80。于是「在桌上」从一个编号变成了一个**几何事实**——这正是当初要厘米
+     * 的理由（附录 A.2）。
+     */
     fun tavern(): List<Entity> = listOf(
         Entity(
             id = "tavern_hall",
             kind = "地点",
             label = "酒馆大厅",
-            x = 10, y = 0, z = 0,
+            x = 1000, y = 0, z = 0,
             attributes = mapOf("地面" to "夯土", "光照" to "几盏油灯"),
             background = """
                 这里是「醉猫」酒馆，边境小镇灰渡唯一还在营业的酒馆，木石结构，建成约二十年。
@@ -46,7 +53,8 @@ object StartingWorld {
             id = "oak_table",
             kind = "家具",
             label = "木桌",
-            x = 12, y = 4, z = 0,
+            // 桌面 80 厘米高、两米长一米宽——这几句在有了形状之后会变成体素表，现在先只有位置。
+            x = 1200, y = 400, z = 0,
             parent = "tavern_hall",
             attributes = mapOf("材质" to "橡木", "状态" to "完好"),
             // 一条**具体到这张桌子上**的规则。它默认优先级 30，比世界规则（10）高——这就是"越具体
@@ -59,7 +67,8 @@ object StartingWorld {
             id = "wine_cup",
             kind = "器具",
             label = "酒杯",
-            x = 12, y = 4, z = 1,
+            // 站在桌面上：80 厘米高。
+            x = 1200, y = 400, z = 80,
             parent = "oak_table",
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
         ),
@@ -67,7 +76,7 @@ object StartingWorld {
             id = "oil_lamp",
             kind = "器具",
             label = "油灯",
-            x = 12, y = 5, z = 1,
+            x = 1200, y = 500, z = 80,
             parent = "oak_table",
             attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
         ),
@@ -75,7 +84,7 @@ object StartingWorld {
             id = "hearth",
             kind = "家具",
             label = "壁炉",
-            x = 10, y = 0, z = 0,
+            x = 1000, y = 0, z = 0,
             parent = "tavern_hall",
             attributes = mapOf("状态" to "烧着"),
         ),
@@ -83,7 +92,7 @@ object StartingWorld {
             id = "cellar_door",
             kind = "门窗",
             label = "地窖门",
-            x = 13, y = 1, z = 0,
+            x = 1300, y = 100, z = 0,
             parent = "tavern_hall",
             attributes = mapOf("状态" to "关着"),
         ),
@@ -91,7 +100,7 @@ object StartingWorld {
             id = PLAYER,
             kind = "角色",
             label = "你",
-            x = 12, y = 3, z = 0,
+            x = 1200, y = 300, z = 0,
             parent = "tavern_hall",
             attributes = mapOf("两手" to "空着", "腰间" to "挂着一把短柄斧"),
             // 人设卡（§3.5）。**「交互范围」这一张就是「够不够得着」那条线的来源**——距离在这里
@@ -108,7 +117,8 @@ object StartingWorld {
             id = "axe",
             kind = "器具",
             label = "短柄斧",
-            x = 12, y = 3, z = 1,
+            // 腰间：90 厘米。
+            x = 1200, y = 300, z = 90,
             parent = PLAYER,
             attributes = mapOf("状态" to "刃口有些卷"),
         ),
@@ -116,7 +126,7 @@ object StartingWorld {
             id = "rag",
             kind = "器具",
             label = "抹布",
-            x = 12, y = 3, z = 1,
+            x = 1200, y = 300, z = 90,
             parent = PLAYER,
             attributes = mapOf("状态" to "半干"),
         ),
