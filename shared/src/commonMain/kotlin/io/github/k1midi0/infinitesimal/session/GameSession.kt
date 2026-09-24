@@ -12,6 +12,7 @@ import io.github.k1midi0.infinitesimal.judge.TargetAlignment
 import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.Renderer
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import kotlinx.coroutines.CoroutineScope
@@ -60,8 +61,10 @@ class PendingAlignment internal constructor(
 class GameSession(
     private val config: EndpointConfig,
     seed: List<Entity> = StartingWorld.tavern(),
+    /** 世界自己的规则书（§12 第 12 项）。与 [seed] 分开，因为它的作用域本来就不一样。 */
+    rules: Rulebook = StartingWorld.rules(),
 ) {
-    val world: World = World.from(WorldSnapshot(seed))
+    val world: World = World.from(WorldSnapshot(seed, rules))
     private val renderer = Renderer(config, world)
     private val judge = Judge(config)
 
@@ -346,6 +349,13 @@ class GameSession(
                 // 第一步一个目标都没报 = 这次动作不指向也不牵涉任何东西。**第二步根本没有跑**，
                 // 所以这里既没有驳回的理由、也没有后果可以报。
                 say(LogLine.Kind.NOTE, "（这一次动作没有落在任何东西上；世界没动，第二步没有跑）")
+            }
+
+            is Judgment.Unchanged -> {
+                // 动作成立，但世界没动。**这不是驳回、也不是失败**——所以既不用 REJECT 的颜色，
+                // 也不写 PROBLEM。
+                say(LogLine.Kind.OK, "成立——没有改变世界（${elapsed} ms）")
+                say(LogLine.Kind.NOTE, "   · ${judgment.note}")
             }
 
             is Judgment.FailedProtocol -> {

@@ -38,6 +38,13 @@ data class Entity(
      * 它和 [attributes] 是两回事：[attributes] 是判定能改的世界状态，这一项判定只读。
      */
     val cards: List<CharacterCard> = emptyList(),
+    /**
+     * 这个实体自己的规则书（§12 第 12 项）。
+     *
+     * 与 [attributes] 的分工是硬的：[attributes] 是**判定能改的世界状态**（杯子里还有没有酒），
+     * 这里的是**判定只读的依据**（木制品怕火）。所以它不随动作变化，删掉它等于删掉一样东西的性质。
+     */
+    val rulebook: Rulebook = Rulebook(),
 ) {
     /** 展示用的整段文字。句子里带着各自的句末标点，直接相连即可。 */
     fun text(): String = sentences.joinToString("")
@@ -73,4 +80,8 @@ enum class ChangeLevel {
  * 于是这一层没有平台依赖，也不必知道文件是什么。
  */
 @Serializable
-data class WorldSnapshot(val entities: List<Entity>)
+data class WorldSnapshot(
+    val entities: List<Entity>,
+    /** 世界自己的那份规则书（§12 第 12 项）。**默认优先级 10，最低**——它最泛。 */
+    val rulebook: Rulebook = Rulebook(),
+)

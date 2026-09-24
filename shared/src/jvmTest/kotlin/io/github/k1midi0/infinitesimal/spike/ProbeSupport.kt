@@ -1,8 +1,10 @@
 package io.github.k1midi0.infinitesimal.spike
 
 import io.github.k1midi0.infinitesimal.config.EndpointConfig
+import io.github.k1midi0.infinitesimal.config.ReasoningEffort
 import io.github.k1midi0.infinitesimal.config.ThinkingMode
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import kotlinx.serialization.json.Json
@@ -37,8 +39,22 @@ object ProbeSupport {
         thinking = ThinkingMode.Never,
     )
 
-    fun seed(path: String, entities: List<Entity>): World =
-        World.from(WorldSnapshot(entities)).also { save(path, it) }
+    /**
+     * 第二步的思考强度，由 `-PinfinitesimalEffort=LOW|HIGH|MAX` 传。
+     *
+     * **不传就是 `null`**，也就是让判定用它自己的默认（`Judge.effort`）。这里不复制那份默认值——
+     * 复制出来的常量总有一天会与产品里的那个不一致，而采样表上不会显示出来。
+     */
+    fun effortFromCommandLine(): ReasoningEffort? {
+        val raw = System.getProperty("infinitesimal.effort")?.trim().orEmpty()
+        if (raw.isEmpty()) return null
+        val parsed = runCatching { ReasoningEffort.valueOf(raw.uppercase()) }.getOrNull()
+        if (parsed == null) println("[警告] 认不出 -PinfinitesimalEffort=$raw，按产品默认跑")
+        return parsed
+    }
+
+    fun seed(path: String, entities: List<Entity>, rulebook: Rulebook = Rulebook()): World =
+        World.from(WorldSnapshot(entities, rulebook)).also { save(path, it) }
 
     /**
      * 判定探针共用的那个世界：酒馆大厅里一张木桌，桌上一只酒杯一盏油灯，玩家身上一把斧子一块抹布。

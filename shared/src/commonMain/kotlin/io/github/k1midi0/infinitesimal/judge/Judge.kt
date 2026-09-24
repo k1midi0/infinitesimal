@@ -10,6 +10,7 @@ import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.llm.LlmEvent
 import io.github.k1midi0.infinitesimal.llm.ThinkingRequest
 import io.github.k1midi0.infinitesimal.llm.ToolCall
+import io.github.k1midi0.infinitesimal.llm.Usage
 import io.github.k1midi0.infinitesimal.spatial.Direction
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
@@ -72,6 +73,14 @@ sealed interface Verdict {
     data class Proposed(val consequences: List<Consequence>, val affected: List<String>) : Verdict
 
     /**
+     * 模型明确回答：**做成了，但世界没有因此改变**（`no_change`）。
+     *
+     * 与 [Empty] 是两件完全不同的事：[Empty] 是协议上的空转（该退回重试），这一条是一个**成立的
+     * 判定结果**——世界没动，但这次动作没有被驳回，也没有失败。
+     */
+    data class Unchanged(val note: String) : Verdict
+
+    /**
      * 模型既没提议后果、也没驳回。
      *
      * **这不是"世界内驳回"。** 它是协议上的空转，该退回重试；重试还不行就当一次失败，
@@ -104,6 +113,13 @@ sealed interface Judgment {
      * 它既不是驳回（没有东西可以驳回），也不是失败（协议一路正常）。世界没动。
      */
     data class Nothing(val attempts: Int) : Judgment
+
+    /**
+     * 动作成立，但**世界没有因此改变**（第二步调了 `no_change`）。世界没动，[note] 是模型给的那句说明。
+     *
+     * 它不写库、不作废任何描述——与 [Applied] 的共同点是"这次动作没有被驳回"。
+     */
+    data class Unchanged(val targets: List<String>, val note: String, val attempts: Int) : Judgment
 }
 
 /**
@@ -129,11 +145,28 @@ sealed interface Judgment {
 class Judge(
     private val client: LlmClient,
     private val maxAttempts: Int = 2,
+    /**
+     * 第二步的思考强度，默认 [ReasoningEffort.HIGH]。
+     *
+     * **这个旋钮还没有被量出来。** §14.19 拿它跑过四整轮采样（每轮 16 次判定），四个读数之间的差别
+     * **全在噪声里**：总耗时 109 / 215 / 236 / 276 秒，单次最慢 36 / 76 / 81 / 80 秒，"符合预期"
+     * 12 / 13 / 12 / 12 ——`low` 有一轮最快、也有一轮最慢，中位推理量忽高忽低（950 → 5733）。
+     * n=4、每轮还开一个新世界，这种方差下**任何"降档更快"的结论都是过度解读**。
+     *
+     * 所以默认值保持 `high`：拿一次读数去改它是把噪声当结论。它是个参数，是为了下次**采够样本**
+     * 之后再回答（§12 第 17 项）。
+     */
+    val effort: ReasoningEffort = ReasoningEffort.HIGH,
 ) {
     /** 给配置确实是固定值的地方用。**强制落到 [SystemId.JUDGE] 那个缓存池**（§14.8）。 */
-    constructor(config: EndpointConfig, maxAttempts: Int = 2) : this(
+    constructor(
+        config: EndpointConfig,
+        maxAttempts: Int = 2,
+        effort: ReasoningEffort = ReasoningEffort.HIGH,
+    ) : this(
         LlmClient(config.copy(userId = SystemId.JUDGE)),
         maxAttempts,
+        effort,
     )
 
     /** 两步加起来的模型调用次数。 */
@@ -167,6 +200,29 @@ class Judge(
     var alignedTargets: List<String>? = null
         private set
 
+    /** 最近一次判定里模型调过 [JudgeTools.CALC] 的式子，按调用顺序。空列表 = 一次都没算。 */
+    var calcExpressions: List<String> = emptyList()
+        private set
+
+    /**
+     * 最近一次判定里，**第二步最后一轮**的用量。
+     *
+     * `completion_tokens_details.reasoning_tokens` 是这一层唯一能证明"它想了多久"的东西，而
+     * `finish_reason == "length"` 加上这个数字撞到 `max_tokens`，就是**被截断**的直接证据
+     * （§14.19 用它区分了"截断"与"模型拒绝回答"——在那之前两者长得一模一样）。
+     */
+    var lastUsage: Usage? = null
+        private set
+
+    /**
+     * 最近一次判定里，**第二步最后一轮**的 `finish_reason`。
+     *
+     * `length` 就是"被 `max_tokens` 截断"——它和"模型没话说"在结果上完全一样，只有这个字段能把
+     * 它们分开（§14.19）。
+     */
+    var lastFinishReason: String? = null
+        private set
+
     // ── 第一步：对齐指向对象 ────────────────────────────────────────────────────────
 
     suspend fun alignTargets(
@@ -174,23 +230,29 @@ class Judge(
         request: JudgeRequest,
         retryNotes: List<String> = emptyList(),
         view: ViewBudget = ViewBudget(world, request.actorId, request.centers),
+        calc: CalcLog = CalcLog(),
     ): TargetAlignment {
-        val calls = call(
+        val variables = Variables.of(world, listOf(request.actorId) + request.selected)
+        val answered = call(
             tools = JudgeTools.TARGETING,
-            user = targetingPrompt(world, request, retryNotes, view),
+            user = targetingPrompt(world, request, retryNotes, view, variables),
             // 快速档：对齐不需要推理。**只有这一档 temperature 才生效**，而这里也不需要温度。
             thinking = ThinkingRequest.of(ThinkingMode.Never, ReasoningEffort.LOW),
-            maxTokens = 512,
+            maxTokens = 1_024,
             view = view,
+            variables = variables,
+            calc = calc,
         )
+        val calls = answered.proposals
         if (calls.isEmpty()) {
             // 这不是「报空」。**发起者本人永远是对象之一**，所以零工具调用一定是模型没照做——
             // 提示词允许的那条「一个都不报」已经删掉了（§14.18）。重试说明要可执行，不能只说
-            // 「你没调工具」。
+            // 「你没调工具」；而"它说了什么、被谁停下"这两样缺了，这条日志就只能靠猜。
             return TargetAlignment.Malformed(
                 listOf(
                     "一个工具都没调。任何动作至少落在发起者身上——" +
-                        "报它（${JudgeTools.TARGET}），或者说明这一片里为什么没有它点的东西（${JudgeTools.REJECT_TARGETS}）",
+                        "报它（${JudgeTools.TARGET}），或者说明这一片里为什么没有它点的东西（${JudgeTools.REJECT_TARGETS}）" +
+                        answered.diagnosis(),
                 ),
             )
         }
@@ -236,29 +298,60 @@ class Judge(
         targets: List<String>,
         retryNotes: List<String> = emptyList(),
         view: ViewBudget = ViewBudget(world, request.actorId, request.centers),
+        calc: CalcLog = CalcLog(),
     ): Verdict {
-        val calls = call(
+        val variables = Variables.of(world, listOf(request.actorId) + targets)
+        val answered = call(
             tools = JudgeTools.EFFECTS,
-            user = effectPrompt(world, request, targets, retryNotes, view),
+            user = effectPrompt(world, request, targets, retryNotes, view, variables),
             // 思考档：整套设计把"物理推理"整个交给了模型（附录 A.4——现实无法用代码模拟），
             // 这里就是那件事发生的地方，也是全系统里最该让它想清楚的一处。
-            thinking = ThinkingRequest.of(ThinkingMode.Always, ReasoningEffort.HIGH),
-            maxTokens = 2_000,
+            thinking = ThinkingRequest.of(ThinkingMode.Always, effort),
+            // **8192，不是 2000。** 思考模式下思维链 token 也算在 `max_tokens` 里，2000 对
+            // `reasoning_effort: high` 来说太紧——§14.19 量到过 4 次里有 2 次第二步一个工具都没调，
+            // 而那种失败与"模型拒绝回答"在日志里长得一模一样。它是**上限不是预留**，调高只在真的
+            // 用掉时才花钱；截断才是净亏（白等 20 秒，什么也没得到）。
+            maxTokens = 8_192,
             view = view,
+            variables = variables,
+            calc = calc,
         )
-        if (calls.isEmpty()) return Verdict.Empty("第二步没有调用任何工具")
+        val calls = answered.proposals
+        if (calls.isEmpty()) return Verdict.Empty("第二步没有调用任何工具" + answered.diagnosis())
 
         val consequences = mutableListOf<Consequence>()
         val affected = mutableListOf<String>()
         var rejection: String? = null
+        var noChange: String? = null
 
         for (call in calls) {
             when (val parsed = parseEffect(call)) {
                 is Parsed.Effect -> consequences += parsed.consequence
                 is Parsed.Affects -> affected += parsed.actor
                 is Parsed.Rejects -> rejection = parsed.reason
+                is Parsed.Unchanged -> noChange = parsed.note
                 is Parsed.Bad -> return Verdict.Malformed(listOf(parsed.problem))
             }
+        }
+
+        // **`no_change` 必须单独出现。** 它说的是「世界没有改变」，而别的产物每一条都在说"改变了
+        // 一样东西"。并存时不是挑一边就完了——两边都自洽，选错的那一边会把一次真的改动静默吞掉。
+        val note = noChange
+        if (note != null) {
+            val clash = buildList {
+                if (consequences.isNotEmpty()) add("${consequences.size} 条后果")
+                if (rejection != null) add("一条驳回")
+                if (affected.isNotEmpty()) add("${affected.size} 个受影响的对象")
+            }
+            if (clash.isNotEmpty()) {
+                return Verdict.Malformed(
+                    listOf(
+                        "调了 ${JudgeTools.NO_CHANGE}（世界没有因此改变），同时又给了${clash.joinToString("、")}；" +
+                            "这两件事互斥，要哪一个",
+                    ),
+                )
+            }
+            return Verdict.Unchanged(note)
         }
 
         // **驳回与后果不能并存。** 默默选一边正是那种会把 bug 藏起来的事：两边都自洽，谁都不会报错。
@@ -269,7 +362,17 @@ class Judge(
         }
         rejection?.let { return Verdict.Rejected(it) }
 
-        if (consequences.isEmpty()) return Verdict.Malformed(listOf("只说了影响谁，没有说要发生什么"))
+        if (consequences.isEmpty()) {
+            // 这条重试说明要**可执行**。加 `no_change` 之前，这里只说「只说了影响谁，没有说要发生什么」，
+            // 模型于是硬造一条后果出来——那正是「只落在自己身上」慢一倍的原因（§14.18）。
+            return Verdict.Malformed(
+                listOf(
+                    "没有说要发生什么。要么用工具列出这次动作造成的后果；" +
+                        "要么，如果它确实没有改变世界（没有东西移动、属性变化、出现或消失），" +
+                        "就明确调 ${JudgeTools.NO_CHANGE} 把这件事说出来",
+                ),
+            )
+        }
         return Verdict.Proposed(consequences, affected)
     }
 
@@ -291,6 +394,7 @@ class Judge(
             viewWidenings = view.widenings
             viewDirections = view.asked
             alignedTargets = turn.alignedTargets
+            calcExpressions = turn.calc.expressions
         }
     }
 
@@ -321,6 +425,12 @@ class Judge(
             private set
 
         /**
+         * 这次判定里 `calc` 被调用的记录。**两部分共用一份**——与 [ViewBudget] 同一条理由：
+         * 它们是这次动作的属性，不是某一步的属性。
+         */
+        internal val calc = CalcLog()
+
+        /**
          * 第一步：对齐指向对象。
          *
          * 返回 [TargetAlignment.Malformed] 表示**重试用尽**（不是"这一次格式不对"）——模型修不好
@@ -330,7 +440,7 @@ class Judge(
             var problems = listOf<String>()
             for (attempt in 1..maxAttempts) {
                 alignAttempts = attempt
-                when (val alignment = alignTargets(world, request, problems, view)) {
+                when (val alignment = alignTargets(world, request, problems, view, calc)) {
                     is TargetAlignment.Aligned -> {
                         alignedTargets = alignment.targets
                         return alignment
@@ -357,9 +467,12 @@ class Judge(
 
             val problems = mutableListOf<String>()
             for (attempt in 1..maxAttempts) {
-                when (val verdict = proposeEffects(world, request, targets, problems.toList(), view)) {
+                when (val verdict = proposeEffects(world, request, targets, problems.toList(), view, calc)) {
                     is Verdict.Rejected ->
                         return Judgment.RejectedWorld(verdict.reason, Stage.EFFECT, attempt)
+
+                    // **做成了，但世界没有改变。** 不再重试，也不写库——它不是失败。
+                    is Verdict.Unchanged -> return Judgment.Unchanged(targets, verdict.note, attempt)
 
                     is Verdict.Empty -> problems += "模型没有提议任何后果，也没有驳回（${verdict.note}）"
 
@@ -399,9 +512,20 @@ class Judge(
         thinking: ThinkingRequest,
         maxTokens: Int,
         view: ViewBudget,
-    ): List<RawCall> {
+        variables: Map<String, Double>,
+        calc: CalcLog,
+    ): Answered {
         val messages = mutableListOf(ChatMessage.system(SYSTEM), ChatMessage.user(user))
         val proposals = mutableListOf<RawCall>()
+
+        /**
+         * **查询类的手**：调用它们之后这一轮接着往下走，结果灌回去再问一次。
+         *
+         * 判据是"它有没有提议改世界"，不是"它是不是 `widen_view`"——把 `calc` 加进来的那天，
+         * 原先那个写死 `WIDEN_VIEW` 的判断会让它被当成一条后果，然后整轮判定报协议内失败。
+         */
+        fun isQuery(name: String): Boolean = name == JudgeTools.WIDEN_VIEW || name == JudgeTools.CALC
+
         while (true) {
             requestCount++
             val turn = RawTurn.of(
@@ -412,30 +536,55 @@ class Judge(
                     maxTokens = maxTokens,
                 ).toList(),
             )
-            proposals += turn.calls.filter { it.name != JudgeTools.WIDEN_VIEW }
-            if (turn.calls.none { it.name == JudgeTools.WIDEN_VIEW }) return proposals
+            proposals += turn.calls.filterNot { isQuery(it.name) }
+            if (turn.calls.none { isQuery(it.name) }) {
+                // **最后一轮的用量**：第二步跑过就以它为准，只跑到第一步就以第一步为准。
+                lastUsage = turn.usage
+                lastFinishReason = turn.finishReason
+                return Answered(proposals, turn.content, turn.finishReason, turn.usage)
+            }
 
-            // 这一轮模型只是想看得更远。把它**如实**记回历史再接着问——有两样不能省：
+            // 这一轮模型只是想看得更远、或者想算一个数。把它**如实**记回历史再接着问——有两样不能省：
             // assistant 那条要带 `reasoning_content`（带 tools 的请求里它必须在，§1.2.1），
             // 而每一个 tool_call_id 都要有一条 tool 结果，端点是这么要求配对的。
             messages += turn.asAssistantMessage()
             for (c in turn.calls) {
-                messages += ChatMessage.toolResult(
-                    c.id,
-                    if (c.name == JudgeTools.WIDEN_VIEW) {
+                val answer = when (c.name) {
+                    JudgeTools.WIDEN_VIEW -> {
                         // 方向是**可选**的。认不出来的词就整体扩——不退回让模型重说：它"想看得更远"
                         // 这个愿望是明确的，只有"哪边"没表达清楚，为这个多烧一整轮不值得。
                         val wanted = decode(WidenArgs.serializer(), c)
                             ?.direction
                             ?.let(Direction::byLabel)
                         if (wanted != null) view.widen(wanted) else view.widen()
-                    } else {
-                        // 同一轮里既报了东西又要看更大范围。**不能把这个报的东西丢掉**——它是模型
+                    }
+
+                    JudgeTools.CALC -> calculate(c, variables, calc)
+
+                    else ->
+                        // 同一轮里既报了东西又要查询。**不能把这个报的东西丢掉**——它是模型
                         // 已经做出的判断，而这一轮之后它没有理由再报一次。
-                        "（记下了。你这一轮还要看更大的范围，所以它先搁着；看完新的范围再一起给。）"
-                    },
-                )
+                        "（记下了。你这一轮还调了查询的手，所以它先搁着；看到新东西之后再一起给。）"
+                }
+                messages += ChatMessage.toolResult(c.id, answer)
             }
+        }
+    }
+
+    /**
+     * 把一次 `calc` 的结果写成一句回给模型的话。
+     *
+     * **算不出来不是协议内失败**，它是模型可以自己修的一步：式子里的变量名打错了、括号没关、除以
+     * 零——把问题原样回给它，它下一轮就改。要是这里当成 `Malformed`，一次打错名字就会让整轮判定
+     * 重来，而重试时它手里并没有"是哪个名字错了"这条信息。
+     */
+    private fun calculate(call: RawCall, variables: Map<String, Double>, log: CalcLog): String {
+        val args = decode(CalcArgs.serializer(), call)
+            ?: return "${JudgeTools.CALC} 的参数不是合法 JSON：${call.arguments.take(160)}"
+        log.record(args.expression)
+        return when (val result = Calc.evaluate(args.expression, variables)) {
+            is Calc.Result.Value -> "${args.expression} = ${Calc.format(result.value)}"
+            is Calc.Result.Failed -> "算不出来：${result.problem}"
         }
     }
 
@@ -461,6 +610,12 @@ class Judge(
         appendLine()
         appendLine("【动作】")
         appendLine(request.intention)
+        // 规则书（§12 第 12 项）。**世界与发起者那两份放在共用前缀里**：两步都要它们，而前缀两步
+        // 逐字相同，缓存才仍然命中（§8）。指向的东西那几份在第二步自己那一段里——那时才知道指向谁。
+        RulebookView.forPrefix(world, request.actorId).takeIf { it.isNotEmpty() }?.let {
+            appendLine()
+            append(it)
+        }
     }
 
     private fun targetingPrompt(
@@ -468,6 +623,7 @@ class Judge(
         request: JudgeRequest,
         retryNotes: List<String>,
         view: ViewBudget,
+        variables: Map<String, Double>,
     ): String = buildString {
         append(sharedPrefix(world, request, view))
         appendLine()
@@ -490,7 +646,10 @@ class Judge(
         appendLine()
         appendLine("**动作点名了一样东西、而这一片里没有它**——这是另一回事：调 ${JudgeTools.REJECT_TARGETS}，理由说清「这一片里没有……」。")
         appendLine()
+        appendLine("**够不够得着、说不说得出口，同样看规则书**：里面有冲突时采信数字大的那条，并在理由里点名是哪一条。")
+        appendLine()
         appendLine("**不要在这一步推演后果**，那是下一步的事。")
+        appendVariables(this, variables)
         appendRetryNotes(retryNotes)
     }
 
@@ -500,6 +659,7 @@ class Judge(
         targets: List<String>,
         retryNotes: List<String>,
         view: ViewBudget,
+        variables: Map<String, Double>,
     ): String =
         buildString {
             append(sharedPrefix(world, request, view))
@@ -511,14 +671,40 @@ class Judge(
                 targets.forEach { appendLine("- $it") }
             }
             appendTargetCards(world, request.actorId, targets)
+            RulebookView.forTargets(world, request.actorId, targets).takeIf { it.isNotEmpty() }?.let {
+                append(it)
+            }
             appendLine()
             appendLine("【你这一步要做的事：列出后果】")
-            appendLine("1. 先判断这次动作在这个情境下成不成立。不成立就调 ${JudgeTools.REJECT}，理由写成这个世界会说的话。")
+            appendLine(
+                "1. 先判断这次动作在这个情境下成不成立——**规则书是依据**。不成立就调 ${JudgeTools.REJECT}，" +
+                    "理由写成这个世界会说的话；**规则书里有冲突时，采信数字大的那条，并在理由里点名是哪一条**。",
+            )
             appendLine("2. 成立就用工具列出它造成的**全部**后果——包括不显眼但确实发生的（桌上的东西跟着滑动、火把脱手落地）。")
             appendLine("3. 被这次动作影响到的角色，每个调一次 ${JudgeTools.AFFECT}。发起者本人不用记。")
             appendLine("4. 只列这次动作确实造成的后果。不要顺手整理世界。")
+            appendLine(
+                "5. **做成了、但世界一点都没变**（没有东西移动、属性变化、出现或消失）——" +
+                    "那就调 ${JudgeTools.NO_CHANGE} 把这件事说出来，**不要硬造一条后果**。它必须单独出现。",
+            )
+            appendVariables(this, variables)
             appendRetryNotes(retryNotes)
         }
+
+    /**
+     * 【可以算的数】：这一步里 [JudgeTools.CALC] 能用的变量（[Variables] 那份）。
+     *
+     * **一个数都没有时整块不出现**：列一个空清单只会占掉真实内容的位置，而模型本来也没打算算。
+     * 这份清单同时也是那只工具的变量名来源——工具 schema 是静态的，列不出动态的名字，只能写在这里。
+     */
+    private fun appendVariables(builder: StringBuilder, variables: Map<String, Double>) {
+        if (variables.isEmpty()) return
+        builder.appendLine()
+        builder.appendLine("【可以算的数】（要算就调 ${JudgeTools.CALC}，别心算）")
+        builder.appendLine(
+            variables.entries.sortedBy { it.key }.joinToString("，") { "${it.key}=${Calc.format(it.value)}" },
+        )
+    }
 
     /**
      * 这次动作指向的**其它角色**的人设卡（§3.5）。
@@ -552,6 +738,27 @@ class Judge(
     private class RawCall(val id: String, val name: String, val arguments: String)
 
     /**
+     * 一次"问到结束"的结果。
+     *
+     * 除了攒下的提议，它还留着模型**最后那一轮说的话**和端点的 `finish_reason`。两样都是诊断用的，
+     * 而它们是这一层唯一能拿到的信号：第二步一个工具都没调时，光有"没调"这三个字，日志里那条失败
+     * **与被截断、被拒绝、模型跑偏三种情况长得一模一样**（§14.19 就是这么撞上的）。
+     */
+    private class Answered(
+        val proposals: List<RawCall>,
+        val reply: String,
+        val finishReason: String?,
+        val usage: Usage?,
+    ) {
+        fun diagnosis(): String = buildString {
+            val said = reply.trim()
+            if (said.isNotEmpty()) append("；它说的是：「${said.take(200)}」")
+            append("；finish_reason=${finishReason ?: "（这次没有收到）"}")
+            usage?.completionTokensDetails?.let { append("；推理想了 ${it.reasoningTokens} token") }
+        }
+    }
+
+    /**
      * 一轮流式响应拼起来的样子。
      *
      * 与原先那个只收工具调用的版本相比，多留了两样，而这两样都是硬的：**这条 assistant 消息的思考
@@ -559,7 +766,13 @@ class Judge(
      * 要求每条 assistant 都带着 `reasoning_content`，而每条 tool 结果都要对上 `tool_call_id`——
      * 只收 name 与 arguments 是做不了这件事的。
      */
-    private class RawTurn(val content: String, val reasoning: String, val calls: List<RawCall>) {
+    private class RawTurn(
+        val content: String,
+        val reasoning: String,
+        val calls: List<RawCall>,
+        val finishReason: String?,
+        val usage: Usage?,
+    ) {
 
         fun asAssistantMessage() = ChatMessage.assistant(
             content = content.ifEmpty { null },
@@ -578,6 +791,8 @@ class Judge(
                 val ids = mutableMapOf<Int, String>()
                 val names = mutableMapOf<Int, String>()
                 val arguments = mutableMapOf<Int, StringBuilder>()
+                var finish: String? = null
+                var usage: Usage? = null
                 for (event in events) {
                     when (event) {
                         is LlmEvent.Content -> content.append(event.text)
@@ -590,7 +805,12 @@ class Judge(
                         is LlmEvent.ToolCallArguments ->
                             arguments.getOrPut(event.index) { StringBuilder() }.append(event.fragment)
 
-                        is LlmEvent.Finished -> Unit
+                        // **`finish_reason` 要留着。** §14.5 记过 Pulsus 把它丢掉、于是"被截断"与
+                        // "正常说完"在日志里长得一样；`length` 正是"第二步一个工具都没调"的常见原因。
+                        is LlmEvent.Finished -> {
+                            finish = event.reason
+                            usage = event.usage
+                        }
                     }
                 }
                 val calls = names.keys.sorted().map { index ->
@@ -600,7 +820,7 @@ class Judge(
                         arguments[index]?.toString().orEmpty(),
                     )
                 }
-                return RawTurn(content.toString(), reasoning.toString(), calls)
+                return RawTurn(content.toString(), reasoning.toString(), calls, finish, usage)
             }
         }
     }
@@ -619,6 +839,7 @@ class Judge(
         data class Effect(val consequence: Consequence) : Parsed
         data class Affects(val actor: String) : Parsed
         data class Rejects(val reason: String) : Parsed
+        data class Unchanged(val note: String) : Parsed
         data class Bad(val problem: String) : Parsed
     }
 
@@ -659,6 +880,8 @@ class Judge(
             }
 
             JudgeTools.AFFECT -> decodeInto(AffectArgs.serializer()) { Parsed.Affects(it.actor) }
+
+            JudgeTools.NO_CHANGE -> decodeInto(NoteArgs.serializer()) { Parsed.Unchanged(it.note) }
 
             JudgeTools.REJECT -> decodeInto(RejectArgs.serializer()) { Parsed.Rejects(it.reason) }
 
@@ -732,5 +955,11 @@ class Judge(
 }
 
 @Serializable private data class AffectArgs(val actor: String = "")
+
+/** `no_change` 的参数。 */
+@Serializable private data class NoteArgs(val note: String = "")
+
+/** `calc` 的参数。**只有一个字符串**——schema 只支持扁平类型，而表达式本来就是一个字符串。 */
+@Serializable private data class CalcArgs(val expression: String = "")
 
 @Serializable private data class RejectArgs(val reason: String = "")

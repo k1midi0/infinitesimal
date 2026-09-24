@@ -2,6 +2,8 @@ package io.github.k1midi0.infinitesimal.session
 
 import io.github.k1midi0.infinitesimal.world.CharacterCard
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.RuleEntry
+import io.github.k1midi0.infinitesimal.world.Rulebook
 
 /**
  * 开局的那个世界。
@@ -14,6 +16,19 @@ import io.github.k1midi0.infinitesimal.world.Entity
  * 玩家点一下才烧一次渲染（§7.1）。
  */
 object StartingWorld {
+
+    /**
+     * 世界自己的规则书（§12 第 12 项）。**它是所有规则里最泛的一份**，默认优先级 10。
+     *
+     * 两条都是"这个世界怎么运转"级别的话，不是某一样东西的性质——东西的性质写在它自己的 [Entity.rulebook]
+     * 里。这两句故意都很短：规则书要能一眼读完，长规则书的效果是模型开始跳读。
+     */
+    fun rules(): Rulebook = Rulebook(
+        listOf(
+            RuleEntry("火会烧起来：木头碰到火先冒烟，再烧着。"),
+            RuleEntry("水往低处流，不会自己往上走。"),
+        ),
+    )
 
     fun tavern(): List<Entity> = listOf(
         Entity(
@@ -34,6 +49,11 @@ object StartingWorld {
             x = 12, y = 4, z = 0,
             parent = "tavern_hall",
             attributes = mapOf("材质" to "橡木", "状态" to "完好"),
+            // 一条**具体到这张桌子上**的规则。它默认优先级 30，比世界规则（10）高——这就是"越具体
+            // 越优先"落到实处的地方：世界规则说木头会烧，这张桌子的规则可以推翻它。
+            rulebook = Rulebook(
+                listOf(RuleEntry("这张桌子是橡木打的，结实，但怕火。", values = mapOf("硬度" to "6"))),
+            ),
         ),
         Entity(
             id = "wine_cup",

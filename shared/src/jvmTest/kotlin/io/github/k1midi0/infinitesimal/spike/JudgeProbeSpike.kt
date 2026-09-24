@@ -206,6 +206,11 @@ class JudgeProbeSpike {
             is Judgment.Nothing -> {
                 println("  ○ 第一步一个目标都没报（尝试 ${judgment.attempts} 次）——**第二步按设计没有跑**，世界没动")
             }
+
+            is Judgment.Unchanged -> {
+                println("  第一步对齐到：${judgment.targets.ifEmpty { listOf("（不作用于具体的东西）") }.joinToString("、")}")
+                println("  ✅ 成立，但**世界没有改变**（尝试 ${judgment.attempts} 次）：「${judgment.note}」")
+            }
         }
         println("  总用时 $elapsed ms｜世界现在有：${world.all().joinToString("、") { it.id }}")
         return judgment

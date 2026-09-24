@@ -94,8 +94,9 @@ class ReachProbe {
                             is Judgment.RejectedWorld -> 1
                             is Judgment.FailedProtocol -> 2
                             is Judgment.Nothing -> 3
+                            is Judgment.Unchanged -> 4
                         }
-                        tally.getOrPut(key) { IntArray(4) }[slot]++
+                        tally.getOrPut(key) { IntArray(5) }[slot]++
                     }
                 }
             }
@@ -104,10 +105,10 @@ class ReachProbe {
             println("═".repeat(104))
             println("汇总（每个组合 $rounds 次）")
             println("═".repeat(104))
-            println("%-40s %-8s %-8s %-8s %-8s".format("场景｜版", "成立", "驳回", "协议失败", "无对象"))
+            println("%-40s %-8s %-8s %-8s %-8s %-8s".format("场景｜版", "成立", "驳回", "协议失败", "无对象", "没改变"))
             println("─".repeat(104))
             for ((key, v) in tally) {
-                println("%-40s %-8d %-8d %-8d %-8d".format(key, v[0], v[1], v[2], v[3]))
+                println("%-40s %-8d %-8d %-8d %-8d %-8d".format(key, v[0], v[1], v[2], v[3], v[4]))
             }
             println("═".repeat(104))
         }
@@ -135,6 +136,7 @@ class ReachProbe {
         is Judgment.RejectedWorld -> "驳回@${j.stage}"
         is Judgment.FailedProtocol -> "协议失败"
         is Judgment.Nothing -> "无对象（第二步没跑）"
+        is Judgment.Unchanged -> "成立·没改变"
     }
 
     private fun detailOf(j: Judgment): String = when (j) {
@@ -142,6 +144,7 @@ class ReachProbe {
         is Judgment.RejectedWorld -> j.reason.replace('\n', ' ')
         is Judgment.FailedProtocol -> j.problems.firstOrNull().orEmpty().replace('\n', ' ')
         is Judgment.Nothing -> "第一步一个目标都没报"
+        is Judgment.Unchanged -> "对齐 ${j.targets.joinToString("、")}｜${j.note}".replace('\n', ' ')
     }
 
     private companion object {

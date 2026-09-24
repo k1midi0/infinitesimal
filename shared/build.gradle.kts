@@ -64,4 +64,10 @@ tasks.withType<Test>().configureEach {
         "infinitesimal.liveKeyFile",
         providers.gradleProperty("infinitesimalLiveKeyFile").getOrElse(""),
     )
+    // 第二步的思考强度。**它只能量出来，不能想出来**（§14.19）：同一个场景换一档，延迟差十倍。
+    // 与密钥同一个理由留在命令行上：它是探针的旋钮，不是产品的配置。
+    systemProperty(
+        "infinitesimal.effort",
+        providers.gradleProperty("infinitesimalEffort").getOrElse(""),
+    )
 }

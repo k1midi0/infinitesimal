@@ -167,6 +167,7 @@ class JudgeWidenProbe {
         is Judgment.RejectedWorld -> "驳回@${j.stage}"
         is Judgment.FailedProtocol -> "协议失败"
         is Judgment.Nothing -> "无对象"
+        is Judgment.Unchanged -> "成立·没改变"
     }
 
     private fun detailOf(j: Judgment): String = when (j) {
@@ -174,6 +175,7 @@ class JudgeWidenProbe {
         is Judgment.RejectedWorld -> j.reason.replace('\n', ' ').take(46)
         is Judgment.FailedProtocol -> j.problems.firstOrNull().orEmpty().take(46)
         is Judgment.Nothing -> "第一步一个目标都没报，第二步没有跑"
+        is Judgment.Unchanged -> "对齐 ${j.targets.ifEmpty { listOf("（无）") }.joinToString("、")}｜${j.note}".replace('\n', ' ').take(46)
     }
 
     /** 每个场景一行汇总。**要看的就三件**：扩过几次、在哪一步驳回、耗时的中位数。 */
@@ -183,8 +185,8 @@ class JudgeWidenProbe {
         println("汇总（每个场景 $rounds 次）")
         println("═".repeat(112))
         println(
-            "%-22s %-10s %-12s %-12s %-10s %-10s %s".format(
-                "场景", "扩过", "填报了方向", "驳回@ALIGN", "驳回@EFFECT", "成立", "耗时中位/最大",
+            "%-22s %-9s %-11s %-11s %-11s %-8s %-8s %s".format(
+                "场景", "扩过", "填报了方向", "驳回@ALIGN", "驳回@EFFECT", "成立", "没改变", "耗时中位/最大",
             ),
         )
         println("─".repeat(118))
@@ -193,13 +195,14 @@ class JudgeWidenProbe {
             val sorted = mine.map { it.ms }.sorted()
             val median = sorted[sorted.size / 2]
             println(
-                "%-22s %-10s %-12s %-12s %-10s %-10s %s".format(
+                "%-22s %-9s %-11s %-11s %-11s %-8s %-8s %s".format(
                     s.name,
                     "${mine.count { it.widenings > 0 }}/${mine.size}",
                     "${mine.count { it.asked != "—" }}/${mine.size}",
                     mine.count { it.outcome == "驳回@ALIGN" },
                     mine.count { it.outcome == "驳回@EFFECT" },
                     mine.count { it.outcome == "成立" },
+                    mine.count { it.outcome == "成立·没改变" },
                     "$median / ${sorted.last()} ms",
                 ),
             )

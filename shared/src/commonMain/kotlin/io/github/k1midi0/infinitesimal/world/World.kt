@@ -9,7 +9,16 @@ package io.github.k1midi0.infinitesimal.world
  * 目前只有 [Entity] 一种东西。角色、时间轴、体素形状表都还没进来，它们会在有真实需要时加，而不是
  * 先摆好空壳。
  */
-class World private constructor(private var entities: MutableMap<String, Entity>) {
+class World private constructor(
+    private var entities: MutableMap<String, Entity>,
+    /**
+     * 世界自己的规则书（§12 第 12 项）。**它比任何实体那份都低**——世界规则最泛。
+     *
+     * 它和 [Entity.rulebook] 一样是**判定只读的依据**，不随动作变化。判定能不能改它，就是"世界的
+     * 物理法则能不能被一次动作改掉"，答案是不。
+     */
+    var rulebook: Rulebook = Rulebook(),
+) {
 
     fun all(): List<Entity> = entities.values.toList()
 
@@ -63,13 +72,13 @@ class World private constructor(private var entities: MutableMap<String, Entity>
         current.parent?.let { byId(it) }
     }.mapNotNull { it.background }.toList().reversed()
 
-    fun snapshot(): WorldSnapshot = WorldSnapshot(entities.values.toList())
+    fun snapshot(): WorldSnapshot = WorldSnapshot(entities.values.toList(), rulebook)
 
     companion object {
 
         fun empty(): World = World(mutableMapOf())
 
         fun from(snapshot: WorldSnapshot): World =
-            World(snapshot.entities.associateByTo(mutableMapOf()) { it.id })
+            World(snapshot.entities.associateByTo(mutableMapOf()) { it.id }, snapshot.rulebook)
     }
 }
