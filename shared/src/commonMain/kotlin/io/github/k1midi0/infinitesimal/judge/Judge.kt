@@ -183,7 +183,17 @@ class Judge(
             maxTokens = 512,
             view = view,
         )
-        if (calls.isEmpty()) return TargetAlignment.Malformed(listOf("第一步没有调用任何工具"))
+        if (calls.isEmpty()) {
+            // 这不是「报空」。**发起者本人永远是对象之一**，所以零工具调用一定是模型没照做——
+            // 提示词允许的那条「一个都不报」已经删掉了（§14.18）。重试说明要可执行，不能只说
+            // 「你没调工具」。
+            return TargetAlignment.Malformed(
+                listOf(
+                    "一个工具都没调。任何动作至少落在发起者身上——" +
+                        "报它（${JudgeTools.TARGET}），或者说明这一片里为什么没有它点的东西（${JudgeTools.REJECT_TARGETS}）",
+                ),
+            )
+        }
 
         val targets = mutableListOf<String>()
         var rejection: String? = null
@@ -340,9 +350,9 @@ class Judge(
          * （§4.7）。这里要的正是"最后确认过的那个集合"。
          */
         suspend fun finish(targets: List<String>): Judgment {
-            // **空目标没有第二步。** 第一步报空 = 这次动作不指向也不牵涉任何东西，那就不存在「后果」
-            // 可言；再跑一趟只会让模型把同一句话换个说法驳回，白烧 1.5–3 秒（§14.16 的尾部延迟有
-            // 一半是这么来的）。
+            // **空目标没有第二步。** 发起者本人永远是对象之一（§14.18），所以这一条现在**够不到**；
+            // 留着是因为"够不到"和"不可能"是两回事——真出现了，宁可什么都不发生，也不要拿一句
+            // 空目标去白跑一趟第二步。
             if (targets.isEmpty()) return Judgment.Nothing(alignAttempts)
 
             val problems = mutableListOf<String>()
@@ -473,11 +483,12 @@ class Judge(
         appendLine("- **选少了就补**：动作说的是「桌上的东西」，桌上每一件都得报。")
         appendLine("- **选多了就剔除**：跟这次动作无关的不要报。")
         appendLine("- **选错了就换成对的**。")
-        appendLine("- 报的东西**包括会被这次动作影响到的角色**（「我喊了一嗓子」——旁边那个人也算，虽然它没被指着）。")
+        appendLine("- **发起者本人也是对象。**「我理了理衣襟」「我环顾四周」「我打了个哈欠」——这类动作只有它一个人，那就报它自己，照常走完两步。")
+        appendLine("- 报的东西**也包括会被这次动作牵涉到的角色**（「我喊了一嗓子」——旁边那个人也算，虽然它没被指着）。")
         appendLine()
-        appendLine("一个都不报，只在**这次动作确实不指向、也不牵涉任何东西**时才合法（「我环顾四周」「我打了个哈欠」）。")
+        appendLine("**永远不要一个工具都不调**：任何动作至少落在发起者身上。")
         appendLine()
-        appendLine("**动作点名了一样东西、而这一片里没有它**——这是另一回事：调 ${JudgeTools.REJECT_TARGETS}，理由说清「这一片里没有……」。**别报空。** 报空是「这次动作没有对象」，驳回是「有对象，但它不在这里」——这两件事对发起者是不同的答案。")
+        appendLine("**动作点名了一样东西、而这一片里没有它**——这是另一回事：调 ${JudgeTools.REJECT_TARGETS}，理由说清「这一片里没有……」。")
         appendLine()
         appendLine("**不要在这一步推演后果**，那是下一步的事。")
         appendRetryNotes(retryNotes)
