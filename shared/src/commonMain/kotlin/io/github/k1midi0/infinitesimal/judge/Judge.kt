@@ -852,10 +852,6 @@ class Judge(
                 Parsed.Effect(Consequence.Move(it.id, it.x, it.y, it.z))
             }
 
-            JudgeTools.REPARENT -> decodeInto(ReparentArgs.serializer()) {
-                Parsed.Effect(Consequence.Reparent(it.id, it.parent.ifBlank { null }))
-            }
-
             JudgeTools.SET_ATTRIBUTE -> decodeInto(SetAttributeArgs.serializer()) {
                 Parsed.Effect(Consequence.SetAttribute(it.id, it.key, it.value))
             }
@@ -915,8 +911,6 @@ class Judge(
 
 @Serializable private data class MoveArgs(val id: String = "", val x: Int = 0, val y: Int = 0, val z: Int = 0)
 
-@Serializable private data class ReparentArgs(val id: String = "", val parent: String = "")
-
 @Serializable private data class SetAttributeArgs(val id: String = "", val key: String = "", val value: String = "")
 
 @Serializable private data class IdArgs(val id: String = "")
@@ -926,11 +920,9 @@ class Judge(
     val kind: String = "",
     val label: String = "",
     val x: Int = 0, val y: Int = 0, val z: Int = 0,
-    val parent: String = "",
 ) {
     fun toEntity(): Entity = Entity(
         id = id, kind = kind, label = label, x = x, y = y, z = z,
-        parent = parent.ifBlank { null },
         // 新东西一开始没有描述，等着被渲染。属性可以随后用 set_attribute 补。
         sentences = emptyList(),
     )
@@ -942,11 +934,9 @@ class Judge(
     val kind: String = "",
     val label: String = "",
     val x: Int = 0, val y: Int = 0, val z: Int = 0,
-    val parent: String = "",
 ) {
     fun toEntity(): Entity = Entity(
         id = newId, kind = kind, label = label, x = x, y = y, z = z,
-        parent = parent.ifBlank { null },
         sentences = emptyList(),
     )
 }

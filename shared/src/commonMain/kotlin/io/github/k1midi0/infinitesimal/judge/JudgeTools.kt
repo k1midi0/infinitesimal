@@ -44,7 +44,6 @@ object JudgeTools {
     // ── 第二步：列出后果 ──────────────────────────────────────────────────────────
 
     const val MOVE = "move"
-    const val REPARENT = "reparent"
     const val SET_ATTRIBUTE = "set_attribute"
     const val CHANGE_APPEARANCE = "change_appearance"
     const val DESTROY = "destroy"
@@ -142,12 +141,6 @@ object JudgeTools {
             int("x", "新的 x"), int("y", "新的 y"), int("z", "新的 z"),
         ),
         tool(
-            REPARENT,
-            "改一个东西挂在谁下面（杯子从桌上到了玩家手里）。**不改变它的外表**。",
-            text("id", "要改归属的东西的 id"),
-            text("parent", "新的上位对象 id；空字符串表示不挂在任何东西下"),
-        ),
-        tool(
             SET_ATTRIBUTE,
             "改一个结构化属性（杯子里的酒没了、门开了）。**这算外表变化**：它已有的描述会作废并被重新描述。",
             text("id", "要改的东西的 id"),
@@ -170,7 +163,6 @@ object JudgeTools {
             text("kind", "种类，例如 家具 / 器具 / 角色 / 地点"),
             text("label", "给人看的名字，例如 木桌"),
             int("x", "体素 x"), int("y", "体素 y"), int("z", "体素 z"),
-            text("parent", "挂在哪个东西下面；空字符串表示不挂在任何东西下"),
         ),
         tool(
             REPLACE,
@@ -180,7 +172,6 @@ object JudgeTools {
             text("kind", "新东西的种类"),
             text("label", "新东西的名字"),
             int("x", "体素 x"), int("y", "体素 y"), int("z", "体素 z"),
-            text("parent", "挂在哪个东西下面；空字符串表示不挂在任何东西下"),
         ),
         tool(
             AFFECT,

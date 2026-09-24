@@ -74,7 +74,8 @@ class TurnProbeSpike {
         assertTrue(pending.targets.isNotEmpty(), "该补出对象来")
         assertEquals(emptyList(), pending.picked, "玩家什么都没勾")
         // **停在这里世界必须一个字都没动。** 这是整条预览能成立的前提：第一步只对齐，不改世界。
-        assertEquals("oak_table", session.world.byId("wine_cup")?.parent, "预览期间酒杯还该在桌上")
+        // 酒杯还在 80 厘米的桌面上（关系不存成事实，位置就是坐标——附录 A.5）。
+        assertEquals(80, session.world.byId("wine_cup")?.z, "预览期间酒杯还该在桌面上")
         assertTrue(
             session.log.none { it.kind == LogLine.Kind.OK },
             "还没应用，不该有「成立」那一行：\n" + session.log.joinToString("\n") { "  [${it.kind}] ${it.text}" },

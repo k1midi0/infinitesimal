@@ -380,10 +380,7 @@ class GameSession(
     }
 
     private fun describe(c: Consequence, name: (String) -> String): String = when (c) {
-        is Consequence.Move -> "${name(c.id)} 挪到了 (${c.x}, ${c.y}) 层 ${c.z}"
-        is Consequence.Reparent ->
-            if (c.parent == null) "${name(c.id)} 现在不挂在任何东西下面了"
-            else "${name(c.id)} 现在归到「${name(c.parent)}」下面"
+        is Consequence.Move -> "${name(c.id)} 挪到了 (${c.x}, ${c.y}, ${c.z}) 厘米"
         is Consequence.SetAttribute -> "${name(c.id)} 的「${c.key}」变成「${c.value}」"
         is Consequence.ChangeAppearance -> "${name(c.id)} 只是外表变了（描述作废）"
         is Consequence.Destroy -> "${name(c.id)} 从世界里消失了"
@@ -391,13 +388,7 @@ class GameSession(
         is Consequence.Replace -> "${name(c.oldId)} 变成了「${c.entity.label}」（另一个东西）"
     }
 
-    /** 给界面显示"这是什么、在哪"。 */
-    fun subtitleOf(entity: Entity): String {
-        val place = entity.parent?.let { world.byId(it)?.label }
-        return buildString {
-            append(entity.kind)
-            if (place != null) append("｜在「$place」")
-            append("｜(${entity.x}, ${entity.y}) 层 ${entity.z}")
-        }
-    }
+    /** 给界面显示"这是什么、在哪"。**位置只来自坐标**——关系不存成事实（附录 A.5）。 */
+    fun subtitleOf(entity: Entity): String =
+        "${entity.kind}｜(${entity.x}, ${entity.y}, ${entity.z}) 厘米"
 }

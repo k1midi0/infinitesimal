@@ -175,19 +175,19 @@ class CacheProbeSpike {
             """.trimIndent(),
         ),
         Entity(
-            id = "oak_table", kind = "家具", label = "木桌", x = 1200, y = 400, z = 0, parent = "tavern_hall",
+            id = "oak_table", kind = "家具", label = "木桌", x = 1200, y = 400, z = 0,
             attributes = mapOf("材质" to "橡木", "状态" to "完好", "尺寸" to "2米 × 1米 × 0.8米"),
         ),
         Entity(
-            id = "wine_cup", kind = "器具", label = "酒杯", x = 1200, y = 400, z = 80, parent = "oak_table",
+            id = "wine_cup", kind = "器具", label = "酒杯", x = 1200, y = 400, z = 80,
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
         ),
         Entity(
-            id = "stool", kind = "家具", label = "木凳", x = 1300, y = 400, z = 0, parent = "tavern_hall",
+            id = "stool", kind = "家具", label = "木凳", x = 1300, y = 400, z = 0,
             attributes = mapOf("材质" to "榆木", "状态" to "凳面有裂"),
         ),
         Entity(
-            id = "oil_lamp", kind = "器具", label = "油灯", x = 1200, y = 500, z = 80, parent = "oak_table",
+            id = "oil_lamp", kind = "器具", label = "油灯", x = 1200, y = 500, z = 80,
             attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
         ),
         Entity(
@@ -195,7 +195,7 @@ class CacheProbeSpike {
             background = "灰渡酒馆的后院，地上散着劈好的柴，靠墙堆着几只空酒桶，雨下过不久，泥地还没干。",
         ),
         Entity(
-            id = "yard_table", kind = "家具", label = "木桌", x = 300, y = 900, z = 0, parent = "yard",
+            id = "yard_table", kind = "家具", label = "木桌", x = 300, y = 900, z = 0,
             attributes = mapOf("材质" to "松木", "状态" to "被雨淋过"),
         ),
     )

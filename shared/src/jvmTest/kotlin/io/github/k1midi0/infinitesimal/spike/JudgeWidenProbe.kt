@@ -79,7 +79,7 @@ class JudgeWidenProbe {
             listOf(
                 Entity("town_well", "地点", "街心的水井", 2000, 800, 0, attributes = mapOf("井水" to "冰凉")),
                 // 井沿一米高，杯子搁在井沿上。
-                Entity("well_cup", "器具", "粗陶杯", 2000, 800, 100, parent = "town_well"),
+                Entity("well_cup", "器具", "粗陶杯", 2000, 800, 100),
             ),
         ),
     )

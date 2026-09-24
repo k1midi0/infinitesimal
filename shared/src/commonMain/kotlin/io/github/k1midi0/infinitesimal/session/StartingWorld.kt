@@ -10,7 +10,7 @@ import io.github.k1midi0.infinitesimal.world.Rulebook
  *
  * **它是内容，不是配置。** 放在代码里只是因为现在还只有这一个；等有了第二个场景，它就该搬家
  * （一个 JSON 文件，或者一张表）。那时要顺手加一条：**开局世界的合法性也得过一遍 [io.github.k1midi0.infinitesimal.judge.Committer]**
- * ——手写七个实体，`parent` 写错一个字母是迟早的事，而那种错得等到运行时才炸。
+ * ——手写七个实体、坐标写错一位是迟早的事，而那种错得等到运行时才炸。
  *
  * 这里的东西**故意留着没渲染**（`sentences` 为空）：一进游戏就该看到"没见过它"的状态，
  * 玩家点一下才烧一次渲染（§7.1）。
@@ -55,7 +55,6 @@ object StartingWorld {
             label = "木桌",
             // 桌面 80 厘米高、两米长一米宽——这几句在有了形状之后会变成体素表，现在先只有位置。
             x = 1200, y = 400, z = 0,
-            parent = "tavern_hall",
             attributes = mapOf("材质" to "橡木", "状态" to "完好"),
             // 一条**具体到这张桌子上**的规则。它默认优先级 30，比世界规则（10）高——这就是"越具体
             // 越优先"落到实处的地方：世界规则说木头会烧，这张桌子的规则可以推翻它。
@@ -69,7 +68,6 @@ object StartingWorld {
             label = "酒杯",
             // 站在桌面上：80 厘米高。
             x = 1200, y = 400, z = 80,
-            parent = "oak_table",
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
         ),
         Entity(
@@ -77,7 +75,6 @@ object StartingWorld {
             kind = "器具",
             label = "油灯",
             x = 1200, y = 500, z = 80,
-            parent = "oak_table",
             attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
         ),
         Entity(
@@ -85,7 +82,6 @@ object StartingWorld {
             kind = "家具",
             label = "壁炉",
             x = 1000, y = 0, z = 0,
-            parent = "tavern_hall",
             attributes = mapOf("状态" to "烧着"),
         ),
         Entity(
@@ -93,7 +89,6 @@ object StartingWorld {
             kind = "门窗",
             label = "地窖门",
             x = 1300, y = 100, z = 0,
-            parent = "tavern_hall",
             attributes = mapOf("状态" to "关着"),
         ),
         Entity(
@@ -101,7 +96,6 @@ object StartingWorld {
             kind = "角色",
             label = "你",
             x = 1200, y = 300, z = 0,
-            parent = "tavern_hall",
             attributes = mapOf("两手" to "空着", "腰间" to "挂着一把短柄斧"),
             // 人设卡（§3.5）。**「交互范围」这一张就是「够不够得着」那条线的来源**——距离在这里
             // 已经是格了（写卡那一步换算，基准 1 格 = 1 米，附录 A.12），判定只读，不做算术。
@@ -119,7 +113,6 @@ object StartingWorld {
             label = "短柄斧",
             // 腰间：90 厘米。
             x = 1200, y = 300, z = 90,
-            parent = PLAYER,
             attributes = mapOf("状态" to "刃口有些卷"),
         ),
         Entity(
@@ -127,7 +120,6 @@ object StartingWorld {
             kind = "器具",
             label = "抹布",
             x = 1200, y = 300, z = 90,
-            parent = PLAYER,
             attributes = mapOf("状态" to "半干"),
         ),
     )

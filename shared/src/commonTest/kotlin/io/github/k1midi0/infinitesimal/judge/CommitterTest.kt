@@ -23,8 +23,7 @@ class CommitterTest {
         sentences: List<String> = listOf("它看上去是这样。"),
         attributes: Map<String, String> = emptyMap(),
     ) = Entity(
-        id = id, kind = "家具", label = id, x = 0, y = 0, z = 0,
-        parent = parent, attributes = attributes, sentences = sentences,
+        id = id, kind = "家具", label = id, x = 0, y = 0, z = 0, attributes = attributes, sentences = sentences,
     )
 
     private fun worldOf(vararg entities: Entity): World = World.from(WorldSnapshot(entities.toList()))
@@ -120,7 +119,7 @@ class CommitterTest {
         val result = Committer.apply(
             world,
             listOf(
-                Consequence.Spawn(entity("new_cup", parent = "table", sentences = emptyList())),
+                Consequence.Spawn(entity("new_cup", sentences = emptyList())),
                 Consequence.Move("new_cup", 7, 2, 1),
             ),
         )
@@ -162,24 +161,6 @@ class CommitterTest {
     fun spawningAnExistingIdIsRejected() {
         val world = worldOf(entity("cup"))
         val result = Committer.apply(world, listOf(Consequence.Spawn(entity("cup"))))
-
-        assertTrue(result is Committer.Rejected)
-    }
-
-    @Test
-    fun aCyclicReparentIsRejected() {
-        val world = worldOf(entity("a"), entity("b", parent = "a"))
-        // 把 a 挂到 b 底下 → a 的祖先链会绕着 b 转回来。
-        val result = Committer.apply(world, listOf(Consequence.Reparent("a", "b")))
-
-        assertTrue(result is Committer.Rejected)
-        assertTrue((result as Committer.Rejected).problems.any { it.contains("成环") })
-    }
-
-    @Test
-    fun reparentingToANonexistentParentIsRejected() {
-        val world = worldOf(entity("cup"))
-        val result = Committer.apply(world, listOf(Consequence.Reparent("cup", "nowhere")))
 
         assertTrue(result is Committer.Rejected)
     }

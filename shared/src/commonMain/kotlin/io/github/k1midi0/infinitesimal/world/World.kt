@@ -61,17 +61,6 @@ class World private constructor(
         entities.remove(id)
     }
 
-    fun childrenOf(id: String): List<Entity> = entities.values.filter { it.parent == id }
-
-    /**
-     * 沿 [Entity.parent] 链往上收集背景，从地点（根）到最近，读起来是"先大势、后近况"。
-     *
-     * parent 链的用处**只有这一个**：取背景。它不会被发给渲染器当"你在哪"（§7.6）。
-     */
-    fun backgroundChainOf(id: String): List<String> = generateSequence(byId(id)) { current ->
-        current.parent?.let { byId(it) }
-    }.mapNotNull { it.background }.toList().reversed()
-
     fun snapshot(): WorldSnapshot = WorldSnapshot(entities.values.toList(), rulebook)
 
     companion object {

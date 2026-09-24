@@ -131,8 +131,8 @@ class Renderer(
      * 那不是桌子的外表，那是**关系**——而关系会变、物体自身没变，于是那句话会**静默地过时**，永远
      * 没人发现（§7.6）。
      *
-     * 所以处置不是"在提示词里叫它别写"，而是**输入里压根不给**：没有素材，就写不出来。
-     * `parent` 链仍然要用——用来取地点背景（见 [staticPrefixOf]），但**不告诉它"你在哪"**。
+     * 所以处置不是"在提示词里叫它别写"，而是**输入里压根不给**：没有素材，就写不出来。而"你在哪"
+     * 这件事现在连字段都没有了（`parent` 已删，附录 A.5）。
      */
     fun contextOf(entity: Entity): String = buildString {
         appendLine("对象：${entity.label}（种类：${entity.kind}）")
@@ -147,15 +147,18 @@ class Renderer(
      *
      * 拼成**一段**而不是两条 system 消息：缓存按 token 前缀匹配，分成两条只会在中间多出 role 标记，
      * 对命中没有任何好处，却让"前两层"变成两个要各自维护的东西（§7.5）。
+     *
+     * **背景是这一样东西自己的那一份**，不再是沿 `parent` 链从地点继承来的（那条链已删）。它由生成
+     * 这样东西的那一步由导演写下——酒馆里那只酒杯与皇宫里那只酒杯的差别就在这里。
+     * 地点实体上那句"这里是什么地方"只属于那个地点。
      */
     fun staticPrefixOf(entity: Entity): String {
-        val background = world.backgroundChainOf(entity.id)
-        if (background.isEmpty()) return SYSTEM_PROMPT
+        val background = entity.background?.takeIf { it.isNotBlank() } ?: return SYSTEM_PROMPT
         return buildString {
             appendLine(SYSTEM_PROMPT)
             appendLine()
             appendLine("【背景】")
-            background.forEach { appendLine(it) }
+            appendLine(background)
         }.trimEnd()
     }
 

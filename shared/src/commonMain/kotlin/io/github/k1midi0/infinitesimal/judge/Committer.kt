@@ -12,8 +12,11 @@ import io.github.k1midi0.infinitesimal.world.World
  *  2. **协议内失败绝不示给玩家**（§4.3）。校验不过就是"我们的代码或模型的提议坏了"，退回重试；
  *     玩家看到"你的操作不合理"而实际上是我们的 bug，会让你在错误的层次上排查很久。
  *
- * 校验只看**结构**：id 在不在、新 id 有没有撞上、祖先链会不会成环、一批里后面的后果有没有引用已经
- * 被收走的东西。物理与语义（够不够得着、搬不搬得动）**一律不在这里**——那是模型段的事（附录 A.4）。
+ * 校验只看**结构**：id 在不在、新 id 有没有撞上、一批里后面的后果有没有引用已经被收走的东西。
+ * 物理与语义（够不够得着、搬不搬得动）**一律不在这里**——那是模型段的事（附录 A.4）。
+ *
+ * **它不管"谁挂在谁下面"了。** 那条关系（`parent`）连同成环校验一起删掉了：关系不存成事实，
+ * 位置就是坐标（附录 A.5，2026-09-24）。
  */
 object Committer {
 
@@ -44,9 +47,6 @@ object Committer {
                         world.put(it.copy(x = consequence.x, y = consequence.y, z = consequence.z))
                     }
 
-                is Consequence.Reparent ->
-                    world.byId(consequence.id)?.let { world.put(it.copy(parent = consequence.parent)) }
-
                 is Consequence.SetAttribute ->
                     world.byId(consequence.id)?.let {
                         world.put(it.copy(attributes = it.attributes + (consequence.key to consequence.value)))
@@ -76,7 +76,6 @@ object Committer {
     fun validate(world: World, consequences: List<Consequence>): List<String> {
         val problems = mutableListOf<String>()
         val existing = world.all().associateByTo(mutableMapOf()) { it.id }
-        val parentOf = world.all().associateTo(mutableMapOf()) { it.id to it.parent }
         val retired = mutableSetOf<String>()
 
         fun requireLive(id: String, what: String) {
@@ -89,30 +88,6 @@ object Committer {
         for (consequence in consequences) {
             when (consequence) {
                 is Consequence.Move -> requireLive(consequence.id, "移动")
-
-                is Consequence.Reparent -> {
-                    requireLive(consequence.id, "换归属")
-                    val parent = consequence.parent
-                    when {
-                        parent == null -> Unit
-                        parent == consequence.id -> problems += "换归属：${consequence.id} 不能把自己当父对象"
-                        !existing.containsKey(parent) -> problems += "换归属：父对象 $parent 不存在"
-                        else -> {
-                            // 祖先链成环：从新父对象往上走，走到它自己就是环。
-                            var cursor: String? = parent
-                            val seen = mutableSetOf<String>()
-                            while (cursor != null) {
-                                if (cursor == consequence.id) {
-                                    problems += "换归属：会让 ${consequence.id} 的祖先链成环"
-                                    break
-                                }
-                                if (!seen.add(cursor)) break // 世界本来就已经有环，不在这里重复报
-                                cursor = parentOf[cursor]
-                            }
-                            parentOf[consequence.id] = parent
-                        }
-                    }
-                }
 
                 is Consequence.SetAttribute -> {
                     requireLive(consequence.id, "改属性")
@@ -131,14 +106,8 @@ object Committer {
                     when {
                         entity.id.isBlank() -> problems += "新增：id 不能为空"
                         existing.containsKey(entity.id) -> problems += "新增：${entity.id} 已经存在了"
-                        else -> {
-                            // 同批里先前 Spawn 出来的东西可以被后面的后果引用。
-                            existing[entity.id] = entity
-                            parentOf[entity.id] = entity.parent
-                        }
-                    }
-                    if (entity.parent != null && !existing.containsKey(entity.parent)) {
-                        problems += "新增：父对象 ${entity.parent} 不存在"
+                        // 同批里先前 Spawn 出来的东西可以被后面的后果引用。
+                        else -> existing[entity.id] = entity
                     }
                 }
 
@@ -152,7 +121,6 @@ object Committer {
                             problems += "彻底改变：新 id ${entity.id} 已经存在"
                         else -> {
                             existing[entity.id] = entity
-                            parentOf[entity.id] = entity.parent
                             retired += consequence.oldId
                         }
                     }

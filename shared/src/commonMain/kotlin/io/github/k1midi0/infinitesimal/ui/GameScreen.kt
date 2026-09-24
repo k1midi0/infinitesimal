@@ -53,7 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.k1midi0.infinitesimal.session.GameSession
 import io.github.k1midi0.infinitesimal.session.LogLine
-import io.github.k1midi0.infinitesimal.session.PLAYER
+import io.github.k1midi0.infinitesimal.spatial.cell
 import io.github.k1midi0.infinitesimal.world.Entity
 import kotlin.math.roundToInt
 
@@ -152,20 +152,25 @@ private fun TopBar(session: GameSession) {
 /**
  * 俯视图。**画的是"这一层地面的平面图"**：
  *
- * - 大点 = 站在地上的东西（`z == 0`，且归当前地点管）
- * - 小点 = 挂在它们上面的东西（`z > 0`）——酒杯和油灯挂在桌子上，所以它们挤在桌子旁边
+ * - 大点 = 站在地上的东西（米格层 0）
+ * - 小点 = 摆在它们上面的东西（米格层 > 0，且米格与某个地面东西重合）
  *
- * 坐标直接来自实体表，**没有第二份地图数据**（附录 A.5：一份数据两个投影）。
+ * **一切都靠坐标推。** 以前这里读的是 `parent`（玩家挂在哪个地点、酒杯挂在哪张桌子上），那条字段
+ * 已经删掉了——关系不存成事实，位置就是坐标（附录 A.5）。所以"这东西摆在什么上面"现在的判据是
+ * **它的米格压在地面某个东西的米格上**。等东西有了形状，这条判据会换成"它的底面贴着那东西的顶面"
+ * （A.10），但方向一样：从几何推，不从字段读。
+ *
+ * 房间的名字也不画了：那以前来自 `parent`，而"这一片属于哪个地点"要等地点的范围（形状）才有答案。
  */
 @Composable
 private fun MapPane(session: GameSession, modifier: Modifier) {
     val entities = session.entities
-    val locationId = entities.firstOrNull { it.id == PLAYER }?.parent
-    val ground = entities.filter { it.parent == locationId && it.z == 0 }
-    val satellites = entities.filter { e -> e.z > 0 && ground.any { g -> g.id == e.parent } }
-    val location = locationId?.let { id -> entities.firstOrNull { it.id == id } }
+    val ground = entities.filter { it.cell().z == 0 }
+    val satellites = entities.filter { e ->
+        e.cell().z != 0 && ground.any { g -> g.cell().x == e.cell().x && g.cell().y == e.cell().y }
+    }
 
-    Pane("俯视图" + (location?.let { "：${it.label}" } ?: ""), modifier) {
+    Pane("俯视图", modifier) {
         if (ground.isEmpty()) {
             Text("这一层地上没有东西。", style = MaterialTheme.typography.bodySmall)
             return@Pane
@@ -175,10 +180,10 @@ private fun MapPane(session: GameSession, modifier: Modifier) {
             val w = with(density) { maxWidth.toPx() }
             val h = with(density) { maxHeight.toPx() }
             val pad = 54f
-            val minX = ground.minOf { it.x }
-            val minY = ground.minOf { it.y }
-            val spanX = (ground.maxOf { it.x } - minX).coerceAtLeast(0)
-            val spanY = (ground.maxOf { it.y } - minY).coerceAtLeast(0)
+            val minX = ground.minOf { it.cell().x }
+            val minY = ground.minOf { it.cell().y }
+            val spanX = (ground.maxOf { it.cell().x } - minX).coerceAtLeast(0)
+            val spanY = (ground.maxOf { it.cell().y } - minY).coerceAtLeast(0)
             val cell = minOf(
                 (w - pad * 2) / (spanX + 1).toFloat(),
                 (h - pad * 2) / (spanY + 1).toFloat(),
@@ -210,7 +215,7 @@ private fun MapPane(session: GameSession, modifier: Modifier) {
                     drawLine(gridColor, Offset(pad * 0.5f, y), Offset(size.width - pad * 0.5f, y), 1f)
                 }
                 ground.forEach { e ->
-                    val p = at(e.x, e.y)
+                    val p = at(e.cell().x, e.cell().y)
                     if (e.id in pendingTargets) {
                         drawCircle(pendingGlow.copy(alpha = 0.20f), 22f, p)
                         drawCircle(pendingGlow, 14f, p, alpha = 0.9f, style = Stroke(width = 2.5f))
@@ -218,10 +223,9 @@ private fun MapPane(session: GameSession, modifier: Modifier) {
                     if (e.id == focusedId) drawCircle(groundColor.copy(alpha = 0.22f), 17f, p)
                     drawCircle(if (e.id in picked) groundColor else groundColor.copy(alpha = 0.45f), 9f, p)
                 }
-                // 挂在上面的东西沿着它下面那个东西排开——不然它们和桌子是同一个坐标，会叠在一起。
-                satellites.groupBy { it.parent }.forEach { (_, list) ->
-                    val host = ground.first { it.id == list.first().parent }
-                    val base = at(host.x, host.y)
+                // 摆在上面那些沿着它下面的地面东西排开——不然它们和桌子是同一个米格，会叠在一起。
+                satellites.groupBy { it.cell().x to it.cell().y }.forEach { (atCell, list) ->
+                    val base = at(atCell.first, atCell.second)
                     list.forEachIndexed { index, e ->
                         val angle = (-1.4f + index * 0.62f).toDouble()
                         val p = base + Offset(
@@ -239,11 +243,11 @@ private fun MapPane(session: GameSession, modifier: Modifier) {
             }
 
             ground.forEach { e ->
-                MapLabel(session, e, at(e.x, e.y), cell)
+                MapLabel(session, e, at(e.cell().x, e.cell().y), cell)
             }
         }
         Text(
-            "大点是地面上的，小点是挂在它们上面的。点一下只是「看它」，不动勾选。",
+            "大点是地面上的，小点是摆在它们上面的。点一下只是「看它」，不动勾选。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

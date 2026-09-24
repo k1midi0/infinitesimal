@@ -99,7 +99,7 @@ class RulebookProbe {
             name = "乙 够得着要算",
             utterance = "我伸手去拿靠在墙根的那把扫帚。",
             ruled = true,
-            extra = listOf(Entity("broom", "器具", "靠在墙根上的扫帚", 1400, 300, 0, parent = "tavern_hall")),
+            extra = listOf(Entity("broom", "器具", "靠在墙根上的扫帚", 1400, 300, 0)),
             expected = { it is Judgment.RejectedWorld },
         ),
         Scenario(
@@ -261,7 +261,6 @@ class RulebookProbe {
 
     private fun describe(c: Consequence): String = when (c) {
         is Consequence.Move -> "移动 ${c.id}→(${c.x},${c.y},${c.z})"
-        is Consequence.Reparent -> "改归属 ${c.id}→${c.parent ?: "不挂"}"
         is Consequence.SetAttribute -> "改属性 ${c.id}.${c.key}=${c.value}"
         is Consequence.ChangeAppearance -> "外表变了 ${c.id}"
         is Consequence.Destroy -> "摧毁 ${c.id}"

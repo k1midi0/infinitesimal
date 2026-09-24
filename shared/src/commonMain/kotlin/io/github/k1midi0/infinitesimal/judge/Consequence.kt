@@ -29,12 +29,6 @@ sealed interface Consequence {
         override val level: ChangeLevel get() = ChangeLevel.UNCHANGED
     }
 
-    /** 换归属（杯子从桌上到了玩家手里）。同样**不动描述**。 */
-    data class Reparent(val id: String, val parent: String?) : Consequence {
-        override val targetId: String get() = id
-        override val level: ChangeLevel get() = ChangeLevel.UNCHANGED
-    }
-
     /**
      * 改一个结构化属性。
      *

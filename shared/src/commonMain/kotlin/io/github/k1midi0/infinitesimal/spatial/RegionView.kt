@@ -141,14 +141,12 @@ object RegionView {
     }
 
     private fun describe(world: World, e: Entity): String {
-        val parent = e.parent?.let { world.byId(it)?.label }
         return buildString {
             append(e.label)
             append("   id=").append(e.id)
             // **坐标印成厘米**：世界存的就是厘米，而"够不够得着"要算的正是它。格子那边的粗粒度
             // 留给网格，精度留在这里。
             append("   (").append(e.x).append(", ").append(e.y).append(", ").append(e.z).append(") 厘米")
-            if (parent != null) append("，在「").append(parent).append("」上")
         }
     }
 

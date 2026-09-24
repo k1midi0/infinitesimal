@@ -35,9 +35,7 @@ class JudgeProbeSpike {
      * 绝对值是它自己编的。只打一句 `Move → oil_lamp` 是看不出那件事修没修的。
      */
     private fun describe(c: Consequence): String = when (c) {
-        is Consequence.Move -> "Move → ${c.id}  到 (${c.x}, ${c.y}) 层${c.z}  [${c.level}]"
-        is Consequence.Reparent ->
-            "Reparent → ${c.id}  挂到 ${c.parent?.let { "「$it」" } ?: "（什么都不挂）"}  [${c.level}]"
+        is Consequence.Move -> "Move → ${c.id}  到 (${c.x}, ${c.y}, ${c.z})  [${c.level}]"
         is Consequence.SetAttribute -> "SetAttribute → ${c.id}  ${c.key}=${c.value}  [${c.level}]"
         is Consequence.ChangeAppearance -> "ChangeAppearance → ${c.id}  [${c.level}]"
         is Consequence.Destroy -> "Destroy → ${c.id}  [${c.level}]"
@@ -234,35 +232,29 @@ class JudgeProbeSpike {
         ),
         Entity(
             id = "oak_table", kind = "家具", label = "木桌", x = 1200, y = 400, z = 0,
-            parent = "tavern_hall",
             attributes = mapOf("材质" to "橡木", "状态" to "完好"),
             sentences = listOf("橡木桌呈深褐色，表面打磨得光滑，木纹清晰而紧密地延展。", "四条桌腿厚实笔直，整体高约零点八米。"),
         ),
         Entity(
             id = "wine_cup", kind = "器具", label = "酒杯", x = 1200, y = 400, z = 80,
-            parent = "oak_table",
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
             sentences = listOf("深色木制杯身，表面可见木纹，杯口边缘有几道划痕。"),
         ),
         Entity(
             id = "oil_lamp", kind = "器具", label = "油灯", x = 1200, y = 500, z = 80,
-            parent = "oak_table",
             attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
             sentences = listOf("铁架上扣着一只发黄的玻璃罩，罩口有烟熏的痕迹。"),
         ),
         Entity(
             id = "player", kind = "角色", label = "你", x = 1200, y = 300, z = 0,
-            parent = "tavern_hall",
             attributes = mapOf("两手" to "空着", "腰间" to "挂着一把短柄斧"),
         ),
         // **身上带着的东西也是实体**，靠 parent 挂在角色下面——统一 Actor 的用法（§3.1）。
         Entity(
-            id = "axe", kind = "器具", label = "短柄斧", x = 1200, y = 300, z = 90,
-            parent = "player", attributes = mapOf("状态" to "刃口有些卷"),
+            id = "axe", kind = "器具", label = "短柄斧", x = 1200, y = 300, z = 90, attributes = mapOf("状态" to "刃口有些卷"),
         ),
         Entity(
-            id = "rag", kind = "器具", label = "抹布", x = 1200, y = 300, z = 90,
-            parent = "player", attributes = mapOf("状态" to "半干"),
+            id = "rag", kind = "器具", label = "抹布", x = 1200, y = 300, z = 90, attributes = mapOf("状态" to "半干"),
         ),
     )
 }

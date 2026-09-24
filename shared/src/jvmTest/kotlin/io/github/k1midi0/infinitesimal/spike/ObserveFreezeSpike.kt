@@ -86,7 +86,6 @@ class ObserveFreezeSpike {
                     kind = "杂物",
                     label = "劈开的木桌",
                     x = 1200, y = 400, z = 0,
-                    parent = "tavern_hall",
                     attributes = mapOf("材质" to "橡木", "状态" to "沿中线裂成两半"),
                 ),
             )
@@ -235,12 +234,10 @@ class ObserveFreezeSpike {
         ),
         Entity(
             id = "oak_table", kind = "家具", label = "木桌", x = 1200, y = 400, z = 0,
-            parent = "tavern_hall",
             attributes = mapOf("材质" to "橡木", "状态" to "完好", "尺寸" to "2米 × 1米 × 0.8米"),
         ),
         Entity(
             id = "wine_cup", kind = "器具", label = "酒杯", x = 1200, y = 400, z = 80,
-            parent = "oak_table",
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒", "状态" to "杯口有划痕"),
         ),
     )
