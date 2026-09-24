@@ -4,13 +4,16 @@ import io.github.k1midi0.infinitesimal.config.EndpointConfig
 import io.github.k1midi0.infinitesimal.config.ReasoningEffort
 import io.github.k1midi0.infinitesimal.config.SystemId
 import io.github.k1midi0.infinitesimal.config.ThinkingMode
+import io.github.k1midi0.infinitesimal.llm.AssistantTurn
 import io.github.k1midi0.infinitesimal.llm.ChatMessage
 import io.github.k1midi0.infinitesimal.llm.FunctionCall
 import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.llm.LlmEvent
 import io.github.k1midi0.infinitesimal.llm.ThinkingRequest
 import io.github.k1midi0.infinitesimal.llm.ToolCall
+import io.github.k1midi0.infinitesimal.llm.ToolCallRequest
 import io.github.k1midi0.infinitesimal.llm.Usage
+import io.github.k1midi0.infinitesimal.llm.decodeCall
 import io.github.k1midi0.infinitesimal.spatial.Direction
 import io.github.k1midi0.infinitesimal.spatial.distanceBetween
 import io.github.k1midi0.infinitesimal.world.Entity
@@ -613,7 +616,7 @@ class Judge(
         attempt: Int,
     ): Answered {
         val messages = mutableListOf(ChatMessage.system(SYSTEM), ChatMessage.user(user))
-        val proposals = mutableListOf<RawCall>()
+        val proposals = mutableListOf<ToolCallRequest>()
 
         /**
          * **查询类的手**：调用它们之后这一轮接着往下走，结果灌回去再问一次。
@@ -635,7 +638,7 @@ class Judge(
             // 分开量是因为治法完全不同：等的那一截靠并发/端点，想的那一截靠提示词与档位。
             val mark = TimeSource.Monotonic.markNow()
             var first: Long? = null
-            val turn = RawTurn.of(
+            val turn = AssistantTurn.of(
                 client.streamChat(
                     messages = messages,
                     tools = tools,
@@ -707,7 +710,7 @@ class Judge(
      * 零——把问题原样回给它，它下一轮就改。要是这里当成 `Malformed`，一次打错名字就会让整轮判定
      * 重来，而重试时它手里并没有"是哪个名字错了"这条信息。
      */
-    private fun calculate(call: RawCall, variables: Map<String, Double>, log: CalcLog): String {
+    private fun calculate(call: ToolCallRequest, variables: Map<String, Double>, log: CalcLog): String {
         val args = decode(CalcArgs.serializer(), call)
             ?: return "${JudgeTools.CALC} 的参数不是合法 JSON：${call.arguments.take(160)}"
         log.record(args.expression)
@@ -737,7 +740,7 @@ class Judge(
      * 上：规矩书说的"一格以内"指的是格距，高度差是另一回事。合成一个标量等于替规矩做了决定，而规矩
      * 是内容、会改。
      */
-    private fun measure(call: RawCall, world: World, log: DistanceLog): String {
+    private fun measure(call: ToolCallRequest, world: World, log: DistanceLog): String {
         val args = decode(DistanceArgs.serializer(), call)
             ?: return "${JudgeTools.DISTANCE} 的参数不是合法 JSON：${call.arguments.take(160)}"
         val a = world.byId(args.a) ?: return "没有 id 是「${args.a}」的东西——id 要从清单里原样抄。"
@@ -762,7 +765,7 @@ class Judge(
         return answer
     }
 
-    private suspend fun modelShape(call: RawCall, log: ShapeLog): String {
+    private suspend fun modelShape(call: ToolCallRequest, log: ShapeLog): String {
         val args = decode(ModelArgs.serializer(), call)
             ?: return "${JudgeTools.MODEL_SHAPE} 的参数不是合法 JSON：${call.arguments.take(160)}"
         if (args.id.isBlank()) return "${JudgeTools.MODEL_SHAPE} 的 id 不能空——形状是给哪一样东西造的。"
@@ -1009,8 +1012,6 @@ class Judge(
         notes.forEach { appendLine("- $it") }
     }
 
-    private class RawCall(val id: String, val name: String, val arguments: String)
-
     /**
      * 一次"问到结束"的结果。
      *
@@ -1019,7 +1020,7 @@ class Judge(
      * **与被截断、被拒绝、模型跑偏三种情况长得一模一样**（§14.19 就是这么撞上的）。
      */
     private class Answered(
-        val proposals: List<RawCall>,
+        val proposals: List<ToolCallRequest>,
         val reply: String,
         val finishReason: String?,
         val usage: Usage?,
@@ -1032,73 +1033,6 @@ class Judge(
         }
     }
 
-    /**
-     * 一轮流式响应拼起来的样子。
-     *
-     * 与原先那个只收工具调用的版本相比，多留了两样，而这两样都是硬的：**这条 assistant 消息的思考
-     * 内容**，和**每个工具调用的 id**。要让这一轮接着往下走（`widen_view` 是唯一那种情况），端点
-     * 要求每条 assistant 都带着 `reasoning_content`，而每条 tool 结果都要对上 `tool_call_id`——
-     * 只收 name 与 arguments 是做不了这件事的。
-     */
-    private class RawTurn(
-        val content: String,
-        val reasoning: String,
-        val calls: List<RawCall>,
-        val finishReason: String?,
-        val usage: Usage?,
-    ) {
-
-        fun asAssistantMessage() = ChatMessage.assistant(
-            content = content.ifEmpty { null },
-            // 没有思考时给空串、不给 null：带 tools 的请求里这个字段必须在（§1.2.1）。
-            reasoningContent = reasoning,
-            toolCalls = calls.map { c ->
-                ToolCall(id = c.id, function = FunctionCall(c.name, c.arguments.ifEmpty { "{}" }))
-            },
-        )
-
-        companion object {
-            /** 按 index 把流式的工具调用片段拼起来。 */
-            fun of(events: List<LlmEvent>): RawTurn {
-                val content = StringBuilder()
-                val reasoning = StringBuilder()
-                val ids = mutableMapOf<Int, String>()
-                val names = mutableMapOf<Int, String>()
-                val arguments = mutableMapOf<Int, StringBuilder>()
-                var finish: String? = null
-                var usage: Usage? = null
-                for (event in events) {
-                    when (event) {
-                        is LlmEvent.Content -> content.append(event.text)
-                        is LlmEvent.Reasoning -> reasoning.append(event.text)
-                        is LlmEvent.ToolCallStarted -> {
-                            ids[event.index] = event.id
-                            names[event.index] = event.name
-                        }
-
-                        is LlmEvent.ToolCallArguments ->
-                            arguments.getOrPut(event.index) { StringBuilder() }.append(event.fragment)
-
-                        // **`finish_reason` 要留着。** §14.5 记过 Pulsus 把它丢掉、于是"被截断"与
-                        // "正常说完"在日志里长得一样；`length` 正是"第二步一个工具都没调"的常见原因。
-                        is LlmEvent.Finished -> {
-                            finish = event.reason
-                            usage = event.usage
-                        }
-                    }
-                }
-                val calls = names.keys.sorted().map { index ->
-                    RawCall(
-                        ids[index].orEmpty(),
-                        names.getValue(index),
-                        arguments[index]?.toString().orEmpty(),
-                    )
-                }
-                return RawTurn(content.toString(), reasoning.toString(), calls, finish, usage)
-            }
-        }
-    }
-
     /** `widen_view` 的参数。**`direction` 是可选的**——这是这个项目里第一只真正带可选参数的工具。 */
     @Serializable
     private data class WidenArgs(val direction: String? = null)
@@ -1106,11 +1040,8 @@ class Judge(
 /** `model_shape` 的两个参数。 */
 @Serializable private data class ModelArgs(val id: String = "", val brief: String = "")
 
-    private fun <T> decode(serializer: KSerializer<T>, call: RawCall): T? = try {
-        JSON.decodeFromString(serializer, call.arguments)
-    } catch (cause: Throwable) {
-        null
-    }
+    private fun <T> decode(serializer: KSerializer<T>, call: ToolCallRequest): T? =
+        decodeCall(serializer, call)
 
     private sealed interface Parsed {
         data class Effect(val consequence: Consequence) : Parsed
@@ -1120,7 +1051,7 @@ class Judge(
         data class Bad(val problem: String) : Parsed
     }
 
-    private fun parseEffect(call: RawCall): Parsed {
+    private fun parseEffect(call: ToolCallRequest): Parsed {
         fun <T> decodeInto(serializer: KSerializer<T>, build: (T) -> Parsed): Parsed {
             val value = decode(serializer, call)
                 ?: return Parsed.Bad("${call.name} 的参数不是合法 JSON：${call.arguments.take(160)}")
