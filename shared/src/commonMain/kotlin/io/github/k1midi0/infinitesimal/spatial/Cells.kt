@@ -2,6 +2,7 @@ package io.github.k1midi0.infinitesimal.spatial
 
 import io.github.k1midi0.infinitesimal.world.CM_PER_METRE
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.World
 
 /**
  * **米级格子**上的一个位置。
@@ -31,6 +32,17 @@ fun metreCell(cm: Int): Int {
 
 /** 一样东西占在哪个米格上。**它的位置是厘米，格是派生量**。 */
 fun Entity.cell(): Cell3 = Cell3(metreCell(x), metreCell(y), metreCell(z))
+
+/**
+ * **地面在米格上是第几层。**
+ *
+ * 它由世界自己那份 [io.github.k1midi0.infinitesimal.world.WorldDepth] 算出来（默认地面在 256 个
+ * 地形格 = 12800 厘米 = **米格 128**），**不是一个写死的 0**。
+ *
+ * 俯视图靠这一条分辨"站在地上的东西"与"摆在它们上面的东西"。写死 0 的话，开局的整座酒馆都会变成
+ * "摆件"，而症状是俯视图空空如也——一个看起来像渲染坏了、实际是坐标系换了基准的错。
+ */
+fun World.groundMetreCell(): Int = metreCell(terrain.depth.surfaceCm)
 
 /**
  * 这样东西在米格上**占哪几格**。

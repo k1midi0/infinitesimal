@@ -48,10 +48,10 @@ class FrameProbe {
     /** 与 `JudgeWidenProbe` 的乙、丁、丙三个场景同形，读数才能横向比。 */
     private fun windows(): List<Pair<String, List<Entity>>> = listOf(
         "乙 差一格在框外：扫帚在 (1600,300)，玩家在 (1200,300)" to
-            listOf(Entity("broom", "器具", "靠在墙上的扫帚", 1600, 300, 0)),
+            listOf(Entity("broom", "器具", "靠在墙上的扫帚", 1600, 300, ProbeSupport.GROUND)),
         "丁 八格开外：井与杯子都在 (2000,800)，玩家在 (1200,300)" to listOf(
-            Entity("town_well", "地点", "街心的水井", 2000, 800, 0, attributes = mapOf("井水" to "冰凉")),
-            Entity("well_cup", "器具", "粗陶杯", 2000, 800, 100),
+            Entity("town_well", "地点", "街心的水井", 2000, 800, ProbeSupport.GROUND, attributes = mapOf("井水" to "冰凉")),
+            Entity("well_cup", "器具", "粗陶杯", 2000, 800, ProbeSupport.GROUND + 100),
         ),
         "丙 对照：手边的酒杯" to emptyList(),
     )

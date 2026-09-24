@@ -167,7 +167,7 @@ class CacheProbeSpike {
 
     private fun tavernSeed(): List<Entity> = listOf(
         Entity(
-            id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 1000, y = 0, z = 0,
+            id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 1000, y = 0, z = ProbeSupport.GROUND,
             background = """
                 这里是「醉猫」酒馆，边境小镇灰渡唯一还在营业的酒馆，木石结构，建成约二十年，墙角常年返潮，北侧的窗子有一扇关不严。
                 三天前镇东的粮仓失火，烧掉了半个冬天的存粮；酒馆老板在那之后就没再露面，如今由一个年长的伙计照看店面。
@@ -175,27 +175,27 @@ class CacheProbeSpike {
             """.trimIndent(),
         ),
         Entity(
-            id = "oak_table", kind = "家具", label = "木桌", x = 1200, y = 400, z = 0,
+            id = "oak_table", kind = "家具", label = "木桌", x = 1200, y = 400, z = ProbeSupport.GROUND,
             attributes = mapOf("材质" to "橡木", "状态" to "完好", "尺寸" to "2米 × 1米 × 0.8米"),
         ),
         Entity(
-            id = "wine_cup", kind = "器具", label = "酒杯", x = 1200, y = 400, z = 80,
+            id = "wine_cup", kind = "器具", label = "酒杯", x = 1200, y = 400, z = ProbeSupport.GROUND + 80,
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
         ),
         Entity(
-            id = "stool", kind = "家具", label = "木凳", x = 1300, y = 400, z = 0,
+            id = "stool", kind = "家具", label = "木凳", x = 1300, y = 400, z = ProbeSupport.GROUND,
             attributes = mapOf("材质" to "榆木", "状态" to "凳面有裂"),
         ),
         Entity(
-            id = "oil_lamp", kind = "器具", label = "油灯", x = 1200, y = 500, z = 80,
+            id = "oil_lamp", kind = "器具", label = "油灯", x = 1200, y = 500, z = ProbeSupport.GROUND + 80,
             attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
         ),
         Entity(
-            id = "yard", kind = "地点", label = "后院", x = 300, y = 900, z = 0,
+            id = "yard", kind = "地点", label = "后院", x = 300, y = 900, z = ProbeSupport.GROUND,
             background = "灰渡酒馆的后院，地上散着劈好的柴，靠墙堆着几只空酒桶，雨下过不久，泥地还没干。",
         ),
         Entity(
-            id = "yard_table", kind = "家具", label = "木桌", x = 300, y = 900, z = 0,
+            id = "yard_table", kind = "家具", label = "木桌", x = 300, y = 900, z = ProbeSupport.GROUND,
             attributes = mapOf("材质" to "松木", "状态" to "被雨淋过"),
         ),
     )

@@ -119,10 +119,10 @@ class ReachProbe {
      */
     private fun world(withCard: Boolean): World {
         val entities = StartingWorld.tavern() + listOf(
-            Entity("broom", "器具", "靠在墙上的扫帚", 1600, 300, 0),
-            Entity("stool", "家具", "矮凳", 1200, 100, 0),
+            Entity("broom", "器具", "靠在墙上的扫帚", 1600, 300, ProbeSupport.GROUND),
+            Entity("stool", "家具", "矮凳", 1200, 100, ProbeSupport.GROUND),
             // 矮凳 40 厘米高，酒壶搁在凳面上。
-            Entity("jug", "器具", "酒壶", 1200, 100, 40),
+            Entity("jug", "器具", "酒壶", 1200, 100, ProbeSupport.GROUND + 40),
         )
         return World.from(
             WorldSnapshot(

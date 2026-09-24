@@ -99,7 +99,7 @@ class RulebookProbe {
             name = "乙 够得着要算",
             utterance = "我伸手去拿靠在墙根的那把扫帚。",
             ruled = true,
-            extra = listOf(Entity("broom", "器具", "靠在墙根上的扫帚", 1400, 300, 0)),
+            extra = listOf(Entity("broom", "器具", "靠在墙根上的扫帚", 1400, 300, ProbeSupport.GROUND)),
             expected = { it is Judgment.RejectedWorld },
         ),
         Scenario(

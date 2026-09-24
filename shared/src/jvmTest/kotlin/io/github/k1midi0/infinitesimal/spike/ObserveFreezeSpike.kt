@@ -85,7 +85,7 @@ class ObserveFreezeSpike {
                     id = "oak_table_splintered",
                     kind = "杂物",
                     label = "劈开的木桌",
-                    x = 1200, y = 400, z = 0,
+                    x = 1200, y = 400, z = ProbeSupport.GROUND,
                     attributes = mapOf("材质" to "橡木", "状态" to "沿中线裂成两半"),
                 ),
             )
@@ -223,7 +223,7 @@ class ObserveFreezeSpike {
 
     private fun seedWorld(): List<Entity> = listOf(
         Entity(
-            id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 1000, y = 0, z = 0,
+            id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 1000, y = 0, z = ProbeSupport.GROUND,
             attributes = mapOf("层高" to "4米", "地面" to "夯土", "光照" to "几盏油灯"),
             // 导演写的背景。渲染器读它，好让描述不脱离这个世界（§7.5）。
             background = """
@@ -233,11 +233,11 @@ class ObserveFreezeSpike {
             """.trimIndent(),
         ),
         Entity(
-            id = "oak_table", kind = "家具", label = "木桌", x = 1200, y = 400, z = 0,
+            id = "oak_table", kind = "家具", label = "木桌", x = 1200, y = 400, z = ProbeSupport.GROUND,
             attributes = mapOf("材质" to "橡木", "状态" to "完好", "尺寸" to "2米 × 1米 × 0.8米"),
         ),
         Entity(
-            id = "wine_cup", kind = "器具", label = "酒杯", x = 1200, y = 400, z = 80,
+            id = "wine_cup", kind = "器具", label = "酒杯", x = 1200, y = 400, z = ProbeSupport.GROUND + 80,
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒", "状态" to "杯口有划痕"),
         ),
     )

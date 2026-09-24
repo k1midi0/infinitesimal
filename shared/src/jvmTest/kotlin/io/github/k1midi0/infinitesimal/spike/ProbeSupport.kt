@@ -6,6 +6,7 @@ import io.github.k1midi0.infinitesimal.config.ThinkingMode
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.World
+import io.github.k1midi0.infinitesimal.world.WorldDepth
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -57,17 +58,29 @@ object ProbeSupport {
         World.from(WorldSnapshot(entities, rulebook)).also { save(path, it) }
 
     /**
+     * **地面在世界坐标里的厘米高度。**
+     *
+     * 世界的地面默认在第 256 个地形格 = 12800 厘米，开局的酒馆站在地上——`StartingWorld` 与这里的
+     * 夹具用的是**同一个数**。
+     *
+     * 探针里凡是"地上"的坐标都写成 `GROUND` 加偏移，**不要写死 0**：夹具写 0 会沉到地下一百二十八米，
+     * 而它与 `StartingWorld.tavern()` 混用（[RegionProbe]、[ReachProbe] 都这么干）**不会报错，只会
+     * 给出一个错的框**——这正是 2026-09-26 那次迁移留下的坑。
+     */
+    internal val GROUND: Int get() = WorldDepth().surfaceCm
+
+    /**
      * 判定探针共用的那个世界：酒馆大厅里一张木桌，桌上一只酒杯一盏油灯，玩家身上一把斧子一块抹布。
      *
      * 放在这里而不是各自私有，是因为**读数要能横向比**：两个探针的世界只要差一样东西，两次读数就
      * 不能放在同一张表里。
      *
-     * **坐标是厘米**（附录 A.2）。它与 `StartingWorld.tavern()` 不是同一份——探针这边的几样东西
-     * 带着已经渲染好的句子，为的是让渲染那一步不必联网。
+     * **坐标是厘米**，z 是地面高度加偏移（附录 A.2、A.15）。它与 `StartingWorld.tavern()` 不是同一份
+     * ——探针这边的几样东西带着已经渲染好的句子，为的是让渲染那一步不必联网。
      */
     fun tavernSeed(): List<Entity> = listOf(
         Entity(
-            id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 1000, y = 0, z = 0,
+            id = "tavern_hall", kind = "地点", label = "酒馆大厅", x = 1000, y = 0, z = GROUND,
             attributes = mapOf("地面" to "夯土", "光照" to "几盏油灯"),
             background = """
                 这里是「醉猫」酒馆，边境小镇灰渡唯一还在营业的酒馆，木石结构，建成约二十年。
@@ -75,30 +88,30 @@ object ProbeSupport {
             """.trimIndent(),
         ),
         Entity(
-            id = "oak_table", kind = "家具", label = "木桌", x = 1200, y = 400, z = 0,
+            id = "oak_table", kind = "家具", label = "木桌", x = 1200, y = 400, z = GROUND,
             attributes = mapOf("材质" to "橡木", "状态" to "完好"),
             sentences = listOf("橡木桌呈深褐色，表面打磨得光滑，木纹清晰而紧密地延展。"),
         ),
         Entity(
-            id = "wine_cup", kind = "器具", label = "酒杯", x = 1200, y = 400, z = 80,
+            id = "wine_cup", kind = "器具", label = "酒杯", x = 1200, y = 400, z = GROUND + 80,
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
             sentences = listOf("深色木制杯身，表面可见木纹，杯口边缘有几道划痕。"),
         ),
         Entity(
-            id = "oil_lamp", kind = "器具", label = "油灯", x = 1200, y = 500, z = 80,
+            id = "oil_lamp", kind = "器具", label = "油灯", x = 1200, y = 500, z = GROUND + 80,
             attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
             sentences = listOf("铁架上扣着一只发黄的玻璃罩，罩口有烟熏的痕迹。"),
         ),
         Entity(
-            id = "player", kind = "角色", label = "你", x = 1200, y = 300, z = 0,
+            id = "player", kind = "角色", label = "你", x = 1200, y = 300, z = GROUND,
             attributes = mapOf("两手" to "空着", "腰间" to "挂着一把短柄斧"),
         ),
         Entity(
-            id = "axe", kind = "器具", label = "短柄斧", x = 1200, y = 300, z = 90,
+            id = "axe", kind = "器具", label = "短柄斧", x = 1200, y = 300, z = GROUND + 90,
             attributes = mapOf("状态" to "刃口有些卷"),
         ),
         Entity(
-            id = "rag", kind = "器具", label = "抹布", x = 1200, y = 300, z = 90,
+            id = "rag", kind = "器具", label = "抹布", x = 1200, y = 300, z = GROUND + 90,
             attributes = mapOf("状态" to "半干"),
         ),
     )

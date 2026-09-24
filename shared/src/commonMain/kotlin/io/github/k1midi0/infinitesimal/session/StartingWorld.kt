@@ -5,6 +5,7 @@ import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.RuleEntry
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.Shapes
+import io.github.k1midi0.infinitesimal.world.WorldDepth
 
 /**
  * 开局的那个世界。
@@ -32,18 +33,27 @@ object StartingWorld {
     )
 
     /**
+     * **地面在世界坐标里的厘米高度。**
+     *
+     * 世界的地面默认在第 256 个地形格（附录 A.15），也就是 12800 厘米。开局这张酒馆站在地上，所以
+     * 下面每一个 z 都写成 [GROUND] 加一个偏移——**写死 0 会让整座酒馆沉到地下一百二十八米**，而
+     * 那个错没有任何东西会报。
+     */
+    private val GROUND: Int = WorldDepth().surfaceCm
+
+    /**
      * 开局那张酒馆。
      *
-     * **坐标是厘米**（附录 A.2，2026-09-24 改的）。高度不再是"第几层"，而是真实的高度：桌面 80
-     * 厘米，所以酒杯就在 z=80。于是「在桌上」从一个编号变成了一个**几何事实**——这正是当初要厘米
-     * 的理由（附录 A.2）。
+     * **坐标是厘米**（附录 A.2，2026-09-24 改的）。高度不再是"第几层"，而是真实的高度：桌面在地面
+     * 之上 80 厘米，所以酒杯就在 `GROUND + 80`。于是「在桌上」从一个编号变成了一个**几何事实**
+     * ——这正是当初要厘米的理由（附录 A.2）。
      */
     fun tavern(): List<Entity> = listOf(
         Entity(
             id = "tavern_hall",
             kind = "地点",
             label = "酒馆大厅",
-            x = 1000, y = 0, z = 0,
+            x = 1000, y = 0, z = GROUND,
             attributes = mapOf("地面" to "夯土", "光照" to "几盏油灯"),
             background = """
                 这里是「醉猫」酒馆，边境小镇灰渡唯一还在营业的酒馆，木石结构，建成约二十年。
@@ -55,7 +65,7 @@ object StartingWorld {
             kind = "家具",
             label = "木桌",
             // 桌面 80 厘米高、两米长一米宽——这几句在有了形状之后会变成体素表，现在先只有位置。
-            x = 1200, y = 400, z = 0,
+            x = 1200, y = 400, z = GROUND,
             attributes = mapOf("材质" to "橡木", "状态" to "完好"),
             shape = Shapes.table(200, 100, 80, topCm = 10, legCm = 10),
             // 一条**具体到这张桌子上**的规则。它默认优先级 30，比世界规则（10）高——这就是"越具体
@@ -69,7 +79,7 @@ object StartingWorld {
             kind = "器具",
             label = "酒杯",
             // 站在桌面上：80 厘米高。
-            x = 1200, y = 400, z = 80,
+            x = 1200, y = 400, z = GROUND + 80,
             attributes = mapOf("材质" to "深色木制", "内容物" to "半杯麦酒"),
             shape = Shapes.box(10, 10, 15),
         ),
@@ -77,7 +87,7 @@ object StartingWorld {
             id = "oil_lamp",
             kind = "器具",
             label = "油灯",
-            x = 1200, y = 500, z = 80,
+            x = 1200, y = 500, z = GROUND + 80,
             attributes = mapOf("材质" to "铁与玻璃", "状态" to "点着"),
             shape = Shapes.box(15, 15, 25),
         ),
@@ -85,7 +95,7 @@ object StartingWorld {
             id = "hearth",
             kind = "家具",
             label = "壁炉",
-            x = 1000, y = 0, z = 0,
+            x = 1000, y = 0, z = GROUND,
             attributes = mapOf("状态" to "烧着"),
             shape = Shapes.box(150, 60, 120),
         ),
@@ -93,7 +103,7 @@ object StartingWorld {
             id = "cellar_door",
             kind = "门窗",
             label = "地窖门",
-            x = 1300, y = 100, z = 0,
+            x = 1300, y = 100, z = GROUND,
             attributes = mapOf("状态" to "关着"),
             shape = Shapes.box(80, 5, 100),
         ),
@@ -101,7 +111,7 @@ object StartingWorld {
             id = PLAYER,
             kind = "角色",
             label = "你",
-            x = 1200, y = 300, z = 0,
+            x = 1200, y = 300, z = GROUND,
             attributes = mapOf("两手" to "空着", "腰间" to "挂着一把短柄斧"),
             shape = Shapes.box(40, 25, 170),
             // 人设卡（§3.5）。**「交互范围」这一张就是「够不够得着」那条线的来源**——距离在这里
@@ -112,14 +122,15 @@ object StartingWorld {
                 CharacterCard("交互范围", "你伸得着大约一格以内的东西——一臂之遥。够不到就得先走过去。"),
             ),
         ),
-        // **身上带着的东西也是实体**，靠 parent 挂在角色下面。这样"把手里的东西放下"就是一次
-        // Reparent，不需要为"随身物品"另开一套数据结构（§3.1）。
+        // **身上带着的东西也是实体。** 腰间那把斧子与那块抹布跟玩家是同一个 x、y，只是高 90 厘米
+        // ——所以"把手里的东西放下"就是一次 `Move`，不需要为"随身物品"另开一套数据结构（§3.1）。
+        // 以前这里靠 `parent` 表达归属，那个字段已经删了：**位置就是坐标**（附录 A.5）。
         Entity(
             id = "axe",
             kind = "器具",
             label = "短柄斧",
             // 腰间：90 厘米。
-            x = 1200, y = 300, z = 90,
+            x = 1200, y = 300, z = GROUND + 90,
             attributes = mapOf("状态" to "刃口有些卷"),
             shape = Shapes.box(30, 5, 10),
         ),
@@ -127,7 +138,7 @@ object StartingWorld {
             id = "rag",
             kind = "器具",
             label = "抹布",
-            x = 1200, y = 300, z = 90,
+            x = 1200, y = 300, z = GROUND + 90,
             attributes = mapOf("状态" to "半干"),
             shape = Shapes.box(25, 25, 5),
         ),

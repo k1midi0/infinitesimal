@@ -66,7 +66,7 @@ class JudgeWidenProbe {
         Scenario(
             "乙 差一格在框外",
             "我拿起靠在墙上那把扫帚。",
-            listOf(Entity("broom", "器具", "靠在墙上的扫帚", 1600, 300, 0)),
+            listOf(Entity("broom", "器具", "靠在墙上的扫帚", 1600, 300, ProbeSupport.GROUND)),
         ),
         Scenario("丙 手边（对照）", "我拿起桌上那杯麦酒。", emptyList()),
         // **只落在发起者自己身上的动作。** 它验的是「发起者本人也是对象」那条新规则：第一步该报

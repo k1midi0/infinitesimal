@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import io.github.k1midi0.infinitesimal.session.GameSession
 import io.github.k1midi0.infinitesimal.session.LogLine
 import io.github.k1midi0.infinitesimal.spatial.cell
+import io.github.k1midi0.infinitesimal.spatial.groundMetreCell
 import io.github.k1midi0.infinitesimal.world.Entity
 import kotlin.math.roundToInt
 
@@ -182,7 +183,7 @@ private fun TopBar(session: GameSession) {
  * 俯视图。**画的是"这一层地面的平面图"**：
  *
  * - 大点 = 站在地上的东西（米格层 0）
- * - 小点 = 摆在它们上面的东西（米格层 > 0，且米格与某个地面东西重合）
+ * - 小点 = 摆在它们上面的东西（米格层不是地面那一层，且米格与某个地面东西重合）
  *
  * **一切都靠坐标推。** 以前这里读的是 `parent`（玩家挂在哪个地点、酒杯挂在哪张桌子上），那条字段
  * 已经删掉了——关系不存成事实，位置就是坐标（附录 A.5）。所以"这东西摆在什么上面"现在的判据是
@@ -194,9 +195,12 @@ private fun TopBar(session: GameSession) {
 @Composable
 private fun MapPane(session: GameSession, modifier: Modifier) {
     val entities = session.entities
-    val ground = entities.filter { it.cell().z == 0 }
+    // **地面那一层由世界自己算**（默认米格 128，因为地面在 12800 厘米）。写死 0 会让整座酒馆变成
+    // "摆件"，而症状是俯视图空空如也。
+    val layer = session.world.groundMetreCell()
+    val ground = entities.filter { it.cell().z == layer }
     val satellites = entities.filter { e ->
-        e.cell().z != 0 && ground.any { g -> g.cell().x == e.cell().x && g.cell().y == e.cell().y }
+        e.cell().z != layer && ground.any { g -> g.cell().x == e.cell().x && g.cell().y == e.cell().y }
     }
 
     Pane("俯视图", modifier) {

@@ -59,6 +59,17 @@ data class WorldDepth(
 
     val height: Int get() = top - bottom + 1
 
+    /**
+     * 地面在世界坐标里的**厘米**高度。
+     *
+     * 实体坐标是厘米，而地面是一个**地形格编号**——这里是两者唯一的接口。默认地面在第 256 格，
+     * 也就是 **12800 厘米**。
+     *
+     * 它存在的理由是"开局那张酒馆站在地上"：酒馆里的东西写 `z = 1200` 会在 12 米高处，而写
+     * `z = 0` 会在地下一百二十八米。所有内容都该写成 [surfaceCm] 加一个偏移，而不是写死一个数。
+     */
+    val surfaceCm: Int get() = surface * TERRAIN_CM
+
     fun contains(z: Int): Boolean = z in bottom..top
 
     /** 一次返回**全部**问题，空列表 = 合格。 */

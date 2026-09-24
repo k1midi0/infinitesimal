@@ -5,6 +5,7 @@ import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.RuleEntry
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.World
+import io.github.k1midi0.infinitesimal.world.WorldDepth
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -129,7 +130,10 @@ class CalcTest {
         // 与它要算的那个差值同单位，所以减出来直接就是厘米，不必再换算。
         assertEquals(1200.0, variables["oak_table.x"])
         assertEquals(400.0, variables["oak_table.y"])
-        assertEquals(0.0, variables["oak_table.z"])
+        // **z 是地面高度，不是 0**（2026-09-26 的迁移）：世界的地面在第 256 个地形格 = 12800 厘米，
+        // 开局的酒馆站在地上。这里写 `WorldDepth().surfaceCm` 而不是 12800，是为了让这条断言跟着那条
+        // 配置走——否则改一次地面高度就要回来再找一遍。
+        assertEquals(WorldDepth().surfaceCm.toDouble(), variables["oak_table.z"])
         assertEquals(1200.0, variables["player.x"])
         assertEquals(300.0, variables["player.y"])
     }
