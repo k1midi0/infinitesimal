@@ -81,6 +81,19 @@ class ShapeModelerProbe {
             }
         }
 
+        // 最后把**第一句要求原样再问一次**。用户定的缓存键就是那句要求，所以这一次该一次请求都不发——
+        // 而它是这套东西最值钱的一条：一样东西在一局里会被造很多次，画一次是几十秒。
+        println("\n──────── （重跑第一句要求，验缓存键）")
+        val beforeRepeat = modeler.requestCount
+        var repeated: ShapeModeler.Result? = null
+        val repeatMs = measureTimeMillis { repeated = runBlocking { modeler.model(briefs.first()) } }
+        val hit = (repeated as? ShapeModeler.Result.Modeled)?.cached == true
+        println("  ${if (hit) "✓ 命中" else "✗ 没有命中"}  请求 ${modeler.requestCount - beforeRepeat} 次，用时 $repeatMs ms")
+        println("  生成预设包里现在有 ${modeler.presets.generatedPresets().size} 条：")
+        modeler.presets.generatedPresets().forEach {
+            println("    · ${it.name}  ${it.shape.cellCount} 格  ← ${it.brief.take(30)}")
+        }
+
         println("\n总用时 $total ms")
     }
 }

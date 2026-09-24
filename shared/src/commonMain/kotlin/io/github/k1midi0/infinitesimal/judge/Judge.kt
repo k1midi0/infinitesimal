@@ -13,6 +13,7 @@ import io.github.k1midi0.infinitesimal.llm.ToolCall
 import io.github.k1midi0.infinitesimal.llm.Usage
 import io.github.k1midi0.infinitesimal.spatial.Direction
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.VOXEL_CM
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.rendered
@@ -183,6 +184,15 @@ class Judge(
     /** 两步加起来的模型调用次数。 */
     var requestCount = 0
         private set
+
+    /**
+     * 这一局的预设库（附录 A.14）。
+     *
+     * 露出来是因为**它的寿命该与一局相同**，不是与一次判定相同：生成包是存档要带走的那一份。现在
+     * 它挂在 [modeler] 上，而判定器是每局造一个，两者寿命恰好对上；等 `session/` 有了真正的存档文件，
+     * 该由那边持有它、再传进来。
+     */
+    val presets: PresetLibrary get() = modeler.presets
 
     /**
      * 最近一次判定里，模型一共要求"看大一点"几次。

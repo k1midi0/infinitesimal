@@ -13,6 +13,8 @@ import io.github.k1midi0.infinitesimal.llm.ThinkingRequest
 import io.github.k1midi0.infinitesimal.llm.ToolCall
 import io.github.k1midi0.infinitesimal.llm.ToolDefinition
 import io.github.k1midi0.infinitesimal.llm.Usage
+import io.github.k1midi0.infinitesimal.world.Preset
+import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.ShapeGrid
 import io.github.k1midi0.infinitesimal.world.ShapeLimits
 import io.github.k1midi0.infinitesimal.world.VOXEL_CM
@@ -58,6 +60,14 @@ class ShapeModeler(
      * 建模的思考强度。**也是 HIGH，与判定同理**（用户定的：不限制思考，防止逻辑出错）。
      */
     private val effort: ReasoningEffort = ReasoningEffort.HIGH,
+    /**
+     * 预设库（附录 A.14）。**它同时是缓存**——用户定的：缓存键是**那句要求**。
+     *
+     * 它是一条真的数据、不是一份加速表：造出来的东西会进**生成预设包**，存档要带走它。所以它的寿命
+     * 应当与一局相同（`session/` 那边持有），而不是与一次调用相同。默认值只是"拿不到时也还能跑"的
+     * 兜底——那样每次都要重画，而画一次是几十秒。
+     */
+    val presets: PresetLibrary = PresetLibrary(),
 ) {
 
     var requestCount = 0
@@ -77,13 +87,37 @@ class ShapeModeler(
 
     sealed interface Result {
 
-        data class Modeled(val name: String, val shape: VoxelShape) : Result
+        /** [cached] = 这次没有花模型调用，直接拿回了同一条要求造过的形状。 */
+        data class Modeled(val name: String, val shape: VoxelShape, val cached: Boolean = false) : Result
 
         /** 错满了次数、或者来回太多。**理由原样留着**——它多半就是"这段提示词教得不够"。 */
         data class Failed(val problems: List<String>) : Result
     }
 
+    /**
+     * 画一样东西。
+     *
+     * **第一件事是查缓存**：同一句要求造过就原样拿回来。用户定的这条规则在这里兑现——要求写得越
+     * 具体，命中越准；而写得含糊时，本来也不该复用一份形状（[PresetLibrary.byBrief] 的注释）。
+     */
     suspend fun model(brief: String): Result {
+        presets.byBrief(brief)?.let {
+            return Result.Modeled(it.name, it.shape, cached = true)
+        }
+        return when (val result = draw(brief)) {
+            is Result.Modeled -> {
+                // **产物是一条预设**（用户定的），不是一份加速表：它进生成预设包，存档要带走。
+                val stored = presets.learn(
+                    Preset(name = result.name, brief = brief.trim(), shape = result.shape),
+                )
+                Result.Modeled(stored.name, stored.shape)
+            }
+
+            is Result.Failed -> result
+        }
+    }
+
+    private suspend fun draw(brief: String): Result {
         /** 交上来的层：z -> 这一层的所有行。**同一个 z 再交一次就是改那一层。** */
         val floors = sortedMapOf<Int, String>()
         val messages = mutableListOf(

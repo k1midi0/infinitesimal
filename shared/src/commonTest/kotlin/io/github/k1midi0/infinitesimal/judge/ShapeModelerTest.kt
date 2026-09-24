@@ -5,6 +5,7 @@ import io.github.k1midi0.infinitesimal.config.ThinkingMode
 import io.github.k1midi0.infinitesimal.llm.LlmClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
@@ -116,6 +117,54 @@ class ShapeModelerTest {
         val modeled = assertIs<ShapeModeler.Result.Modeled>(modeler(script).model("一根木钉"))
         assertEquals(1, modeled.shape.cellCount)
         assertEquals(0, modeled.shape.solid.single().z)
+    }
+
+    @Test
+    fun theSameRequirementIsNeverDrawnTwice() = runBlocking {
+        // 用户定的：**缓存键是那句要求。** 所以只有两帧的脚本能挡住两次调用——第二次根本不该发请求。
+        val script = Scripted(
+            listOf(
+                turn("f0", "voxel_floor", """{"z":0,"rows":"##\n##"}"""),
+                turn("done", "voxel_done", """{"name":"board"}"""),
+            ),
+        )
+        val modeler = modeler(script)
+        val brief = "一块两格见方的木板"
+
+        val first = assertIs<ShapeModeler.Result.Modeled>(modeler.model(brief))
+        assertFalse(first.cached, "第一次不该是命中")
+        val requestsAfterFirst = modeler.requestCount
+
+        val second = assertIs<ShapeModeler.Result.Modeled>(modeler.model(brief))
+
+        assertTrue(second.cached, "同一句要求第二次该直接拿回来")
+        assertEquals(first.shape, second.shape)
+        assertEquals(requestsAfterFirst, modeler.requestCount, "命中不该发请求")
+
+        // 而它不只是一份加速表：**产物是一条预设**，进了生成包（用户定的，附录 A.14）。
+        assertEquals(1, modeler.presets.generatedPresets().size)
+        assertEquals(brief, modeler.presets.generatedPresets().single().brief)
+        assertEquals(first.shape, modeler.presets.byBrief(brief)?.shape)
+    }
+
+    @Test
+    fun aDifferentRequirementIsNotACacheHit() = runBlocking {
+        val script = Scripted(
+            listOf(
+                turn("f0", "voxel_floor", """{"z":0,"rows":"##\n##"}"""),
+                turn("done", "voxel_done", """{"name":"board"}"""),
+                turn("f0b", "voxel_floor", """{"z":0,"rows":"#"}"""),
+                turn("done2", "voxel_done", """{"name":"peg"}"""),
+            ),
+        )
+        val modeler = modeler(script)
+
+        assertIs<ShapeModeler.Result.Modeled>(modeler.model("一块两格见方的木板"))
+        val second = assertIs<ShapeModeler.Result.Modeled>(modeler.model("一根木钉"))
+
+        assertFalse(second.cached)
+        assertEquals(4, modeler.requestCount)
+        assertEquals(2, modeler.presets.generatedPresets().size)
     }
 
     @Test

@@ -12,6 +12,7 @@ import io.github.k1midi0.infinitesimal.judge.TargetAlignment
 import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.Renderer
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
@@ -111,6 +112,15 @@ class GameSession(
 
     /** 整场跑掉的模型调用。固化命中不会让它增加——这是"固化生效"唯一的客观证据。 */
     val requestCount: Int get() = renderer.requestCount + judge.requestCount
+
+    /**
+     * 这一局的预设库（附录 A.14）。
+     *
+     * **存档要带走生成包**——它是世界内容，不是加速表（用户定的：产物是与出厂预设同一层级的东西）。
+     * 现在它挂在那一个判定器上，而判定器是每局造一个，两者寿命正好对上；等存档落地，该由这里持有
+     * 再把库传进判定器。
+     */
+    val presets: PresetLibrary get() = judge.presets
 
     // ── 界面调的动作 ────────────────────────────────────────────────────────────────
 
