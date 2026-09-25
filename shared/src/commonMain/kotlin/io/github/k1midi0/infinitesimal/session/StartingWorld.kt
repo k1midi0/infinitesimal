@@ -13,6 +13,7 @@ import io.github.k1midi0.infinitesimal.world.TerrainColumn
 import io.github.k1midi0.infinitesimal.world.TerrainRun
 import io.github.k1midi0.infinitesimal.world.TerrainSnapshot
 import io.github.k1midi0.infinitesimal.world.WorldDepth
+import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import io.github.k1midi0.infinitesimal.world.ZoneBlock
 import io.github.k1midi0.infinitesimal.world.ZoneCell
 import io.github.k1midi0.infinitesimal.world.ZoneTile
@@ -150,6 +151,26 @@ object StartingWorld {
     }
 
     /**
+     * **开局世界打包成一份快照。**
+     *
+     * 存在的理由只有一个：`WorldSnapshot(StartingWorld.tavern())` 那句话**看起来是对的，而它漏掉了
+     * 三样东西**——世界规则、地形、区划。三样都带默认值，所以它不会报错，只会给出一个"规则书是空的、
+     * 脚下一格地都没有"的世界。
+     *
+     * 这个坑踩过两次：第一次是规则书（§14.35 的测试逮到的），第二次是地形（`NpcProbe` 的离线那一段
+     * 逮到的——矮人眼里的整片地都写着"缺"）。**两次都不是逻辑错，是调用点少写了一行。** 所以这里把
+     * 四样捆在一起，新写的调用点用这一份就不会漏。
+     *
+     * [GameSession] 不用它，因为它那四个参数是分开的（测试要能把其中一样换掉）。
+     */
+    fun snapshot(): WorldSnapshot = WorldSnapshot(
+        entities = tavern(),
+        rulebook = rules(),
+        terrain = ground,
+        zoning = zoning(),
+    )
+
+    /**
      * 开局那张酒馆。
      *
      * **坐标是厘米**（附录 A.2，2026-09-24 改的）。高度不再是"第几层"，而是真实的高度：桌面在地面
@@ -214,6 +235,39 @@ object StartingWorld {
             x = 1300, y = 100, z = GROUND,
             attributes = mapOf("状态" to "关着"),
             shape = Shapes.box(80, 5, 100),
+        ),
+        // **开局世界里唯一的另一个活人**（§14.36）。它是**氛围 NPC** 的样板：§3.2 说这类角色无人
+        // 值守时"根本不是 AI"——代码查状态循环就知道它在干什么，零模型调用；只有被搭话时才唤醒。
+        //
+        // 它的**状态循环**还没做（§12 第 24 项），所以现在它只是"待在这儿"。这不影响这一刀要验的
+        // 那件事——**被指向才唤醒、唤醒之后走同一套判定**——因为循环管的是"没人理它时它在干什么"，
+        // 而被唤醒时那件事一定已经被接管了。
+        Entity(
+            id = "dwarf",
+            kind = "角色",
+            label = "酒馆里的矮人",
+            // 离玩家两米出头：**正好在空间框里，而且伸手够不着**——于是"跟他说话"成立、
+            // "把杯子递给他"不成立，两条路都能验到。
+            x = 1000, y = 200, z = GROUND,
+            attributes = mapOf("两手" to "捧着自己那只杯子", "神色" to "半醉"),
+            shape = Shapes.box(45, 30, 120),
+            cards = listOf(
+                CharacterCard(
+                    "身份",
+                    "你叫杜林，在灰渡镇待了很多年的矮人，替「醉猫」的老板看场子换酒喝。" +
+                        "镇上的人你都认得，外面来的人你一眼就看得出来。",
+                ),
+                CharacterCard(
+                    "性格",
+                    "话不多，问三句答一句。不熟的人搭话，你先看他一眼，再决定理不理。" +
+                        "不主动惹事，但也吃不得亏。",
+                ),
+                CharacterCard("交互范围", "你伸得着大约一格以内的东西——一臂之遥。够不到就得先站起来。"),
+                // 这一张的标题**刻意选了一个只在它自己身上出现的词**：「口癖」不出现在任何一段提示词
+                // 的正文里（`NpcTest` 拿它验"标题不进提示词"这条规则）。用「身份」验不了——那个词
+                // 恰好在角色那份 system 的正文里，断言会假报。
+                CharacterCard("口癖", "说到钱的时候你会哼一声，说完还要摇摇头。"),
+            ),
         ),
         Entity(
             id = PLAYER,

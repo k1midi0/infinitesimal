@@ -2,6 +2,7 @@ package io.github.k1midi0.infinitesimal.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -51,6 +53,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.k1midi0.infinitesimal.npc.Spoken
 import io.github.k1midi0.infinitesimal.session.GameSession
 import io.github.k1midi0.infinitesimal.session.LogLine
 import io.github.k1midi0.infinitesimal.spatial.cell
@@ -332,6 +335,16 @@ private fun MapPane(session: GameSession, modifier: Modifier) {
             ground.forEach { e ->
                 MapLabel(session, e, at(e.cell().x, e.cell().y), cell)
             }
+
+            // **说话的气泡**（§5.3）。谁说了话，就在谁的头上冒一句，而这一句**只存在当前回合**
+            // ——[GameSession.speech] 每一轮开头清空，所以它不会变成一串越挂越多的历史。
+            //
+            // 画在名字之后，所以它盖在名字上面；位置往上推开自己的高度，一句话和五句话都不会
+            // 把底下那个圆点盖住。
+            session.speech.forEach { spoken ->
+                val speaker = ground.firstOrNull { it.id == spoken.whoId } ?: return@forEach
+                SpeechBubble(spoken, at(speaker.cell().x, speaker.cell().y), cell)
+            }
         }
         Text(
             "大点是地面上的，小点是摆在它们上面的。点一下只是「看它」，不动勾选。",
@@ -368,8 +381,47 @@ private fun MapLabel(session: GameSession, entity: Entity, pos: Offset, cell: Fl
     }
 }
 
-// ── 东西列表 + 观察窗口 ─────────────────────────────────────────────────────────────
+/**
+ * 地图上的一句话（§5.3）。
+ *
+ * 位置一律在说话的人**头上**：先量一次自己的高度，再按高度往上推。不量的话多行的话会盖住底下那个
+ * 圆点，而盖住的正好是"这句话是谁说的"。
+ *
+ * **它不做气泡尾巴、不做动画。** 这一版界面刻意只做"看得出来谁说了什么"（见文件头那三条），
+ * 好看留给后面。
+ */
+@Composable
+private fun SpeechBubble(spoken: Spoken, pos: Offset, cell: Float) {
+    val density = LocalDensity.current
+    val widthPx = (cell * 2.6f).coerceAtLeast(120f)
+    var heightPx by remember { mutableStateOf(0) }
+    val shape = RoundedCornerShape(6.dp)
 
+    Box(
+        Modifier
+            .offset {
+                IntOffset(
+                    (pos.x - widthPx / 2f).roundToInt(),
+                    (pos.y - heightPx - 10f).roundToInt(),
+                )
+            }
+            .width(with(density) { widthPx.toDp() })
+            .onSizeChanged { heightPx = it.height }
+            .background(MaterialTheme.colorScheme.surfaceVariant, shape)
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            spoken.text,
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+// ── 东西列表 + 观察窗口 ─────────────────────────────────────────────────────────────
 @Composable
 private fun ThingsPane(session: GameSession, modifier: Modifier) {
     Pane("东西（点一下勾选它）", modifier) {

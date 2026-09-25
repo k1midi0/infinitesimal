@@ -13,6 +13,11 @@ import io.github.k1midi0.infinitesimal.judge.Judge
 import io.github.k1midi0.infinitesimal.judge.JudgeRequest
 import io.github.k1midi0.infinitesimal.judge.Judgment
 import io.github.k1midi0.infinitesimal.judge.TargetAlignment
+import io.github.k1midi0.infinitesimal.npc.Heard
+import io.github.k1midi0.infinitesimal.npc.Npc
+import io.github.k1midi0.infinitesimal.npc.Reaction
+import io.github.k1midi0.infinitesimal.npc.Spoken
+import io.github.k1midi0.infinitesimal.npc.Waking as NpcWaking
 import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.Renderer
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
@@ -71,6 +76,14 @@ class Task internal constructor(val id: Long, text: String) {
 class PendingAlignment internal constructor(
     /** 玩家当初那句话。**「改动作」时界面可以拿它回填输入框。** */
     val intention: String,
+    /**
+     * 同一个回合里说的那句话（§5）。
+     *
+     * **它跟着这一小段中间状态一起等。** 说话的听者是由判定裁的（§14.36），而判定要在动作落库之后
+     * 才跑——所以玩家点「应用」之前，那句话还没有交给任何人。丢掉这一行，"等一下再应用"就会让那
+     * 句话凭空消失，而它明明已经写在日志里了。
+     */
+    val said: String,
     /** 玩家当初勾的那些。 */
     val picked: List<String>,
     /** 判定对齐出来的那些。**与 [picked] 不同，这是它存在的理由。** */
@@ -121,6 +134,11 @@ class GameSession(
      * 有三条触发路径（手动按钮、硬圈缺口、每回合那一看），没有注入点就只能靠真端点验。
      */
     private val director: Director = Director(config, presets),
+    /**
+     * 扮演 AI 角色（§3.2、§5）。默认按 [config] 与 [presets] 现造一个；**测试可以塞一个假的进来**
+     * ——它是这一层第三个会碰端点的人，不注入就只能拿真 key 跑（§14.35 踩过一次）。
+     */
+    private val npc: Npc = Npc(config, presets),
 ) {
     val world: World = World.from(
         WorldSnapshot(seed, rules, terrain = ground, zoning = zoning),
@@ -221,6 +239,20 @@ class GameSession(
     var pending by mutableStateOf<PendingAlignment?>(null)
         private set
 
+    /**
+     * **这一回合里谁说了什么**（§5.3）。
+     *
+     * §5.3 的原话是「气泡**仅存在当前回合**」——所以它不是一个累积的东西，每一轮开头清空，界面照着
+     * 它在对应的角色头上画气泡。玩家自己那句也在里面（[PLAYER]），于是"谁在跟谁说话"在一张图上是
+     * 看得出来的。
+     *
+     * **它不进 [World]。** 世界是事实，而这一条按定义就是要消失的；放进世界就等于给了它一个任期，
+     * 而"说过的话什么时候过期"马上会变成第二个需要裁的问题。§1.5 的记录永不改写说的是另一件事
+     * ——那是**记录**，这一条连记录都还不是。
+     */
+    var speech by mutableStateOf<List<Spoken>>(emptyList())
+        private set
+
     val focusedEntity: Entity? get() = focused?.let { world.byId(it) }
     val focusedObservation: Renderer.Observation? get() = focused?.let { observations[it] }
 
@@ -255,7 +287,9 @@ class GameSession(
         }
 
     /** 整场跑掉的模型调用。固化命中不会让它增加——这是"固化生效"唯一的客观证据。 */
-    val requestCount: Int get() = renderer.requestCount + judge.requestCount + director.requestCount
+    val requestCount: Int
+        get() = renderer.requestCount + judge.requestCount + director.requestCount +
+            npc.requestCount + npc.judgeRequestCount
 
     /**
      * 这一局的预设库（附录 A.14）。
@@ -305,17 +339,39 @@ class GameSession(
     fun observeFocused(scope: CoroutineScope) = run(scope, "看它一眼…") { observeFocusedNow() }
 
     /**
-     * 提交一轮。
+     * 提交一轮：说一句话、做一个动作，两个都可以有，也都可以空着。
      *
-     * 说的那一半**目前没有接收方**——按 §5.1 它该走范围广播，但那还没写。这里把这件事明说出来，
-     * 而不是假装说了一句话。
+     * ## 说话的听者由判定裁，不由代码按半径算（§14.36）
+     *
+     * 用户对这一条的裁定是原话级别的：**「这种程度的动作应该被判定系统修正为指向声音范围内的目标」**。
+     * 于是"谁听得见"这个问题落在判定第一步身上——它手里已经有空间框，报出在场的人是它本来就在做的
+     * 事（`targetingPrompt` 里那条「我喊了一嗓子——旁边那个人也算」）。代码这边**不划任何半径**：
+     * 多一条几何规则藏在代码里，就多一处与世界不一致而没人看得见的地方（第 7 项也因此还没定）。
+     *
+     * ## 为什么说话不走纠正预览（§4.7）
+     *
+     * 预览拦的是"**判定会改错世界**"。而说一句话**改不了任何东西**——它是这个回合里唯一一件不需要
+     * 玩家过目的动作。所以对齐结果与玩家勾的不一样时，这里不挂 pending，直接把判定报出来的那些人
+     * 当作听者。这是"预览存在理由"的自然推论，不是一处例外。
      */
     suspend fun runTurn(said: String, acted: String, scope: CoroutineScope? = null) {
-        if (said.isNotBlank()) {
-            say(LogLine.Kind.SAY, "你说：「${said.trim()}」")
-            say(LogLine.Kind.NOTE, "（§5 的对话系统还没写，这句话现在传不到任何人耳朵里）")
+        val spoken = said.trim()
+        val done = acted.trim()
+
+        // §5.3：气泡只存在当前回合。**在动作之前清**，于是这一轮说的话不会混着上一轮的。
+        speech = emptyList()
+
+        if (spoken.isNotEmpty()) {
+            say(LogLine.Kind.SAY, "你说：「$spoken」")
+            speech = listOf(Spoken(PLAYER, spoken))
         }
-        if (acted.isNotBlank()) judgeAndCommit(acted.trim(), scope)
+
+        if (done.isNotEmpty()) {
+            judgeAndCommit(done, spoken, scope)
+        } else if (spoken.isNotEmpty()) {
+            // 只说话、不做事。**这一轮照样要收尾**：硬圈该补的补，导演该看的看（§14.33）。
+            afterTurn("", spoken, scope)
+        }
     }
 
     fun submit(scope: CoroutineScope, said: String, acted: String) {
@@ -334,7 +390,7 @@ class GameSession(
         val p = pending ?: return
         run(scope, "算后果…") {
             pending = null
-            runEffects(p.turn, p.targets, p.intention, scope)
+            runEffects(p.turn, p.targets, p.intention, p.said, scope)
         }
     }
 
@@ -342,7 +398,7 @@ class GameSession(
     suspend fun applyPendingNow(scope: CoroutineScope? = null) {
         val p = pending ?: return
         pending = null
-        runEffects(p.turn, p.targets, p.intention, scope)
+        runEffects(p.turn, p.targets, p.intention, p.said, scope)
     }
 
     /**
@@ -482,7 +538,7 @@ class GameSession(
 
     // ── 一轮的内部 ──────────────────────────────────────────────────────────────────
 
-    private suspend fun judgeAndCommit(intention: String, scope: CoroutineScope?) {
+    private suspend fun judgeAndCommit(intention: String, said: String, scope: CoroutineScope?) {
         say(LogLine.Kind.ACT, "你做：$intention")
 
         // **标签要先抓下来。** 判定落库之后被 Destroy 的东西就不在世界里了，那时候再查
@@ -518,7 +574,7 @@ class GameSession(
         when (alignment) {
             is TargetAlignment.Aligned ->
                 if (alignment.targets.toSet() != picked.toSet()) {
-                    pending = PendingAlignment(intention, picked, alignment.targets, turn)
+                    pending = PendingAlignment(intention, said, picked, alignment.targets, turn)
                     say(
                         LogLine.Kind.NOTE,
                         "对齐到：${alignment.targets.joinToString("、") { name(it) }}" +
@@ -527,7 +583,7 @@ class GameSession(
                     status = ""
                     return
                 } else {
-                    runEffects(turn, alignment.targets, intention, scope)
+                    runEffects(turn, alignment.targets, intention, said, scope)
                 }
 
             is TargetAlignment.Rejected -> {
@@ -558,6 +614,7 @@ class GameSession(
         turn: Judge.Turn,
         targets: List<String>,
         intention: String,
+        said: String,
         scope: CoroutineScope?,
     ) {
         // 同一个理由：标签要在落库之前抓。
@@ -588,14 +645,7 @@ class GameSession(
 
                 // **描述作废**，不是重新渲染（§7.1）。把它们从表里剔掉，界面上它们就退回"还没看过"。
                 // 下一次观察才会真的再烧一次——而且只烧玩家真的去看了的那几个。
-                //
-                // **只看 [Consequence.EntityConsequence]。** 地形那几条后果没有 `targetId`，也不该
-                // 让任何东西的描述作废：描述只讲物体自身（§7.6），脚下的土被挖掉不改变杯子长什么样
-                // ——见 `Consequence.TerrainConsequence` 的注释。
-                val stale = judgment.consequences
-                    .filterIsInstance<Consequence.EntityConsequence>()
-                    .map { it.targetId }
-                    .toSet() + judgment.affected
+                val stale = staleOf(judgment)
                 observations = observations - stale
                 stale.forEach { if (world.byId(it) != null) say(LogLine.Kind.NOTE, "   ${name(it)}的描述作废了，下次看它才会重渲染") }
             }
@@ -632,8 +682,24 @@ class GameSession(
             }
         }
         selection = emptySet()
-        afterTurn(intention, scope)
+        afterTurn(intention, said, scope)
     }
+
+    /**
+     * 一次提交之后，哪些东西的描述作废了（§7.1）。
+     *
+     * **只看 [Consequence.EntityConsequence]。** 地形那几条后果没有 `targetId`，也不该让任何东西的
+     * 描述作废：描述只讲物体自身（§7.6），脚下的土被挖掉不改变杯子长什么样——见
+     * `Consequence.TerrainConsequence` 的注释。
+     *
+     * 抽成一个函数，是因为**现在有两条会改世界的路**：玩家那一轮与 AI 角色那一轮。两处各算一遍
+     * 之后，迟早会有一处先漂开，而症状是"某个东西的描述该作废却没作废"——那种错没有任何东西会报。
+     */
+    private fun staleOf(judgment: Judgment.Applied): Set<String> =
+        judgment.consequences
+            .filterIsInstance<Consequence.EntityConsequence>()
+            .map { it.targetId }
+            .toSet() + judgment.affected
 
     // ── 回合之后那两条触发路径（§14.33） ────────────────────────────────────────────
 
@@ -645,11 +711,176 @@ class GameSession(
      * 2. **缓冲圈**：由**快速档**每回合看一眼，后台跑，**不挡玩家**。它觉得这一带还不用长，那是
      *    合法的结果——用户对这一条的原话是「什么都不做是合法结果」。
      */
-    private suspend fun afterTurn(intention: String, scope: CoroutineScope?) {
+    private suspend fun afterTurn(intention: String, said: String, scope: CoroutineScope?) {
+        // **顺序是有理由的，不能换。**
+        //
+        // 说与做都落完之后，先让**听见的人反应**（§5）——它们是这一轮的直接后果，而下一件事（补地形）
+        // 是世界的账，跟这一轮无关。反过来写的话，玩家会先看到"这一带还缺几块地"，再看到矮人答话，
+        // 而事实发生的顺序正好相反。
+        val replies = hearAndReact(said, scope)
+
         closeGap()
         // scope 为 null = 调用方是 spike 的挂起入口，它自己拿着协程；那一看就不起（否则一次
         // runBlocking 会被一条后台协程拖着不结束）。
-        if (scope != null) scope.launch { watch(intention) }
+        if (scope != null) scope.launch { watch(narrative(intention, said, replies)) }
+    }
+
+    /**
+     * 把这一轮发生的事说成一句给导演听的话。
+     *
+     * **导演快速档看的就是这一句**（§8.5）——它不看日志、不看世界，只看"这一回合出了什么事"，
+     * 然后判断要不要把思考档叫起来。所以 NPC 的答话必须写进去：一场变味的对话正是导演该注意到的东西。
+     */
+    private fun narrative(intention: String, said: String, replies: List<Spoken>): String = buildList {
+        if (said.isNotEmpty()) add("玩家说：「$said」")
+        replies.forEach { add("${labelOf(it.whoId)}说：「${it.text}」") }
+        if (intention.isNotEmpty()) add("玩家做：$intention")
+    }.joinToString("；")
+
+    // ── 说话与听见（§5） ────────────────────────────────────────────────────────────
+
+    /**
+     * 谁听得见这句话——**由判定的第一步裁**（§14.36）。
+     *
+     * 它走的是与「做」完全相同的第一步：同一个 `beginTurn`、同一份空间框、同一段提示词。唯一的区别
+     * 是**跑完第一步就丢掉那个 `Turn`**：说话没有第二步，它不产生后果。
+     *
+     * 驳回在这里不是失败。判定说"这一片里没有你点的那个东西"时，那句话**照样说出去了**——只是没人
+     * 听见。这个区别在界面上是看得出来的：日志里有「你说：…」，后面跟着「（没有人应声）」。
+     */
+    private suspend fun hearersOf(spoken: String): List<String> {
+        val picked = selection.toList()
+        phase("看谁听得见…")
+
+        val turn = judge.beginTurn(
+            world,
+            JudgeRequest(
+                actorId = PLAYER,
+                actorLabel = "你",
+                // **写成一次动作，而不是一串引文。** 判定的第一步读的是"这次动作指向谁"，而它认得的
+                // 动作形状就是这种第一人称的句子——`targetingPrompt` 里那条「我喊了一嗓子」正对着它。
+                intention = "我开口说：「$spoken」",
+                selected = picked,
+                centers = picked,
+            ),
+        )
+
+        val alignment = try {
+            turn.align()
+        } catch (t: Throwable) {
+            say(LogLine.Kind.ERROR, "判定没跑起来：${t.message}")
+            return emptyList()
+        }
+
+        return when (alignment) {
+            is TargetAlignment.Aligned -> alignment.targets.filter { isCharacter(it) && it != PLAYER }
+
+            is TargetAlignment.Rejected -> {
+                say(LogLine.Kind.REJECT, "「${alignment.reason}」")
+                emptyList()
+            }
+
+            is TargetAlignment.Malformed -> {
+                say(LogLine.Kind.PROBLEM, "协议内失败——按设计不给玩家看，这里显示是为了调试：")
+                alignment.problems.forEach { say(LogLine.Kind.NOTE, "   · $it") }
+                emptyList()
+            }
+        }
+    }
+
+    /**
+     * **谁是"一个角色"。** 判据是**有没有人设卡**，不是 `kind == "角色"`。
+     *
+     * `Entity.cards` 上那段注释写着这条分工：角色就是物体的一种，而"多一个 `kind` 判断只会多一处会
+     * 写错的地方"。物品背景、规则书优先级那边用的也是同一个判据（§12 第 12 项）。
+     */
+    private fun isCharacter(id: String): Boolean = world.byId(id)?.cards?.isNotEmpty() == true
+
+    /**
+     * 听见的人**逐个**反应。**玩家等**（§14.36）。
+     *
+     * ## 为什么等
+     *
+     * 不等的话，玩家会在矮人还没答话时又说一句——而那一句的前提还没发生。这与 §4.6 那条「一次动作
+     * 一定要有指向的对象」是同一个道理：**前提没落地就接受下一步，世界会开始自相矛盾。** 界面上已经
+     * 有那份并行任务清单（§14.35），"矮人在回应…"天然就是清单上的一行，等待因此不需要新造一个转圈。
+     *
+     * ## 为什么必须串行
+     *
+     * 每个角色那一次唤醒**会一路走到判定并提交**（它的「做」走的是同一条链路）。两个角色同时提交就
+     * 是两处同时改世界——现在只有一把 [writes] 锁，串行是它的直接结果。将来要并行，得先把"在快照上
+     * 算后果、之后再提交"做出来（§12 第 42 项）。
+     *
+     * ## 深度钉在 1
+     *
+     * **NPC 说的话不再唤醒别人。** 它会成环（两个矮人互相接话可以一直接下去），而更深的一层理由是
+     * 历史还不累积（§12 第 38 项）：一段只装着一句话的上下文，接不出有意义的三轮对话。等 §6 的滚动
+     * 窗口做出来，这一条该和它一起重新想。
+     */
+    private suspend fun hearAndReact(said: String, scope: CoroutineScope?): List<Spoken> {
+        if (said.isEmpty()) return emptyList()
+
+        val hearers = hearersOf(said)
+        if (hearers.isEmpty()) {
+            say(LogLine.Kind.NOTE, "（没有人应声——这一片里没有别人）")
+            return emptyList()
+        }
+
+        val replies = mutableListOf<Spoken>()
+        for (id in hearers) {
+            val task = startTask("${labelOf(id)}在回应…")
+            val reaction = try {
+                writes.withLock {
+                    npc.wake(world, NpcWaking(id, Heard.Spoken(PLAYER, "你", said), origin))
+                }
+            } catch (t: Throwable) {
+                say(LogLine.Kind.ERROR, "${labelOf(id)}没醒过来：${t.message}")
+                null
+            } finally {
+                endTask(task)
+            }
+
+            if (reaction == null) continue
+            replies += announce(id, reaction)
+        }
+
+        // 它们可能改了世界（自己的「做」走过判定并提交）。
+        entities = world.all()
+        return replies
+    }
+
+    /** 把一个角色的反应写进日志与气泡，并把结果还回去。 */
+    private fun announce(id: String, reaction: Reaction): List<Spoken> {
+        val name = labelOf(id)
+
+        reaction.problems.forEach { say(LogLine.Kind.PROBLEM, "$name 那边有点不对劲：$it") }
+
+        reaction.said.forEach { say(LogLine.Kind.SAY, "$name 说：「${it.text}」") }
+        speech = speech + reaction.said
+
+        reaction.acted.forEach { judgment ->
+            val labels = world.all().associate { it.id to it.label }
+            fun nameOf(target: String) = labels[target] ?: world.byId(target)?.label ?: target
+
+            when (judgment) {
+                is Judgment.Applied -> {
+                    say(LogLine.Kind.OK, "$name 做了一件事——${judgment.consequences.size} 条后果")
+                    judgment.consequences.forEach { say(LogLine.Kind.NOTE, "   · ${describe(it, ::nameOf)}") }
+                    observations = observations - staleOf(judgment)
+                }
+
+                // **驳回原样显示。** 它不是 NPC 的失败，是这个世界说"不成"——而这句话对玩家同样
+                // 有信息量（他刚看见有人想做一件事，而世界没让它发生）。
+                is Judgment.RejectedWorld -> say(LogLine.Kind.REJECT, "$name：「${judgment.reason}」")
+                is Judgment.Unchanged -> say(LogLine.Kind.OK, "$name 做了一件事——没有改变世界")
+                is Judgment.Nothing -> say(LogLine.Kind.NOTE, "（$name 那个动作没有落在任何东西上）")
+                is Judgment.FailedProtocol ->
+                    say(LogLine.Kind.PROBLEM, "$name 的动作判定读不懂（试了 ${judgment.attempts} 次）")
+            }
+        }
+
+        if (reaction.silent) say(LogLine.Kind.NOTE, "（$name 没什么反应）")
+        return reaction.said
     }
 
     /**
