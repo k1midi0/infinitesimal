@@ -204,8 +204,10 @@ class ShapeModelerTest {
         assertTrue(first.contains("voxel_floor"), first)
         assertTrue(first.contains("voxel_done"), first)
         assertTrue(first.contains("z=0") || first.contains("离地"), first)
-        // 单边上限与格数上限也要写出来，否则它无从知道"多大算太大"。
-        assertTrue(first.contains("200"), first)
+        // **尺寸那条边线要说清楚**：早先它写的是"单边最长两百厘米"，而那句话把橡树限成了树苗
+        // （用户后来定的：不做大小限制）。现在要说的正好相反——该多大画多大，只留一条保险丝。
+        assertTrue(first.contains("没有上限"), first)
+        assertTrue(first.contains("保险丝"), first)
     }
 
     // ── 属性总结（A.14、§14.31）─────────────────────────────────────────────────────

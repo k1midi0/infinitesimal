@@ -89,14 +89,14 @@ data class VoxelShape(
 
         for (v in solid) {
             val where = "(${v.x},${v.y},${v.z})"
-            addAll(placementProblems(v, where, limits))
+            addAll(placementProblems(v, where))
             owned.put(v, "实心")?.let { add("格 $where 出现了两次") }
         }
 
         for (p in pointMass) {
             val v = p.voxel
             val where = "(${v.x},${v.y},${v.z})"
-            addAll(placementProblems(v, where, limits))
+            addAll(placementProblems(v, where))
             if (p.count !in 1..MAX_POINTS_PER_VOXEL) {
                 add("格 $where 里的质点数是 ${p.count}，只能是 1..$MAX_POINTS_PER_VOXEL")
             }
@@ -123,18 +123,20 @@ data class VoxelShape(
         }
     }
 
-    /** 单个格自身的问题：负数、不是 5 的整数倍、超出单边上限。 */
-    private fun placementProblems(v: Voxel, where: String, limits: ShapeLimits): List<String> = buildList {
+    /**
+     * 单个格自身的问题：负数、不是 5 的整数倍。
+     *
+     * **这里没有"太大"那一条**（用户定的：不做大小限制）。早先有一条单边两百厘米的上限，而它的后果
+     * 是"橡树"一律画成树苗、门和墙根本画不出来——那个数是当初按"一件家具"定的，而一片林子也在用
+     * 同一份形状服务。见 [ShapeLimits]。
+     */
+    private fun placementProblems(v: Voxel, where: String): List<String> = buildList {
         if (v.x < 0 || v.y < 0 || v.z < 0) {
             add("格 $where 的坐标不能是负的")
             return@buildList
         }
         if (v.x % VOXEL_CM != 0 || v.y % VOXEL_CM != 0 || v.z % VOXEL_CM != 0) {
             add("格 $where 不是 $VOXEL_CM 厘米的整数倍")
-            return@buildList
-        }
-        if (v.x > limits.maxSideCm || v.y > limits.maxSideCm || v.z > limits.maxSideCm) {
-            add("格 $where 超出了单边上限 ${limits.maxSideCm} 厘米")
         }
     }
 }
@@ -142,12 +144,25 @@ data class VoxelShape(
 /**
  * 一次建模的规模上限。
  *
- * 它是**参数而不是常量**，因为附录 A.10 说这个建模服务是通用的——物品、角色、地形块都调它。一件
- * 物品两米封顶是合理的，一个地形块显然不是，而那个调用方会有自己的一份。
+ * ## 没有"单边多长"这一条（用户定的：不做大小限制）
+ *
+ * 早先它是 `maxSideCm = 200`，理由是"一件家具两米封顶"——听起来合理，实际上是一条**世界规则偷偷
+ * 藏在代码里**：它让橡树只能画成树苗、门和墙根本画不出来，而症状是"模型画不好树"，不像一条限制。
+ * 世界里的东西该多大，是内容的事，不是校验的事。
+ *
+ * ## 留下的这一条是保险丝，不是规则
+ *
+ * [maxCells] 与建模那四十个来回的上限同类（那时管的是时间，这里管的是体积）：它拦的不是"这东西太
+ * 大了"，而是"模型一次吐出一张病态巨大的图"。抬到十万格——现实里碰不到，而碰到了能报一句人话。
+ *
+ * 它是**参数而不是常量**，因为附录 A.10 说这个建模服务是通用的：每个调用方可以带自己的一份。
  */
 data class ShapeLimits(
-    /** 单边最长多少厘米。默认 200（两米）——够一张桌子、一个柜子、一个人。 */
-    val maxSideCm: Int = 200,
-    /** 一共最多占几个格。默认 8000——稀疏存储下这是一份几十 KB 的 JSON。 */
-    val maxCells: Int = 8_000,
+    /**
+     * 一共最多占几个格。默认十万。
+     *
+     * 稀疏存储下这是一份几 MB 的网格文本，而它要过一次解析、进一次世界——所以这条线划在这里，量的是
+     * "一次响应值不值得处理完"，不是"允不允许大东西"。
+     */
+    val maxCells: Int = 100_000,
 )

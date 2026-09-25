@@ -168,12 +168,8 @@ class ShapeGridTest {
             VoxelShape(solid = listOf(Voxel(0, 0, 0), Voxel(0, 0, 0))).problems().any { it.contains("两次") },
         )
 
-        // 单边超限
-        assertTrue(
-            VoxelShape(solid = listOf(Voxel(0, 0, 0), Voxel(300, 0, 0)))
-                .problems()
-                .any { it.contains("单边上限") },
-        )
+        // **单边超限那一条已经不在了**（用户定的：不做大小限制）——见
+        // [thereIsNoSizeLimitAnyMore]。留着这个位置，是为了下次有人问"上限去哪了"时这里有一句话。
 
         // 最小角不在原点
         assertTrue(
@@ -194,10 +190,23 @@ class ShapeGridTest {
     }
 
     @Test
-    fun aBiggerHeightIsAllowedWhenTheCallerSaysSo() {
-        // 单边上限是**参数**：物品两米封顶是合理的，一个地形块显然不是（附录 A.10）。
-        val wide = VoxelShape(solid = listOf(Voxel(0, 0, 0), Voxel(1000, 0, 0)))
-        assertTrue(wide.problems().any { it.contains("单边上限") })
-        assertTrue(wide.problems(ShapeLimits(maxSideCm = 2000)).isEmpty())
+    fun thereIsNoSizeLimitAnyMore() {
+        // 用户定的：**不做大小限制**。早先默认单边两百厘米，而它的后果是"橡树"一律画成树苗、
+        // 门和墙根本画不出来——那个数是按"一件家具"定的，却成了一整片林子的规则。
+        val tall = VoxelShape(solid = listOf(Voxel(0, 0, 0), Voxel(0, 0, 4000)))
+        assertTrue(tall.problems().isEmpty(), tall.problems().toString())
+
+        val wide = VoxelShape(solid = listOf(Voxel(0, 0, 0), Voxel(10_000, 0, 0)))
+        assertTrue(wide.problems().isEmpty(), wide.problems().toString())
+    }
+
+    @Test
+    fun theCellCountIsStillAFuse() {
+        // 留下的那一条**不是规则，是保险丝**：拦的是"模型一次吐出一张病态巨大的图"（管体积的那一条，
+        // 与建模那四十个来回管时间的那一条同类）。十万是默认值，而它仍然能被调用方调小。
+        val many = VoxelShape(solid = (0..9).map { Voxel(it * VOXEL_CM, 0, 0) })
+
+        assertTrue(many.problems().isEmpty())
+        assertTrue(many.problems(ShapeLimits(maxCells = 5)).any { it.contains("超过上限") })
     }
 }
