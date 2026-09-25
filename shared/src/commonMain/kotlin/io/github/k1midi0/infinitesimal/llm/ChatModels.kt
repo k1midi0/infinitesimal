@@ -61,10 +61,11 @@ data class ChatMessage(
             // Expected an array with minimum length 1, but got an empty array instead.`——
             // 一个「一只工具都没调」的助手回合，这个字段该**整个不出现**，而不是出现一个空的。
             //
-            // 这不是洁癖。历史里出现这种助手消息是**正常的**：建模那一层在「模型一句话没说、一个
-            // 工具都没调」时会把这一轮原样记进去，因为它接着要拿这条历史去追问（`ShapeModeler`
-            // 的 `raw.assistant()` 写在 `calls.isEmpty()` 判断**之前**）。在那之前，那条路径要真
-            // 走到，整次建模就是一次 400。
+            // 这一条与「没有内容的助手消息不许存在」是同一件事的两半，两半都真发生过一次：折掉空数组
+            // 之后，那条消息变成 content 与 tool_calls 两样都没有，端点换了个说法照样拒
+            // （`Invalid assistant message: content or tool_calls must be set`）。后一半现在由
+            // `toWire` 拦着，而**真正的治法是不把这种回合记进历史**——那座漏斗在
+            // `ShapeModeler` 的空回合分支里（原先它写在 `calls.isEmpty()` 判断之前）。
             toolCalls?.takeIf { it.isNotEmpty() },
         )
 

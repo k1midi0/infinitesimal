@@ -117,6 +117,28 @@ class WireMessagesTest {
         assertTrue(failure.message?.contains("a.png") == true, failure.message)
     }
 
+    /**
+     * 一条助手消息必须有内容或者工具调用。
+     *
+     * 这条规矩是两次 400 换来的，两次报的是同一件事的两种说法：先是 `tool_calls` 是个**空数组**
+     * （`Invalid 'messages[N].tool_calls': empty array`），把空数组折成「字段根本不出现」之后，
+     * 那条消息就变成**两样都没有**（`Invalid assistant message: content or tool_calls must be set`）。
+     *
+     * 它挡在这里的代价，与图那一条一样：本地抛、名字写得清。放到端点上换来的是一段 SSE 里的错误
+     * 载荷，而那一刻整条请求已经废了——它可能带着几十个回合的历史。
+     */
+    @Test
+    fun anAssistantMessageWithNothingInItIsRefused() {
+        val failure = assertFailsWith<IllegalArgumentException> {
+            ChatMessage(ChatMessage.ROLE_ASSISTANT, "").toWire { null }
+        }
+
+        assertTrue(failure.message?.contains("tool_calls") == true, failure.message)
+        // 而**有**工具调用的那种，内容为空是合法的——助手消息只说"我动手了"是常态。
+        ChatMessage.assistant(toolCalls = listOf(ToolCall("c1", function = FunctionCall("look", "{}"))))
+            .toWire { null }
+    }
+
     private fun base64(bytes: ByteArray): String {
         @OptIn(ExperimentalEncodingApi::class)
         return Base64.Default.encode(bytes)

@@ -140,11 +140,15 @@ class ShapeModeler(
                 maxTokens = null,
             ).toList())
 
-            messages += raw.assistant()
             lastUsage = raw.usage
 
             if (raw.calls.isEmpty()) {
                 // 一句话都没说、一个工具都没调。**这是可以指出来的**，不必当成设备故障。
+                //
+                // 这一轮**不能留在历史里**：端点两次拒绝的都正是它。先是 `tool_calls: []`（空数组），
+                // 把空数组折成「字段不出现」之后，报错立刻换成 `content or tool_calls must be set`
+                // ——两条说的是同一件事：**没有内容的助手消息不该存在于历史里**。既然它什么都没说，
+                // 这里就没有东西可留，接着那句话紧跟在上一条 user 消息后面。
                 failures++
                 lastProblems = listOf(
                     "你没有调用任何工具。" +
@@ -153,6 +157,8 @@ class ShapeModeler(
                 messages += ChatMessage.user(feedback(lastProblems))
                 continue
             }
+
+            messages += raw.assistant()
 
             /** 这一轮里报回去的问题。**它是"错了一次"的判据**，不是"这一轮没交东西"。 */
             val complaints = mutableListOf<String>()

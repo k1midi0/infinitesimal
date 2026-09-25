@@ -41,6 +41,21 @@ fun ChatMessage.toWire(readImage: (String) -> ByteArray?): WireMessage {
         "只有 user 消息可以带图，这一条是 $role——端点在 system 与 assistant 上会直接返回 400"
     }
 
+    // **一条助手消息必须有内容或者工具调用。** 两样都没有的那种不该存在于历史里，而它确实出现过两次，
+    // 报错换了两种说法、指的是同一件事：
+    //
+    //     Invalid 'messages[N].tool_calls': empty array. Expected an array with minimum length 1
+    //     Invalid assistant message: content or tool_calls must be set
+    //
+    // 第一次是把「一只工具都没调」的空数组原样发了出去（`ChatMessage.assistant` 现在把它折成
+    // 「字段不出现」），第二次是折完之后那条消息**两样都没有**。两条都不是能靠读代码发现的——它们
+    // 要模型恰好走一次「什么都没说」的回合才发作，而那时整次请求已经废了。所以在这里拦：与图那一条
+    // 同一个位置、同一种代价（本地抛、名字写得清），而不是让它跑到端点上换一段 SSE 里的错误载荷。
+    require(role != ChatMessage.ROLE_ASSISTANT || !content.isNullOrEmpty() || !toolCalls.isNullOrEmpty()) {
+        "助手消息既没有内容也没有工具调用——端点会拒掉：" +
+            "Invalid assistant message: content or tool_calls must be set"
+    }
+
     return WireMessage(
         role = role,
         content = contentOf(readImage),

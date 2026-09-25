@@ -104,6 +104,33 @@ class ShapeModelerTest {
         assertTrue(second.contains("你没有调用任何工具"), "重试的请求里没有那条说明：$second")
     }
 
+    /**
+     * 一句话都没说、一个工具都没调的那一轮，**不能留在历史里**。
+     *
+     * 上面那条测的是「要能指出它、而且不烧掉一次尝试」；这一条测的是**那条消息本身不许上线**。
+     * 端点两次拒的都是它：先是因为 `tool_calls` 是个空数组，改成「字段不出现」之后，报错立刻换成
+     * `Invalid assistant message: content or tool_calls must be set`——两样都没有。
+     *
+     * 这不是洁癖：真发生的路径是**生成器调 `make_object` → 建模那一层恰好走一次空回合**，
+     * 500 多个地形格铺完之后，坏在一个用户看不到、日志里也只有一个 400 的地方。
+     */
+    @Test
+    fun anEmptyTurnNeverEntersTheHistory() = runBlocking {
+        val script = Scripted(
+            listOf(
+                stop(),
+                turn("f0", "voxel_floor", """{"z":0,"rows":"#"}"""),
+                turn("done", "voxel_done", """{"name":"peg"}"""),
+            ),
+        )
+
+        assertIs<ShapeModeler.Result.Modeled>(modeler(script).model("一根木钉"))
+
+        val second = script.bodies[1]
+        assertTrue(second.contains("你没有调用任何工具"), "那条说明还是得回去：$second")
+        assertFalse(second.contains("\"role\":\"assistant\""), "空的那一轮不该留下助手消息：$second")
+    }
+
     @Test
     fun aWrongZComesBackWithoutBurningAWholeAttempt() = runBlocking {
         val script = Scripted(
