@@ -1,11 +1,14 @@
 package io.github.k1midi0.infinitesimal.spatial
 
 import io.github.k1midi0.infinitesimal.world.BUFFER_RADIUS_CHUNKS
+import io.github.k1midi0.infinitesimal.world.CHUNK_CELLS
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CHUNKS
+import io.github.k1midi0.infinitesimal.world.TerrainBox
 import io.github.k1midi0.infinitesimal.world.TerrainCell
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.chunkOf
+import io.github.k1midi0.infinitesimal.world.floorDiv
 import io.github.k1midi0.infinitesimal.world.terrainCellOf
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -95,6 +98,20 @@ fun nearestMissing(
         }
     }
     return best
+}
+
+/**
+ * 这个地形框横跨哪几个区块。
+ *
+ * 它是「**这一次生成到底写进了哪些块**」那条判据的算法（§14.33）：必需区块是代码算的那一份，而
+ * 「写没写进去」只能从后果自己身上读——模型说了什么不算数。
+ */
+fun TerrainBox.chunks(): List<ChunkKey> = buildList {
+    for (cx in floorDiv(minX, CHUNK_CELLS)..floorDiv(maxX, CHUNK_CELLS)) {
+        for (cy in floorDiv(minY, CHUNK_CELLS)..floorDiv(maxY, CHUNK_CELLS)) {
+            add(ChunkKey(cx, cy))
+        }
+    }
 }
 
 /**

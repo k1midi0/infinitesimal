@@ -8,6 +8,7 @@ import io.github.k1midi0.infinitesimal.judge.stop
 import io.github.k1midi0.infinitesimal.judge.turn
 import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.session.StartingWorld
+import io.github.k1midi0.infinitesimal.world.CHUNK_CELLS
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Preset
 import io.github.k1midi0.infinitesimal.world.TerrainBox
@@ -20,6 +21,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -53,8 +55,24 @@ class TerrainGeneratorTest {
 
     private fun request() = TerrainGenerator.Request("镇东那片林子往外延一段，地面是草地。", listOf(east))
 
-    private fun fill(material: String) =
-        """{"x1":96,"y1":0,"z1":0,"x2":111,"y2":15,"z2":256,"material":"$material"}"""
+    private fun fillAt(chunk: ChunkKey, material: String): String {
+        val x0 = chunk.x * CHUNK_CELLS
+        val y0 = chunk.y * CHUNK_CELLS
+        return """{"x1":$x0,"y1":$y0,"z1":0,"x2":${x0 + 15},"y2":${y0 + 15},"z2":256,"material":"$material"}"""
+    }
+
+    private fun fill(material: String): String = fillAt(east, material)
+
+    /** 一样东西落在哪一块由它的厘米位置算出来，所以这里直接写位置。 */
+    private fun treeJson(id: String, x: Int, y: Int, preset: String = "", background: String = ""): String {
+        val sb = StringBuilder()
+        sb.append("{\"id\":\"$id\",\"kind\":\"tree\",\"label\":\"橡树\",\"brief\":\"\",")
+        sb.append("\"x\":$x,\"y\":$y,\"z\":12800")
+        if (preset.isNotEmpty()) sb.append(",\"preset\":\"$preset\"")
+        if (background.isNotEmpty()) sb.append(",\"background\":\"$background\"")
+        sb.append("}")
+        return sb.toString()
+    }
 
     private fun grown(result: TerrainGenerator.Growth): TerrainGenerator.Growth.Grown {
         assertTrue(result is TerrainGenerator.Growth.Grown, result.toString())
@@ -289,5 +307,141 @@ class TerrainGeneratorTest {
 
         // 名字抄错了要说出来，并且**告诉它下一步做什么**——只说"没有"会让它再猜一次。
         assertTrue(script.bodies[1].contains("没有叫「oak_tre」"), script.bodies[1].takeLast(600))
+    }
+
+    // ── 必需的那几块（§14.33）────────────────────────────────────────────────────────
+    //
+    // 「最小生成距离」触发的那一次，硬圈里缺的那几块**必须真的长出地形**。判据不是模型说了什么，而是
+    // 后果里那些地形框**盖住了哪几块**——账从后果上读，不从回答里读。
+
+    @Test
+    fun aRequiredChunkThatWasNotWrittenIsRetriedBeforeAnythingIsCommitted() = runTest {
+        val world = world()
+        val elsewhere = ChunkKey(7, 0)
+        val script = Scripted(
+            listOf(
+                turn("c1", GeneratorTools.FILL_TERRAIN, fillAt(elsewhere, "grass")),
+                turn("c2", GeneratorTools.FILL_TERRAIN, fillAt(elsewhere, "grass")),
+            ),
+        )
+
+        val result = failed(generator(script).grow(world, request().copy(required = listOf(east))))
+
+        assertEquals(2, result.attempts)
+        assertTrue(
+            result.problems.single().contains("必需的那几块还没写进地形"),
+            result.problems.toString(),
+        )
+        assertTrue(result.problems.single().contains("(6,0)"), result.problems.single())
+        // **检查在提交之前**：一次「地铺到了别处」不该把世界动掉一半。
+        assertFalse(world.terrain.isGenerated(east))
+        assertFalse(world.terrain.isGenerated(elsewhere))
+        assertNull(world.terrain.materialIdAt(TerrainCell(120, 5, 200)), "写歪的那一片也不该落库")
+    }
+
+    @Test
+    fun onlyTheChunksThatWereActuallyWrittenGetMarked() = runTest {
+        val world = world()
+        val extra = ChunkKey(7, 0)
+        val script = Scripted(
+            listOf(
+                turn("c1", GeneratorTools.FILL_TERRAIN, fillAt(east, "grass")),
+                stop("只长了必需的那一块。"),
+            ),
+        )
+
+        val result = grown(
+            generator(script).grow(
+                world,
+                TerrainGenerator.Request("一段要求。", listOf(extra), required = listOf(east)),
+            ),
+        )
+
+        assertTrue(world.terrain.isGenerated(east), "真写进去的那一块要有地形")
+        assertFalse(
+            world.terrain.isGenerated(extra),
+            "请求过、但一块土都没写的那一块**不能**被标上——拿账本替现实签字之后，没人会再来补它",
+        )
+        assertEquals(listOf(extra, east), result.chunks, "必需的那几块会被并进这一次的范围里")
+    }
+
+    // ── 导演点名要放的东西（§14.33）──────────────────────────────────────────────────
+
+    @Test
+    fun aNamedThingThatLandedOutsideItsChunkIsToldBack() = runTest {
+        val world = world()
+        val request = TerrainGenerator.Request(
+            requirement = "村口那片空地。",
+            chunks = listOf(east),
+            placements = listOf(Placement(east, "一棵老槐树", "树皮上刻着旧痕")),
+        )
+        val script = Scripted(
+            listOf(
+                turn("c1", GeneratorTools.FILL_TERRAIN, fillAt(east, "grass")),
+                // 导演说的是 (6,0)，而这一件落在 chunk (4,0)。
+                turn("c2", GeneratorTools.MAKE_OBJECT, treeJson("oak_a", 3300, 130, preset = "oak_tree")),
+                turn("c3", GeneratorTools.FILL_TERRAIN, fillAt(east, "grass")),
+                turn("c4", GeneratorTools.MAKE_OBJECT, treeJson("oak_a", 3300, 130, preset = "oak_tree")),
+            ),
+        )
+        val generator = generator(script)
+        generator.presets.learn(oak())
+
+        val result = failed(generator.grow(world, request))
+
+        assertEquals(2, result.attempts)
+        assertTrue(result.problems.single().contains("老槐树"), result.problems.toString())
+        assertTrue(result.problems.single().contains("chunk (6,0)"), result.problems.single())
+        assertFalse(world.terrain.isGenerated(east), "退回的那两次都不该落库")
+    }
+
+    @Test
+    fun aNamedThingThatLandedInsideItsChunkIsAcceptedAndCarriesItsBackground() = runTest {
+        val world = world()
+        val request = TerrainGenerator.Request(
+            requirement = "村口那片空地。",
+            chunks = listOf(east),
+            placements = listOf(Placement(east, "一棵老槐树", "树皮上刻着旧痕")),
+        )
+        val script = Scripted(
+            listOf(
+                turn("c1", GeneratorTools.FILL_TERRAIN, fillAt(east, "grass")),
+                turn(
+                    "c2",
+                    GeneratorTools.MAKE_OBJECT,
+                    treeJson("oak_a", 4900, 130, preset = "oak_tree", background = "树皮上刻着旧痕"),
+                ),
+                stop(),
+            ),
+        )
+        val generator = generator(script)
+        generator.presets.learn(oak())
+
+        val result = grown(generator.grow(world, request))
+
+        val spawned = result.consequences.filterIsInstance<Consequence.Spawn>()
+            .first { it.entity.id == "oak_a" }
+        assertEquals("树皮上刻着旧痕", spawned.entity.background, "导演写的那句背景要落到实体上")
+    }
+
+    @Test
+    fun thePromptMarksTheRequiredChunksAndCarriesTheNamedThings() {
+        val world = world()
+        val request = TerrainGenerator.Request(
+            requirement = "把镇东那片空地补上。",
+            chunks = listOf(ChunkKey(7, 0)),
+            required = listOf(east),
+            placements = listOf(Placement(east, "一棵老槐树", "树皮上刻着旧痕")),
+        )
+
+        val text = generator(Scripted(listOf(stop()))).preview(world, request)
+
+        assertTrue(
+            text.contains("chunk (6,0)（**必须有地**）"),
+            text.substringAfter("你这一次要长的是").take(500),
+        )
+        assertTrue(text.contains("一块都不能落下"))
+        assertTrue(text.contains("一棵老槐树 —— 放进 chunk (6,0)"), text.substringAfter("导演还点名").take(500))
+        assertTrue(text.contains("树皮上刻着旧痕"), "导演写的那句背景要跟着过去")
     }
 }

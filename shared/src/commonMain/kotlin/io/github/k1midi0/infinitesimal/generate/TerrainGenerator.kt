@@ -15,6 +15,7 @@ import io.github.k1midi0.infinitesimal.llm.ThinkingRequest
 import io.github.k1midi0.infinitesimal.llm.ToolCallRequest
 import io.github.k1midi0.infinitesimal.llm.Usage
 import io.github.k1midi0.infinitesimal.llm.decodeCall
+import io.github.k1midi0.infinitesimal.spatial.chunks
 import io.github.k1midi0.infinitesimal.world.CHUNK_CELLS
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Preset
@@ -25,6 +26,8 @@ import io.github.k1midi0.infinitesimal.world.TerrainCell
 import io.github.k1midi0.infinitesimal.world.TerrainGrid
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.ZoneCell
+import io.github.k1midi0.infinitesimal.world.floorDiv
+import io.github.k1midi0.infinitesimal.world.terrainCellOf
 import io.github.k1midi0.infinitesimal.world.zoneCellOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.Serializable
@@ -109,10 +112,19 @@ class TerrainGenerator(
      *
      * [chunks] 是**整块**：地形以 chunk 为最小生成单位，所以不存在「半块地缺地形」这件事
      * （§14.30）。空列表 = 没得长，直接退回。
+     *
+     * [required] 是**必需的那几块**（§14.33）：硬圈里还没有地形的那些，由代码算。它们与 [chunks]
+     * 的区别只在「写没写进去才算数」——必需的那几块**没有真的写进地形就是没完成**，要重试；其余的
+     * 是导演额外要的，长出来就好。
+     *
+     * [placements] 是**导演点名要放的东西**。一片森林里的每一棵树不该由它逐棵列出来，但「村口那棵
+     * 老槐树」该由它点——那是地标，不是清单。
      */
     data class Request(
         val requirement: String,
         val chunks: List<ChunkKey>,
+        val required: List<ChunkKey> = emptyList(),
+        val placements: List<Placement> = emptyList(),
     )
 
     sealed interface Growth {
@@ -128,8 +140,21 @@ class TerrainGenerator(
         data class FailedProtocol(val problems: List<String>, val attempts: Int) : Growth
     }
 
-    suspend fun grow(world: World, request: Request): Growth {
-        val chunks = request.chunks.distinct()
+    /**
+     * 把上游给的范围补全：**必需的那几块永远在这块地里**。
+     *
+     * 上游给的范围可能没带上它们——导演自己填坐标，它可能只报了额外想长的那几块。少了这一步，一次
+     * 「必需区块没写进去」会以「模型没照要求做」的样子出现，而真相是那一块根本没进这一次的请求。
+     *
+     * `grow` 与 `preview` 都走这一条，于是探针打印出来的那段提示与真正发出去的**逐字相同**。
+     */
+    fun normalised(request: Request): Request =
+        request.copy(chunks = (request.chunks + request.required).distinct())
+
+    suspend fun grow(world: World, raw: Request): Growth {
+        val request = normalised(raw)
+        val required = request.required.distinct()
+        val chunks = request.chunks
         if (chunks.isEmpty()) {
             return Growth.FailedProtocol(listOf("没有给它任何地块，没得长。"), 0)
         }
@@ -140,7 +165,7 @@ class TerrainGenerator(
 
         while (attempts < maxAttempts) {
             attempts++
-            val taken = growOnce(world, request.copy(chunks = chunks), notes)
+            val taken = growOnce(world, request, notes)
 
             if (taken.consequences.isEmpty()) {
                 // **一件都没长 = 这片地还是空的。**它不是一次成功的生成，多半是「想说的没说」或者
@@ -154,11 +179,40 @@ class TerrainGenerator(
                 continue
             }
 
+            // 「哪些块真的被写进去了」只能从后果自己身上读——模型说了什么不算数。
+            val touched = taken.consequences
+                .filterIsInstance<Consequence.TerrainConsequence>()
+                .flatMap { it.box.chunks() }
+                .toSet()
+
+            // 这两条检查**都在提交之前**。放到提交之后的话，一次「地被铺了、但指名要放的东西没放」
+            // 就已经把半件事落库了，而重试会在这半件事之上再铺一遍。
+            val missing = required.filterNot { it in touched }
+            if (missing.isNotEmpty()) {
+                val note = "必需的那几块还没写进地形：" +
+                    missing.joinToString("、") { "(${it.x},${it.y})" } +
+                    "。这几块在玩家脚底下，必须有地；只在别处长不算数。"
+                lastProblems = listOf(note)
+                notes = listOf(note)
+                continue
+            }
+
+            val unplaced = placementProblems(taken.consequences, request.placements)
+            if (unplaced.isNotEmpty()) {
+                lastProblems = unplaced
+                notes = unplaced
+                continue
+            }
+
             when (val applied = Committer.apply(world, taken.consequences)) {
                 is Committer.Applied -> {
                     // 「这块地已经有地形了」这句话落在这儿。它不进后果那一批：后果是**世界的改动**，
                     // 这一句是账本（§14.30：来源不区分，开局那片地也会被标上）。
-                    chunks.forEach(world.terrain::markGenerated)
+                    //
+                    // **只标真的写进去的那些块。** 把请求过的一律标上，是拿账本替现实签字——那块空地
+                    // 从此再没有人会来补，而症状是一片永远空着的马赛克：看起来像「模型没画好」，实际
+                    // 是代码撒了谎。
+                    touched.forEach(world.terrain::markGenerated)
                     return Growth.Grown(applied.consequences, chunks, attempts)
                 }
 
@@ -171,6 +225,32 @@ class TerrainGenerator(
 
         return Growth.FailedProtocol(lastProblems.ifEmpty { listOf(NOTHING_GREW) }, attempts)
     }
+
+    /**
+     * 导演点名要放的东西，**放进去了没有**。
+     *
+     * 判据是后果里有没有一条落在**那一块 chunk 里**的 `Spawn`——不是「模型说它放了」。这与「必需区块
+     * 写没写进去」是同一条纪律：账从后果上读，不从回答里读。
+     */
+    private fun placementProblems(
+        consequences: List<Consequence>,
+        placements: List<Placement>,
+    ): List<String> {
+        if (placements.isEmpty()) return emptyList()
+        val spawned = consequences.filterIsInstance<Consequence.Spawn>().map { it.entity }
+        return placements.mapNotNull { p ->
+            val inside = spawned.any { chunkOfPoint(it.x, it.y) == p.chunk }
+            if (inside) {
+                null
+            } else {
+                "导演点名要放的「${p.brief.trim()}」没有落进 chunk (${p.chunk.x},${p.chunk.y}) 里。" +
+                    "它要求放在那一块，放到别处不算。"
+            }
+        }
+    }
+
+    private fun chunkOfPoint(x: Int, y: Int): ChunkKey =
+        ChunkKey(floorDiv(terrainCellOf(x), CHUNK_CELLS), floorDiv(terrainCellOf(y), CHUNK_CELLS))
 
     // ── 一次生成 ───────────────────────────────────────────────────────────────────
 
@@ -418,6 +498,7 @@ class TerrainGenerator(
             x = args.x,
             y = args.y,
             z = args.z,
+            background = args.background.trim().ifEmpty { null },
         )
         consequences += Consequence.Spawn(entity)
         return "放好了：${entity.label}（用「${preset.name}」这份形状，${entity.shape?.cellCount ?: 0} 格）"
@@ -433,7 +514,7 @@ class TerrainGenerator(
      */
     fun preview(world: World, request: Request): String =
         systemFor(world) + "\n\n──────── 上面是 system，下面是 user ────────\n\n" +
-            userPrompt(world, request, emptyList())
+            userPrompt(world, normalised(request), emptyList())
 
     /**
      * 静态那一段 + 材质表。
@@ -451,17 +532,24 @@ class TerrainGenerator(
     private fun userPrompt(world: World, request: Request, notes: List<String>): String = buildString {
         appendLine("你这一次要长的是这些地块。一块 chunk 是 16×16 个地形格，也就是 8×8 米：")
         appendLine()
+        val required = request.required.toSet()
         request.chunks.forEach { chunk ->
+            val mark = if (chunk in required) "**必须有地**" else "有就行"
             appendLine(
-                "  chunk (${chunk.x},${chunk.y})：地形格 ${Edges.cellsOf(chunk)}；" +
+                "  chunk (${chunk.x},${chunk.y})（$mark）：地形格 ${Edges.cellsOf(chunk)}；" +
                     "厘米 ${Edges.centimetresOf(chunk)}",
             )
+        }
+        if (required.isNotEmpty()) {
+            appendLine()
+            appendLine("标着「必须有地」的那几块在玩家脚底下，**一块都不能落下**——只在别处长不算数。")
         }
         appendLine()
         appendLine("导演对这一次的要求：")
         appendLine()
         appendLine("  ${request.requirement.trim()}")
         appendLine()
+        append(placements(request.placements))
         append(zoning(world, request.chunks))
         append(edges(world, request.chunks))
         append(presetListing())
@@ -472,6 +560,27 @@ class TerrainGenerator(
             appendLine()
         }
         appendLine("动手吧。记住：**改地皮那五只用地形格，放东西用厘米**。")
+    }
+
+    /**
+     * 导演点名要放的那几样。
+     *
+     * 写的是**在哪一块**，不写厘米——具体落在这一块里的哪儿由它自己定，而它刚铺完这块地、看得见
+     * 剖面。给它一个厘米数字只会得到一个编出来的数字（§14.33）。
+     */
+    private fun placements(list: List<Placement>): String {
+        if (list.isEmpty()) return ""
+        return buildString {
+            appendLine("导演还点名要在下面这些地方放东西（**放进它说的那一块里**，具体落在哪儿你自己定）：")
+            appendLine()
+            list.forEach { p ->
+                appendLine("  - ${p.brief.trim()} —— 放进 chunk (${p.chunk.x},${p.chunk.y})")
+                if (p.background.isNotBlank()) {
+                    appendLine("      它自己的背景（照抄进 `make_object` 的 background）：${p.background.trim()}")
+                }
+            }
+            appendLine()
+        }
     }
 
     private fun zoning(world: World, chunks: List<ChunkKey>): String {
@@ -576,6 +685,8 @@ class TerrainGenerator(
         val z: Int,
         /** 可选：`find_preset` 找到的那条的名字。留空才看 [brief]。 */
         val preset: String = "",
+        /** 可选：**这样东西自己那份渲染背景**，导演点名时带过来的那一句。 */
+        val background: String = "",
     )
 
     @Serializable

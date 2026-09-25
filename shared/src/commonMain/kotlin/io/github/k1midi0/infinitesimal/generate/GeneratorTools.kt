@@ -123,7 +123,13 @@ object GeneratorTools {
         int("y", "厘米"),
         int("z", "厘米。站在地面上就是地面高度，本局地面在 12800 附近"),
         text("preset", "可选。`find_preset` 找到的那条的名字。填了就用它，不再看 brief"),
-        optional = listOf("preset"),
+        text(
+            "background",
+            "可选。**这样东西自己那份渲染背景**：它长成什么样、什么风格。" +
+                "导演点名要放的东西都带着一句，照抄过来——它决定了酒馆门口那两棵与皇宫里那两棵的" +
+                "差别，而你看不见那个差别",
+        ),
+        optional = listOf("preset", "background"),
     )
 
     /** 一次全部给它。**生成不分步**：铺地与放东西是同一件事的两半（A.16）。 */
