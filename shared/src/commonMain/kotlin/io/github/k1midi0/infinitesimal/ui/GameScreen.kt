@@ -88,6 +88,17 @@ fun GameScreen(session: GameSession, modifier: Modifier = Modifier) {
                 LogPane(session, Modifier.weight(1.2f).fillMaxHeight())
             }
             Spacer(Modifier.height(8.dp))
+            /*
+             * **那条弹出来的提示**（§14.33）。现在只有一种情况会置它：**硬圈里那块地长不出来**。
+             *
+             * 别的失败都只写日志就够——那是玩家自己那一轮没成，他本来就盯着日志看。这一条不一样：它是
+             * 世界少了一块地，而玩家可能正站在缺口边上，看见的是"这里什么都没有"。而日志会被后面几十行
+             * 盖掉，所以它需要一个关掉才消失的地方。
+             */
+            session.notice?.let { message ->
+                NoticeBar(message, onDismiss = { session.dismissNotice() })
+                Spacer(Modifier.height(8.dp))
+            }
             // §4.7 的纠正预览。**它只在第一步说"你要动的不是这些"时出现**——那时世界还一个字都
             // 没动，所以关掉它是免费的。
             session.pending?.let { p ->
@@ -167,12 +178,55 @@ private fun TopBar(session: GameSession) {
             )
             TextButton(onClick = { session.clearSelection() }) { Text("清空") }
         }
-        if (session.busy) {
+        /*
+         * **任务清单，一件事一行**（§8.3.2、§14.33）。
+         *
+         * 它取代了原来那一句「跑着…」的字符串：判定在跑、地形在后台长、导演在看着，这三件事可以同时
+         * 成立，而一个字符串只能显示其中一件。玩家看到「算后果…」和「正在生成地形」同时在列，也就
+         * 知道自己的动作在等什么。
+         */
+        val running = session.tasks
+        if (running.isEmpty() && session.busy) {
+            // 兜底：有一个动作跑着却没有登记任务。**这是接线漏了，不是正常状态**——写出来为了让
+            // 它一眼可辨，而不是让界面看着像卡住了。
             Text(
                 session.status.ifBlank { "跑着…" },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.tertiary,
             )
+        } else {
+            running.forEach { task ->
+                Text(
+                    "· ${task.text}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 那条弹出来的提示。**要玩家自己关掉**——它是"世界里少了一块地"这一类事实，不该自己消失。
+ */
+@Composable
+private fun NoticeBar(message: String, onDismiss: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onDismiss) { Text("知道了") }
         }
     }
 }

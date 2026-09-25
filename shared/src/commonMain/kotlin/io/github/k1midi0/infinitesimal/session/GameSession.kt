@@ -17,6 +17,7 @@ import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.Renderer
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
+import io.github.k1midi0.infinitesimal.spatial.requiredChunks
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
@@ -28,6 +29,8 @@ import io.github.k1midi0.infinitesimal.world.ZoningSnapshot
 import io.github.k1midi0.infinitesimal.world.WorldTime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.TimeSource
 
 /** 玩家自己的 id。开局世界和判定都用它。 */
@@ -36,6 +39,27 @@ const val PLAYER = "player"
 /** 日志里的一行。[Kind] 只用来决定颜色，不参与任何逻辑。 */
 data class LogLine(val kind: Kind, val text: String) {
     enum class Kind { SAY, ACT, OK, REJECT, PROBLEM, NOTE, ERROR }
+}
+
+/**
+ * 任务清单上的一条（§8.3.2、§14.33）。
+ *
+ * 它是一份**并行**清单上的一行，而不是"当前状态"那一个字符串：判定在跑、地形在后台长、导演在看着
+ * ——这三件事可以同时成立，而一个字符串只能显示其中一个。用户对这一条的要求是原话级别的：
+ * 「工作进程是一份并行任务清单（不是一个字符串）」。
+ *
+ * [text] 是可变的，因为**一件事会往前走**：判定那一行先是「判定中…」，接着变成「算后果…」。让调用点
+ * 各自起一条新任务会把这件事显示成两件事同时在跑，那是假的信息。
+ */
+class Task internal constructor(val id: Long, text: String) {
+    var text by mutableStateOf(text)
+        internal set
+
+    override fun equals(other: Any?): Boolean = other is Task && other.id == id
+
+    override fun hashCode(): Int = id.hashCode()
+
+    override fun toString(): String = text
 }
 
 /**
@@ -87,12 +111,21 @@ class GameSession(
      * 在读 [io.github.k1midi0.infinitesimal.world.BuiltinPresets] 之后把它传进来。
      */
     presets: PresetLibrary = PresetLibrary(),
+    /**
+     * 判定（§4）。默认按 [config] 与 [presets] 现造一个；**测试可以塞一个假的进来**——它在这条路上
+     * 是第一个真的去碰端点的人，不注入就只能拿真 key 跑。
+     */
+    private val judge: Judge = Judge(config, presets = presets),
+    /**
+     * 导演（§8）。默认按 [config] 与 [presets] 现造一个；**测试可以塞一个假的进来**——它在会话里
+     * 有三条触发路径（手动按钮、硬圈缺口、每回合那一看），没有注入点就只能靠真端点验。
+     */
+    private val director: Director = Director(config, presets),
 ) {
     val world: World = World.from(
         WorldSnapshot(seed, rules, terrain = ground, zoning = zoning),
     )
     private val renderer = Renderer(config, world)
-    private val judge = Judge(config, presets = presets)
 
     /**
      * 导演（§8）。**它自己把请求落到 [SystemId.DIRECTOR] 那个缓存池**，所以传进去的还是原配置。
@@ -101,7 +134,21 @@ class GameSession(
      * 不是两个模型（§10.1）。预设库**必须递给它**：导演那只 `grow_terrain` 会走到生成器，而生成器
      * 放东西时看的是同一份库（A.14）。
      */
-    private val director = Director(config, presets)
+
+    /**
+     * **写世界的那把锁。**
+     *
+     * 世界是一张普通的 Map——它没有内部同步，两个写入者交错跑就会丢改动。而这里现在真的有两个：
+     * 玩家那一轮（判定第二步）与后台那一看（导演可能一路走到生成地形，一次几十秒）。
+     *
+     * 锁只圈住**会写世界的那一次调用**，不圈判定第一步、不圈渲染——那些只读。圈得再宽一点（把整个
+     * 回合包进去）会让后台生成把玩家的下一次判定一起卡住。
+     *
+     * **这一条是 §14.33 那套"不重合才并行"的保守版**：那里定的是两块地不重合就允许并行，而并行要求
+     * 生成先把后果算在一个快照上、之后再提交。现在生成是就地提交的，所以先用一把锁把它串起来——
+     * 串起来永远是对的，只是慢；等 §12 第 40 项那个账单量出来，再决定值不值得拆。
+     */
+    private val writes = Mutex()
 
     /**
      * **区块坐标的显示原点**，整局固定（[ChunkOrigin]）。
@@ -140,6 +187,30 @@ class GameSession(
 
     var status by mutableStateOf("")
         private set
+
+    /**
+     * **现在真正在跑的每一件事，一件事一行**（§8.3.2、§14.33）。
+     *
+     * 它和 [status] 是两样东西：`status` 说的是玩家这一次动作走到哪一步了，`tasks` 说的是**这个世界
+     * 上此刻有几件事在跑**——判定在跑、地形在后台长、导演在看着，这三件可以同时成立。用户对这一条的
+     * 要求是原话级别的：「工作进程是一份并行任务清单（不是一个字符串）」。
+     */
+    var tasks by mutableStateOf<List<Task>>(emptyList())
+        private set
+
+    /**
+     * 一件**必须让玩家看见、但没法只写进日志**的事。**只有"硬圈里那块地长不出来"会置它。**
+     *
+     * 别的失败都只写日志：那是玩家自己那一轮没成，他本来就盯着日志。而这一条不一样——它是**世界少了
+     * 一块地**，而玩家可能正站在那个缺口边上，看到的是"这里什么都没有"。界面把日志盖掉之后，这条是
+     * 唯一还看得见的东西。
+     */
+    var notice by mutableStateOf<String?>(null)
+        private set
+
+    fun dismissNotice() {
+        notice = null
+    }
 
     /**
      * 第一步对齐完了、在等玩家确认的那一次（§4.7）。**不是 null 就是有东西在等。**
@@ -239,17 +310,17 @@ class GameSession(
      * 说的那一半**目前没有接收方**——按 §5.1 它该走范围广播，但那还没写。这里把这件事明说出来，
      * 而不是假装说了一句话。
      */
-    suspend fun runTurn(said: String, acted: String) {
+    suspend fun runTurn(said: String, acted: String, scope: CoroutineScope? = null) {
         if (said.isNotBlank()) {
             say(LogLine.Kind.SAY, "你说：「${said.trim()}」")
             say(LogLine.Kind.NOTE, "（§5 的对话系统还没写，这句话现在传不到任何人耳朵里）")
         }
-        if (acted.isNotBlank()) judgeAndCommit(acted.trim())
+        if (acted.isNotBlank()) judgeAndCommit(acted.trim(), scope)
     }
 
     fun submit(scope: CoroutineScope, said: String, acted: String) {
         if (said.isBlank() && acted.isBlank()) return
-        run(scope, "跑一轮…") { runTurn(said, acted) }
+        run(scope, "跑一轮…") { runTurn(said, acted, scope) }
     }
 
     // ── 纠正预览的两个按钮（§4.7） ─────────────────────────────────────────────────
@@ -263,15 +334,15 @@ class GameSession(
         val p = pending ?: return
         run(scope, "算后果…") {
             pending = null
-            runEffects(p.turn, p.targets)
+            runEffects(p.turn, p.targets, p.intention, scope)
         }
     }
 
     /** 挂起版：给 spike 直接 await 用（否则测试只能 sleep 猜）。 */
-    suspend fun applyPendingNow() {
+    suspend fun applyPendingNow(scope: CoroutineScope? = null) {
         val p = pending ?: return
         pending = null
-        runEffects(p.turn, p.targets)
+        runEffects(p.turn, p.targets, p.intention, scope)
     }
 
     /**
@@ -327,7 +398,7 @@ class GameSession(
 
     /** 挂起版：给 spike 直接 await 用。 */
     suspend fun arrangeNow() {
-        val result = director.wake(world, Waking(Wake.Arrange, PLAYER, origin))
+        val result = writes.withLock { director.wake(world, Waking(Wake.Arrange, PLAYER, origin)) }
         timelineRevision++
         when (result) {
             is Awakening.Done -> {
@@ -359,12 +430,16 @@ class GameSession(
         if (busy) return
         busy = true
         status = what
+        val mine = startTask(what)
+        foreground = mine
         scope.launch {
             try {
                 block()
             } catch (t: Throwable) {
                 say(LogLine.Kind.ERROR, "出错了：${t.message}")
             } finally {
+                if (foreground === mine) foreground = null
+                endTask(mine)
                 entities = world.all()
                 clock = world.clock
                 timelineRevision++
@@ -374,9 +449,40 @@ class GameSession(
         }
     }
 
+    // ── 任务清单（§8.3.2） ──────────────────────────────────────────────────────────
+
+    private var nextTask = 0L
+
+    /**
+     * 玩家这一次动作那一行。**它是 [tasks] 里的一行，只是会话记着它**，好让中途换一句说明。
+     *
+     * spike 直接 `await` 那些挂起版时它一定是 null——那正是"只改 [status]"那条退路存在的原因。
+     */
+    private var foreground: Task? = null
+
+    private fun startTask(text: String): Task {
+        val task = Task(nextTask++, text)
+        tasks = tasks + task
+        return task
+    }
+
+    /**
+     * 收掉一行。**调用方必须在 `finally` 里收**——漏一次，界面上就永久留着一件"正在跑"的事，
+     * 而它其实早就没了。
+     */
+    private fun endTask(task: Task) {
+        tasks = tasks - task
+    }
+
+    /** 把当前这一步往前推一句。没有前台任务时（spike 直接 await）只改 [status]。 */
+    private fun phase(text: String) {
+        status = text
+        foreground?.text = text
+    }
+
     // ── 一轮的内部 ──────────────────────────────────────────────────────────────────
 
-    private suspend fun judgeAndCommit(intention: String) {
+    private suspend fun judgeAndCommit(intention: String, scope: CoroutineScope?) {
         say(LogLine.Kind.ACT, "你做：$intention")
 
         // **标签要先抓下来。** 判定落库之后被 Destroy 的东西就不在世界里了，那时候再查
@@ -390,7 +496,7 @@ class GameSession(
             if (picked.isEmpty()) "（你什么都没勾）" else "（你勾的是：${picked.joinToString("、") { name(it) }}）",
         )
 
-        status = "判定中…"
+        phase("判定中…")
         val turn = judge.beginTurn(
             world,
             JudgeRequest(
@@ -421,7 +527,7 @@ class GameSession(
                     status = ""
                     return
                 } else {
-                    runEffects(turn, alignment.targets)
+                    runEffects(turn, alignment.targets, intention, scope)
                 }
 
             is TargetAlignment.Rejected -> {
@@ -448,15 +554,22 @@ class GameSession(
      * 两个入口共用它：对齐结果与勾选一致时直接跑，玩家点「应用」时跑（§4.7）。所以它只认
      * [targets]，不关心那个集合是模型自己给的还是玩家确认过的。
      */
-    private suspend fun runEffects(turn: Judge.Turn, targets: List<String>) {
+    private suspend fun runEffects(
+        turn: Judge.Turn,
+        targets: List<String>,
+        intention: String,
+        scope: CoroutineScope?,
+    ) {
         // 同一个理由：标签要在落库之前抓。
         val labels = world.all().associate { it.id to it.label }
         fun name(id: String) = labels[id] ?: world.byId(id)?.label ?: id
 
-        status = "算后果…"
+        phase("算后果…")
         val mark = TimeSource.Monotonic.markNow()
         val judgment = try {
-            turn.finish(targets)
+            // **锁圈住的是这一步。** 它是唯一改世界的地方，而这一刻可能有另一件事在写（后台那一看
+            // 走到的生成地形）。圈在 [finish] 外面而不是里面，是因为提交就发生在它内部。
+            writes.withLock { turn.finish(targets) }
         } catch (t: Throwable) {
             say(LogLine.Kind.ERROR, "判定没跑起来：${t.message}")
             return
@@ -519,6 +632,91 @@ class GameSession(
             }
         }
         selection = emptySet()
+        afterTurn(intention, scope)
+    }
+
+    // ── 回合之后那两条触发路径（§14.33） ────────────────────────────────────────────
+
+    /**
+     * 一轮落库之后要走的两件事。**它们的性质正好相反，所以顺序不能换。**
+     *
+     * 1. **硬圈缺口**：由**代码**发现，同步叫思考档，**玩家等**。玩家可能正站在那个缺口边上，那是
+     *    一个"世界少了一块"的错，不是一次可以稍后再说的调度。
+     * 2. **缓冲圈**：由**快速档**每回合看一眼，后台跑，**不挡玩家**。它觉得这一带还不用长，那是
+     *    合法的结果——用户对这一条的原话是「什么都不做是合法结果」。
+     */
+    private suspend fun afterTurn(intention: String, scope: CoroutineScope?) {
+        closeGap()
+        // scope 为 null = 调用方是 spike 的挂起入口，它自己拿着协程；那一看就不起（否则一次
+        // runBlocking 会被一条后台协程拖着不结束）。
+        if (scope != null) scope.launch { watch(intention) }
+    }
+
+    /**
+     * 硬圈里缺的块，**由代码算，不由模型说**。
+     *
+     * 判据是 [requiredChunks]：以玩家所在区块为心、半径 [io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CHUNKS]
+     * 的圆盘里，[io.github.k1midi0.infinitesimal.world.Terrain.isGenerated] 还是 false 的那些。玩家每
+     * 跨过一块，这个圆盘就露出一道月牙——而"跨过一块"是 8 米，走路一回合就到。
+     */
+    private suspend fun closeGap() {
+        val player = world.chunkOfEntity(PLAYER) ?: return
+        val required = requiredChunks(world, player)
+        if (required.isEmpty()) return
+
+        val task = startTask("正在生成地形（${required.size} 块）…")
+        val result = try {
+            writes.withLock {
+                director.wake(world, Waking(Wake.HardGap(required), PLAYER, origin))
+            }
+        } catch (t: Throwable) {
+            say(LogLine.Kind.ERROR, "补地形没跑起来：${t.message}")
+            null
+        } finally {
+            endTask(task)
+        }
+
+        when (result) {
+            null -> notice = "你走到了一块还没有地形的地方，而它没能长出来。"
+            is Awakening.Done -> say(
+                LogLine.Kind.NOTE,
+                "（这一带还缺 ${required.size} 块地，长出来了 ${result.chunks.size} 块）",
+            )
+
+            is Awakening.FailedProtocol -> {
+                // 这一条**必须弹到界面上**：它不是一个"这一次没成"的动作，是世界少了一块地，而玩家
+                // 正站在那儿看着空无一物。日志会被后面几十行盖掉。
+                say(
+                    LogLine.Kind.ERROR,
+                    "硬圈里那几块地没能长出来（试了 ${result.attempts} 次）：${result.problems.joinToString("；")}",
+                )
+                notice = "你走到了一块还没有地形的地方，它试了 ${result.attempts} 次都没长出来。"
+            }
+        }
+    }
+
+    /**
+     * 快速档每回合的那一看。**它在后台，不挡玩家**——`busy` 一动不动，界面照常能用。
+     *
+     * 它拿到的是这一回合发生了什么（[turn]）以及"离内圈最近的空地还有几块远"（导演自己算）。想动手
+     * 就把思考档叫起来，而思考档可能一路走到生成地形——那一次几十秒，所以它更不能挡玩家。
+     *
+     * 失败只写日志：**快速档看不成不是世界出了事**，它本来就是一个"看着"的角色。
+     */
+    private suspend fun watch(turn: String) {
+        val task = startTask("导演在看着…")
+        try {
+            writes.withLock {
+                director.wake(world, Waking(Wake.Watching(turn), PLAYER, origin))
+            }
+        } catch (t: Throwable) {
+            say(LogLine.Kind.ERROR, "导演没醒过来：${t.message}")
+        } finally {
+            endTask(task)
+            // 它可能改了地形、也可能排下了事——两条都要推给界面。
+            entities = world.all()
+            timelineRevision++
+        }
     }
 
     // ── 小工具 ──────────────────────────────────────────────────────────────────────
