@@ -2,14 +2,18 @@ package io.github.k1midi0.infinitesimal.generate
 
 import io.github.k1midi0.infinitesimal.config.EndpointConfig
 import io.github.k1midi0.infinitesimal.config.ThinkingMode
+import io.github.k1midi0.infinitesimal.judge.Consequence
 import io.github.k1midi0.infinitesimal.judge.Scripted
 import io.github.k1midi0.infinitesimal.judge.stop
 import io.github.k1midi0.infinitesimal.judge.turn
 import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.session.StartingWorld
 import io.github.k1midi0.infinitesimal.world.ChunkKey
+import io.github.k1midi0.infinitesimal.world.Preset
 import io.github.k1midi0.infinitesimal.world.TerrainBox
 import io.github.k1midi0.infinitesimal.world.TerrainCell
+import io.github.k1midi0.infinitesimal.world.Voxel
+import io.github.k1midi0.infinitesimal.world.VoxelShape
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import kotlinx.coroutines.test.runTest
@@ -186,5 +190,104 @@ class TerrainGeneratorTest {
             text.contains("接壤处：这一片四面都不挨着已经长好的地"),
             text.substringAfter("接壤处").take(200),
         )
+    }
+
+    // ── 找东西：第二道关（A.14、§14.31）─────────────────────────────────────────────
+    //
+    // 这一批钉的是**这次改动要治的那个病**：库里明明有橡树，模型却每次另写一句要求，于是同一件东西被
+    // 造了 11 遍。两只手各管一半——`find_preset` 让它**看得见**库里有什么，`make_object` 的 `preset`
+    // 让它**说得中**那一条。
+
+    private fun oak() = Preset(
+        name = "oak_tree",
+        brief = "一棵三人合抱的老橡树，树皮皲裂，树冠秃了一半",
+        shape = VoxelShape(solid = listOf(Voxel(0, 0, 0), Voxel(5, 0, 0))),
+        category = "树木",
+        tags = listOf("橡树", "乔木", "落叶"),
+    )
+
+    private fun tree(id: String, preset: String = "", brief: String = "") =
+        """{"id":"$id","kind":"tree","label":"橡树","brief":"$brief","x":4900,"y":130,"z":12800""" +
+            (if (preset.isEmpty()) "}" else ""","preset":"$preset"}""")
+
+    @Test
+    fun searchingGivesBackWhatToPutInTheNameField() = runTest {
+        val world = world()
+        val script = Scripted(
+            listOf(
+                turn("c1", GeneratorTools.FIND_PRESET, """{"keywords":"橡树","category":""}"""),
+                // 搜完还得真干点什么：**只调查询手不算长出东西**，那一轮会被当成空转（见 grow）。
+                turn("c2", GeneratorTools.FILL_TERRAIN, fill("grass")),
+                stop("先看看库里有什么，然后铺上了草。"),
+            ),
+        )
+        val generator = generator(script)
+        generator.presets.learn(oak())
+
+        grown(generator.grow(world, request()))
+
+        // 三样都要给：名字（填进 preset 的就是它）、属性（它为什么被搜出来）、那句要求（逐字抄的备份）。
+        val answer = script.bodies[1]
+        assertTrue(answer.contains("oak_tree"), answer.takeLast(1200))
+        assertTrue(answer.contains("树木"), answer.takeLast(1200))
+        assertTrue(answer.contains("乔木"), answer.takeLast(1200))
+    }
+
+    @Test
+    fun findingNothingSaysWhatToDoInsteadOfReturningAnEmptyString() = runTest {
+        val world = world()
+        val script = Scripted(
+            listOf(
+                turn("c1", GeneratorTools.FIND_PRESET, """{"keywords":"潜水艇"}"""),
+                turn("c2", GeneratorTools.FILL_TERRAIN, fill("grass")),
+                stop(),
+            ),
+        )
+
+        grown(generator(script).grow(world, request()))
+
+        // 空字符串与"搜到了但清单是空的"长得一样，而这里真正的含义是"库里没有，你自己写一句"。
+        assertTrue(script.bodies[1].contains("要现造"), script.bodies[1].takeLast(600))
+    }
+
+    @Test
+    fun namingAPresetUsesItWithoutSpendingAModelCall() = runTest {
+        val world = world()
+        val script = Scripted(
+            listOf(
+                turn("c1", GeneratorTools.MAKE_OBJECT, tree("oak_a", preset = "oak_tree")),
+                stop(),
+            ),
+        )
+        val generator = generator(script)
+        generator.presets.learn(oak())
+
+        val result = grown(generator.grow(world, request()))
+
+        // **两次请求**：放东西、收工。走一次建模的话这里会多出好几个来回，而那正是要省的东西。
+        assertEquals(2, generator.requestCount)
+        val spawned = result.consequences.filterIsInstance<Consequence.Spawn>().single()
+        assertEquals("oak_a", spawned.entity.id)
+        assertEquals(2, spawned.entity.shape?.cellCount)
+        assertEquals(1, generator.presets.generatedPresets().size, "点名用现成的，不该再往库里长一条")
+    }
+
+    @Test
+    fun namingSomethingTheLibraryDoesNotHaveIsToldBack() = runTest {
+        val world = world()
+        val script = Scripted(
+            listOf(
+                turn("c1", GeneratorTools.MAKE_OBJECT, tree("oak_a", preset = "oak_tre")),
+                turn("c2", GeneratorTools.FILL_TERRAIN, fill("grass")),
+                stop(),
+            ),
+        )
+        val generator = generator(script)
+        generator.presets.learn(oak())
+
+        grown(generator.grow(world, request()))
+
+        // 名字抄错了要说出来，并且**告诉它下一步做什么**——只说"没有"会让它再猜一次。
+        assertTrue(script.bodies[1].contains("没有叫「oak_tre」"), script.bodies[1].takeLast(600))
     }
 }

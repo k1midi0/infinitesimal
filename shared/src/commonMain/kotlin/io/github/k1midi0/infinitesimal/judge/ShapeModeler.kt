@@ -88,7 +88,19 @@ class ShapeModeler(
     sealed interface Result {
 
         /** [cached] = 这次没有花模型调用，直接拿回了同一条要求造过的形状。 */
-        data class Modeled(val name: String, val shape: VoxelShape, val cached: Boolean = false) : Result
+        data class Modeled(
+            val name: String,
+            val shape: VoxelShape,
+            val cached: Boolean = false,
+            /**
+             * 属性总结（附录 A.14）。模型交形的时候一并交的，与形状存进同一条预设。
+             *
+             * 命中缓存那条路上它们来自库里那条老预设——不是重新问一遍模型：**同一份形状本来就该有
+             * 同一份属性**，再问一次只会让两次调用给出两个略略不同的类别。
+             */
+            val category: String = "",
+            val tags: List<String> = emptyList(),
+        ) : Result
 
         /** 错满了次数、或者来回太多。**理由原样留着**——它多半就是"这段提示词教得不够"。 */
         data class Failed(val problems: List<String>) : Result
@@ -102,15 +114,27 @@ class ShapeModeler(
      */
     suspend fun model(brief: String): Result {
         presets.byBrief(brief)?.let {
-            return Result.Modeled(it.name, it.shape, cached = true)
+            return Result.Modeled(
+                name = it.name,
+                shape = it.shape,
+                cached = true,
+                category = it.category,
+                tags = it.tags,
+            )
         }
         return when (val result = draw(brief)) {
             is Result.Modeled -> {
                 // **产物是一条预设**（用户定的），不是一份加速表：它进生成预设包，存档要带走。
                 val stored = presets.learn(
-                    Preset(name = result.name, brief = brief.trim(), shape = result.shape),
+                    Preset(
+                        name = result.name,
+                        brief = brief.trim(),
+                        shape = result.shape,
+                        category = result.category,
+                        tags = result.tags,
+                    ),
                 )
-                Result.Modeled(stored.name, stored.shape)
+                Result.Modeled(stored.name, stored.shape, category = stored.category, tags = stored.tags)
             }
 
             is Result.Failed -> result
@@ -194,7 +218,12 @@ class ShapeModeler(
                         val args = decode<DoneArgs>(call.arguments)
                         when (val parsed = ShapeGrid.parse(assemble(floors))) {
                             is ShapeGrid.Parsed.Ok ->
-                                modeled = Result.Modeled(nameOf(args?.name, brief), parsed.shape)
+                                modeled = Result.Modeled(
+                                    name = nameOf(args?.name, brief),
+                                    shape = parsed.shape,
+                                    category = args?.category?.trim().orEmpty(),
+                                    tags = tagsOf(args?.tags),
+                                )
 
                             is ShapeGrid.Parsed.Bad -> {
                                 complaints += parsed.problems
@@ -278,6 +307,22 @@ class ShapeModeler(
         .trim('_')
         .replace(Regex("_+"), "_")
         .take(48)
+
+    /**
+     * 把标签那句字符串切成一张表。
+     *
+     * 分隔符认几种（顿号、逗号、分号、竖线、空白），因为模型在这件事上没有统一习惯，而**切不开的
+     * 代价不对称**：一条"橡树、乔木、落叶"整着存进去，搜"乔木"就永远搜不到它。
+     *
+     * 空标签丢掉、去重保序——看着像小事，但重复的标签会让打分把同一条预设抬高一截（[PresetLibrary.search]），
+     * 于是"模型写重复了"会变成"这条排得更靠前"。
+     */
+    private fun tagsOf(raw: String?): List<String> =
+        (raw ?: "").split('、', ',', '，', ';', '；', '|', ' ', '\t', '\n')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .take(MAX_TAGS)
 
     private fun system(): String = """
         你是「建模」这一段。有人告诉你需要一样什么东西，你把它画成一份 ${VOXEL_CM} 厘米体素的形状。
@@ -381,6 +426,14 @@ class ShapeModeler(
          */
         const val MAX_ROUNDS = 40
 
+        /**
+         * 一条预设最多几个标签。
+         *
+         * 上限是为了不让检索被一条啰嗦的预设带偏：标签是要拿去跟查询词比对的，写二十个标签的那一条几乎
+         * 会命中任何查询，于是它每次都排在前面——那不是搜索，那是噪声。
+         */
+        const val MAX_TAGS = 8
+
         val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
         inline fun <reified T> decode(arguments: String): T? =
@@ -414,8 +467,19 @@ class ShapeModeler(
             ),
             tool(
                 VOXEL_DONE,
-                "所有层都交完了。代码会把它们拼起来校验，通不过就把问题还给你。",
+                "所有层都交完了。代码会把它们拼起来校验，通不过就把问题还给你。" +
+                    "**同时交一句这东西是什么**——category 与 tags 是以后拿来搜它的，不是拿来画它的。",
                 text("name", "给这份形状的短名字，只用小写字母、数字、下划线，例如 split_oak_table"),
+                text(
+                    "category",
+                    "它属于哪一大类，一个词，例如 树木、家具、餐具、灯具、工具。" +
+                        "同类的东西用同一个词——搜的人会拿这个词来粗筛。",
+                ),
+                text(
+                    "tags",
+                    "几个能想到它的词，用顿号分开，例如「橡树、乔木、落叶、可攀爬」。" +
+                        "写颜色、材质、用途、像什么，别写「一个」「东西」这种放到哪条上都对的词。",
+                ),
             ),
             tool(
                 GIVE_UP,
@@ -459,7 +523,10 @@ class ShapeLog {
 private data class FloorArgs(val z: Int, val rows: String)
 
 @Serializable
-private data class DoneArgs(val name: String = "")
-
+private data class DoneArgs(
+    val name: String = "",
+    val category: String = "",
+    val tags: String = "",
+)
 @Serializable
 private data class GiveUpArgs(val reason: String = "")

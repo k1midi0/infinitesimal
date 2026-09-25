@@ -17,6 +17,7 @@ import io.github.k1midi0.infinitesimal.llm.Usage
 import io.github.k1midi0.infinitesimal.llm.decodeCall
 import io.github.k1midi0.infinitesimal.world.CHUNK_CELLS
 import io.github.k1midi0.infinitesimal.world.ChunkKey
+import io.github.k1midi0.infinitesimal.world.Preset
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.TERRAIN_CM
 import io.github.k1midi0.infinitesimal.world.TerrainBox
@@ -222,6 +223,7 @@ class TerrainGenerator(
         consequences: MutableList<Consequence>,
     ): String {
         if (call.name == GeneratorTools.MAKE_OBJECT) return makeObject(call, world, consequences)
+        if (call.name == GeneratorTools.FIND_PRESET) return findPresets(call)
 
         val args = decodeCall(BoxArgs.serializer(), call) ?: return unreadable(call)
         val box = args.toBox()
@@ -321,8 +323,54 @@ class TerrainGenerator(
         )
 
     /**
-     * 放一样东西。**一只走到底**：先按 brief 查预设库，没命中就照着这句 brief 现造一份，再放上去
-     * （§9.1 那条「调用预设、简单修改后放进地图」）。
+     * 按关键词找现成的东西。**这是"先看看库里有什么"那只手。**
+     *
+     * 它只读不写，所以没有后果、没有校验——唯一要做的是把结果**排成人能一眼扫过的样子**：名字在前
+     * （那是 `make_object` 要填的东西），类别与标签居中（那是"为什么它被搜出来"），当初那句要求在后
+     * （那是逐字抄的备份）。三样都给，是因为模型接下来有两条路可走，而两条路要的信息不一样。
+     *
+     * 搜不到时**不返回空字符串**：空字符串与"搜到了但清单是空的"长得一样，而这里真正的含义是"库里
+     * 没有，你得自己写一句要求"。这句话必须说出来，否则模型会以为手坏了。
+     */
+    private fun findPresets(call: ToolCallRequest): String {
+        val args = decodeCall(FindArgs.serializer(), call) ?: return unreadable(call)
+
+        val keywords = args.keywords.trim()
+        val wanted = (keywords + " " + args.category.trim()).trim()
+        if (wanted.isEmpty()) {
+            return "没给关键词。写几个你想到它的词，例如「橡树 乔木」，或者只给 category 例如「树木」。"
+        }
+
+        val found = presets.search(wanted)
+        if (found.isEmpty()) {
+            return "库里没有像「${keywords}」的东西。**这一类要现造**——" +
+                "照你要的样子写一句 brief 交给 make_object，把它写清楚：是什么、多大、什么样子。"
+        }
+
+        return buildString {
+            appendLine("找到 ${found.size} 条像「$keywords」的：")
+            found.forEach { preset ->
+                appendLine("  · ${preset.name}｜${attributeOf(preset)}｜${preset.brief.take(MAX_BRIEF)}")
+            }
+            append("放东西的时候，把选中那条的名字填进 make_object 的 preset。")
+        }
+    }
+
+    /** 一条预设的类别与标签，印成一行。**没有属性时印一句实话**，不印一片空白。 */
+    private fun attributeOf(preset: Preset): String {
+        val parts = buildList {
+            if (preset.category.isNotBlank()) add(preset.category)
+            addAll(preset.tags)
+        }
+        return if (parts.isEmpty()) "（没有属性）" else parts.joinToString("、")
+    }
+
+    /**
+     * 放一样东西。**一只走到底**：先按名字、再按 brief 查预设库，两关都没命中就照着这句 brief 现造一份，
+     * 再放上去（§9.1 那条「调用预设、简单修改后放进地图」）。
+     *
+     * 两道关的顺序是**用户定的**（A.14）：`preset` 是模型搜过之后点名的，比一句自己写的要求可信；
+     * `brief` 的逐字匹配是免费的快路径，留着不影响任何东西。
      */
     private suspend fun makeObject(
         call: ToolCallRequest,
@@ -331,13 +379,19 @@ class TerrainGenerator(
     ): String {
         val args = decodeCall(MakeArgs.serializer(), call) ?: return unreadable(call)
 
+        val named = args.preset.trim().let { if (it.isEmpty()) null else presets.find(it) }
+        if (args.preset.isNotBlank() && named == null) {
+            return "库里没有叫「${args.preset.trim()}」的预设。先 `find_preset` 搜一下，" +
+                "把它给你的那个名字原样填进来；或者留空 `preset`，只写 `brief` 让它现造。"
+        }
+
         val brief = args.brief.trim()
-        if (brief.isEmpty()) {
+        if (named == null && brief.isEmpty()) {
             return "`brief` 是空的。它是拿来形状的一句要求——空着的话那边造不出来，" +
                 "写成「三人合抱的老橡树，树皮皲裂」这样。"
         }
 
-        val preset = presets.byBrief(brief) ?: when (val modeled = modeler.model(brief)) {
+        val preset = named ?: presets.byBrief(brief) ?: when (val modeled = modeler.model(brief)) {
             is ShapeModeler.Result.Modeled -> presets.find(modeled.name)
             is ShapeModeler.Result.Failed ->
                 return "这一件造不出来：「$brief」——${modeled.problems.joinToString("；")}"
@@ -452,16 +506,19 @@ class TerrainGenerator(
     private fun presetListing(): String {
         val all = presets.all()
         if (all.isEmpty()) {
-            return "预设库现在是空的——`make_object` 的 brief 要写得特别清楚。\n\n"
+            return "预设库现在是空的——`find_preset` 会一无所获，`make_object` 只能照你写的 brief " +
+                "现造。所以 brief 要写得特别清楚。\n\n"
         }
         val shown = all.take(MAX_PRESETS)
         return buildString {
             appendLine(
-                "预设库里现在有这些东西。`make_object` 会拿你写的 brief 去找**逐字相同的那一条**；" +
-                    "没命中它就现造一份（多花几十秒），所以 brief 能照着下面某一条写就照着写：",
+                "预设库里现在有这些东西（名字｜类别、标签｜当初那句要求）。" +
+                    "要放东西之前先 `find_preset` 搜一下，**别自己另写一句要求**——" +
+                    "库里有的就直接用它的名字，一分钱不花；库里真的没有，`make_object` 才照你的 " +
+                    "brief 现造一份（几十秒）：",
             )
             appendLine()
-            shown.forEach { appendLine("  ${it.name}：${it.brief.take(MAX_BRIEF)}") }
+            shown.forEach { appendLine("  ${it.name}｜${attributeOf(it)}｜${it.brief.take(MAX_BRIEF)}") }
             if (all.size > shown.size) appendLine("  ……还有 ${all.size - shown.size} 条没列出来")
             appendLine()
         }
@@ -507,6 +564,14 @@ class TerrainGenerator(
         val x: Int,
         val y: Int,
         val z: Int,
+        /** 可选：`find_preset` 找到的那条的名字。留空才看 [brief]。 */
+        val preset: String = "",
+    )
+
+    @Serializable
+    private data class FindArgs(
+        val keywords: String = "",
+        val category: String = "",
     )
 
     private companion object {
@@ -529,10 +594,12 @@ class TerrainGenerator(
             - `fill_terrain` / `dig_terrain` / `replace_terrain`：**框选一大片**，一次铺、挖、或者换掉
               一种材质。参数里的坐标是**地形格**，50 厘米一格。铺大片用这三只。
             - `look_terrain`：框选一块，**读回它现在长什么样**（一张分层的字符表）。想改一块地方之前
-              先看它。这是唯一一只不落地的手。
+              先看它。这是不落地的手之一。
             - `edit_terrain`：把 `look_terrain` 读回来的那张表改几个字符再发回去，以同一个框为最大
               边界。表必须与框严格同尺寸、每格都写，`.` 是挖空。**精修用这只**（雕一个台阶、挖一条
               窄沟），铺大片别用它。
+            - `find_preset`：**按关键词在预设库里找现成的东西。**写几个你想到它的词，拿回一张候选
+              清单。放东西之前先搜一次。这也是不落地的手。
             - `make_object`：在地面上**放一样东西**。参数里的坐标是**厘米**——这是唯一一只用厘米的手。
 
             ## 规矩
@@ -544,9 +611,10 @@ class TerrainGenerator(
             - **和旁边接上。**下面会告诉你这一片挨着的、已经长好的地是什么样。地面高度别和它们差出
               一大截，除非你有理由（一道崖、一条河）。
             - **一次能铺多大就铺多大。**框选那三只一次可以盖住好几块 chunk，别一块一块地铺。
-            - **素材先看预设库。**库里有现成的就用现成的；库里没有，`make_object` 会照着你的 brief
-              现造一份。所以 brief 要写成**一句能独立读懂的要求**——造形状的那个模型看不到你看到的
-              这一切。
+            - **放东西之前先搜。**`find_preset` 搜到合适的就用它的名字，别自己另写一句要求——
+              现造一份要几十秒，而库里多半已经有了。
+            - **库里真的没有才自己写。**那时 brief 要写成**一句能独立读懂的要求**——造形状的那个模型
+              看不到你看到的这一切。
             - **没手可调了，就停下来。**停下来之前确认这一片真的长完了。
         """.trimIndent()
     }

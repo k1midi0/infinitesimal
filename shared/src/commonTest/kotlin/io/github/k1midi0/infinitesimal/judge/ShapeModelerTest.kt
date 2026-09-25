@@ -207,4 +207,74 @@ class ShapeModelerTest {
         // 单边上限与格数上限也要写出来，否则它无从知道"多大算太大"。
         assertTrue(first.contains("200"), first)
     }
+
+    // ── 属性总结（A.14、§14.31）─────────────────────────────────────────────────────
+    //
+    // 形状与"它是什么"一起交、一起存。分开两处存的话，同一份形状会有两个来源，而它们迟早对不上。
+
+    @Test
+    fun theShapeAndItsAttributeSummaryAreStoredTogether() = runBlocking {
+        val script = Scripted(
+            listOf(
+                turn("f0", "voxel_floor", """{"z":0,"rows":"##\n##"}"""),
+                turn(
+                    "done",
+                    "voxel_done",
+                    """{"name":"oak","category":"树木","tags":"橡树、乔木、落叶"}""",
+                ),
+            ),
+        )
+        val modeler = modeler(script)
+        val brief = "一棵高大的橡树"
+
+        val modeled = assertIs<ShapeModeler.Result.Modeled>(modeler.model(brief))
+        assertEquals("树木", modeled.category)
+        assertEquals(listOf("橡树", "乔木", "落叶"), modeled.tags)
+
+        val stored = modeler.presets.byBrief(brief)
+        assertEquals("树木", stored?.category)
+        assertEquals(listOf("橡树", "乔木", "落叶"), stored?.tags)
+
+        // 命中缓存那条路上，属性来自库里那条老预设——**不是重新问一遍模型**：同一份形状本来就该有
+        // 同一份属性，再问一次只会让两次调用给出两个略略不同的类别。
+        val again = assertIs<ShapeModeler.Result.Modeled>(modeler.model(brief))
+        assertTrue(again.cached)
+        assertEquals("树木", again.category)
+        assertEquals(listOf("橡树", "乔木", "落叶"), again.tags)
+    }
+
+    @Test
+    fun tagsAreSplitOnWhateverSeparatorTheModelHappenedToUse() = runBlocking {
+        // 切不开的代价不对称：一条「木钉, 木制、小件」整着存进去，搜「木制」就永远搜不到它。
+        val script = Scripted(
+            listOf(
+                turn("f0", "voxel_floor", """{"z":0,"rows":"#"}"""),
+                turn(
+                    "done",
+                    "voxel_done",
+                    """{"name":"peg","category":"器具","tags":"木钉, 木制、小件|可钉 木钉"}""",
+                ),
+            ),
+        )
+
+        val modeled = assertIs<ShapeModeler.Result.Modeled>(modeler(script).model("一根木钉"))
+
+        assertEquals(listOf("木钉", "木制", "小件", "可钉"), modeled.tags, "去空格、去重、保序")
+    }
+
+    @Test
+    fun aMissingAttributeSummaryIsNotAFailureOfTheDrawing() = runBlocking {
+        // 属性是给搜索用的，形状才是这一次要的东西。老数据、或者模型漏填，都不该让一次画得对的建模作废。
+        val script = Scripted(
+            listOf(
+                turn("f0", "voxel_floor", """{"z":0,"rows":"#"}"""),
+                turn("done", "voxel_done", """{"name":"peg"}"""),
+            ),
+        )
+
+        val modeled = assertIs<ShapeModeler.Result.Modeled>(modeler(script).model("一根木钉"))
+
+        assertEquals("", modeled.category)
+        assertTrue(modeled.tags.isEmpty())
+    }
 }
