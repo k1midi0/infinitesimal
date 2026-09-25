@@ -1,11 +1,14 @@
 package io.github.k1midi0.infinitesimal.world
 
 /**
- * 分层 ASCII 网格：形状**进出模型的那唯一一种文本形式**（附录 A.11）。
+ * 体素形状的分层 ASCII 网格：形状**进出模型的那唯一一种文本形式**（附录 A.11）。
  *
  * 读写共用它，于是模型只需要学一种表示法：**读世界**时一层层网格递过去，**写形状**时让它画一张
  * 网格回来。这比让它输出体素坐标列表可靠得多——一张 8×8 的图里画个矩形几乎不可能画错，用坐标
  * 描述同一张桌子几乎不可能不出错。
+ *
+ * 表的**骨架**（层头怎么起、行不齐怎么报）在 [LayerGrid] 里，与地形那张表共用。这里只定义体素
+ * 特有的两样：**层头的单位是厘米**、以及**每个字符是什么意思**。
  *
  * ## 语法
  *
@@ -23,9 +26,6 @@ package io.github.k1midi0.infinitesimal.world
  * - 层里每行是一排格：`#` 实心、`.` 空、`1`–`9` 该格里 1–9 个质点、`+` 该格里 10 个质点。
  * - **第 r 行就是 y = r × 5 厘米，第 c 个字符就是 x = c × 5 厘米。** 于是网格隐含"最小角在原点"
  *   （见 [VoxelShape] 的注释）。
- * - 同一层里所有行必须**一样长**。这条是故意留的校验：模型少画了几个字符是最常见的一种画错，
- *   而它除了"行不一样长"之外没有别的症状。
- * - 行尾的空白会被忽略；**行尾的 `.` 不会**——`.` 是实义字符。
  *
  * ## 解析出来的东西一定要过一遍 [VoxelShape.problems]
  *
@@ -77,67 +77,33 @@ object ShapeGrid {
     }
 
     fun parse(text: String): Parsed {
+        val layers = when (val parsed = LayerGrid.parse(text, headName = "z", unit = "厘米")) {
+            is LayerGrid.Parsed.Bad -> return Parsed.Bad(parsed.problems)
+            is LayerGrid.Parsed.Ok -> parsed.layers
+        }
+
         val solid = mutableListOf<Voxel>()
         val pointMass = mutableListOf<PointCluster>()
         val problems = mutableListOf<String>()
-        val seenLayers = mutableSetOf<Int>()
 
-        var z: Int? = null
-        /** 这一层各行按 y 排：第 r 行是 y = r × 5。 */
-        var rows = mutableListOf<String>()
-        var layerLine = 0
-
-        fun flush() {
-            val layerZ = z ?: return
-            val width = rows.firstOrNull()?.length ?: 0
-            rows.forEachIndexed { r, row ->
+        layers.forEach { layer ->
+            layer.rows.forEachIndexed { r, row ->
                 val y = r * VOXEL_CM
-                for (c in row.indices) {
+                for (c in row.text.indices) {
                     val x = c * VOXEL_CM
-                    val v = Voxel(x, y, layerZ)
-                    when (val ch = row[c]) {
+                    val v = Voxel(x, y, layer.head)
+                    when (val ch = row.text[c]) {
                         SOLID -> solid += v
                         EMPTY -> Unit
                         TEN_POINTS -> pointMass += PointCluster(v, MAX_POINTS_PER_VOXEL)
                         in '1'..'9' -> pointMass += PointCluster(v, ch - '0')
-                        else -> problems += "第 ${layerLine + r} 行第 ${c + 1} 个字符是「$ch」；" +
-                            "只认 $SOLID（实心）、$EMPTY（空）、1–9（几个质点）、$TEN_POINTS（$MAX_POINTS_PER_VOXEL 个质点）"
+                        else -> problems += "第 ${row.line} 行第 ${c + 1} 个字符是「$ch」；" +
+                            "只认 $SOLID（实心）、$EMPTY（空）、1–9（几个质点）、" +
+                            "$TEN_POINTS（$MAX_POINTS_PER_VOXEL 个质点）"
                     }
                 }
-                if (row.length != width) {
-                    problems += "第 ${layerLine + r} 行有 ${row.length} 个字符，这一层的第一行有 $width 个；同一层每行要一样长"
-                }
             }
-            rows = mutableListOf<String>()
         }
-
-        text.lineSequence().forEachIndexed { index, raw ->
-            val line = raw.trimEnd()
-            val number = index + 1
-            if (line.isBlank()) return@forEachIndexed
-
-            val header = Regex("""^\s*z\s*=\s*(-?\d+)\s*$""").find(line)
-            if (header != null) {
-                flush()
-                val value = header.groupValues[1].toInt()
-                if (!seenLayers.add(value)) {
-                    problems += "第 $number 行：z=$value 这一层出现了两次"
-                }
-                z = value
-                layerLine = number
-                return@forEachIndexed
-            }
-
-            if (z == null) {
-                problems += "第 $number 行是格子，但它前面没有 z=<厘米> 起一层"
-                return@forEachIndexed
-            }
-            if (rows.isEmpty()) layerLine = number
-            // **行尾空白忽略，行尾的点不忽略。** `.` 是实义字符——裁掉它会让"少画了几个字符"
-            // 这种最常见的画错变得看不出来，而同一层每行等长那条校验正是为它留的。
-            rows += line
-        }
-        flush()
 
         if (problems.isNotEmpty()) return Parsed.Bad(problems)
 

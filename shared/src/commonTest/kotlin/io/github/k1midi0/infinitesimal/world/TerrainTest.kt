@@ -173,10 +173,29 @@ class TerrainTest {
     }
 
     @Test
-    fun anOversizedBoxIsReportedBeforeItIsApplied() {
+    fun aChunkSizedBoxIsNoLongerTooBig() {
+        // 一块 chunk 是 16×16 列 × 256 层 = 65536 格，而旧上限是 4096 格——
+        // 「生成器一次把一块铺满」这个最基本的需求，当时是超限十六倍的（§14.30）。
+        val oneChunk = box(0, 0, 0, 15, 15, 255)
+        assertEquals(65_536, oneChunk.cellCount)
+        assertEquals(256, oneChunk.columns)
+        assertEquals(emptyList<String>(), oneChunk.problems())
+    }
+
+    @Test
+    fun theRealLimitIsColumnsBecauseRunsCanNeverBeFewerThanColumns() {
+        val wide = box(0, 0, 0, 200, 0, 0)
+        assertEquals(201, wide.columns)
+        val problems = wide.problems(TerrainLimits(maxRuns = 200))
+        assertEquals(1, problems.size)
+        assertTrue(problems.single().contains("横跨 201 列"))
+    }
+
+    @Test
+    fun theCellCountIsOnlyTheLastNet() {
         val problems = box(0, 0, 256, 100, 100, 256).problems(TerrainLimits(maxCells = 100))
         assertEquals(1, problems.size)
-        assertTrue(problems.single().contains("超过上限 100"))
+        assertTrue(problems.single().contains("超过安全上限 100"))
     }
 
     // ── chunk ─────────────────────────────────────────────────────────────────────
