@@ -46,6 +46,17 @@ enum class SystemId(val userId: String) {
      * 张桌子会被造很多次（A.9 的"预设是工厂"）。混进别的池，这段前缀就要和别人的抢缓存单元。
      */
     MODELER("inf-modeler"),
+
+    /**
+     * 生成器：把一片还没有地形的 chunk 长出来（附录 A.16、§14.30）。
+     *
+     * **独占一池，不与 [MODELER] 或 [DIRECTOR] 合。** 它的 system 是这套东西里最长的一段静态前缀
+     * ——生成规矩、材质表、预设清单——而每次调用只有末尾那一小段「哪儿还缺、导演要什么」在变。
+     *
+     * 与 [DIRECTOR] 分开还有一层：生成是几十秒的调用，导演是几秒的。两者的用量混在一个池里，
+     * 「这一片地长出来花了多少」就永远算不出来。
+     */
+    GENERATOR("inf-generator"),
     ;
 
     companion object {

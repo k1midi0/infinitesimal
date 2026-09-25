@@ -19,6 +19,7 @@ import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.TerrainSnapshot
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
+import io.github.k1midi0.infinitesimal.world.ZoningSnapshot
 import io.github.k1midi0.infinitesimal.world.WorldTime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -70,8 +71,12 @@ class GameSession(
     rules: Rulebook = StartingWorld.rules(),
     /** 地形（附录 A.15）。与 [seed] 一样是**内容**，默认就是开局那一圈地。 */
     ground: TerrainSnapshot = StartingWorld.ground,
+    /** 区划（附录 A.16）。生成器读它，决定一片地方该长成什么样；**它是意图，不是事实**。 */
+    zoning: ZoningSnapshot = StartingWorld.zoning(),
 ) {
-    val world: World = World.from(WorldSnapshot(seed, rules, terrain = ground))
+    val world: World = World.from(
+        WorldSnapshot(seed, rules, terrain = ground, zoning = zoning),
+    )
     private val renderer = Renderer(config, world)
     private val judge = Judge(config)
 

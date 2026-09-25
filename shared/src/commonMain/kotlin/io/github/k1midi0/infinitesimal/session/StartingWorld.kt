@@ -1,16 +1,25 @@
 package io.github.k1midi0.infinitesimal.session
 
+import io.github.k1midi0.infinitesimal.world.CHUNK_CELLS
 import io.github.k1midi0.infinitesimal.world.CharacterCard
 import io.github.k1midi0.infinitesimal.world.Entity
-import io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CELLS
+import io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CHUNKS
+import io.github.k1midi0.infinitesimal.world.Landform
 import io.github.k1midi0.infinitesimal.world.RuleEntry
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.Shapes
+import io.github.k1midi0.infinitesimal.world.TerrainCell
 import io.github.k1midi0.infinitesimal.world.TerrainColumn
 import io.github.k1midi0.infinitesimal.world.TerrainRun
 import io.github.k1midi0.infinitesimal.world.TerrainSnapshot
 import io.github.k1midi0.infinitesimal.world.WorldDepth
+import io.github.k1midi0.infinitesimal.world.ZoneBlock
+import io.github.k1midi0.infinitesimal.world.ZoneCell
+import io.github.k1midi0.infinitesimal.world.ZoneTile
+import io.github.k1midi0.infinitesimal.world.ZoningSnapshot
+import io.github.k1midi0.infinitesimal.world.chunkOf
 import io.github.k1midi0.infinitesimal.world.terrainCellOf
+import io.github.k1midi0.infinitesimal.world.zoneCellOf
 
 /**
  * 开局的那个世界。
@@ -55,46 +64,89 @@ object StartingWorld {
      * ## 范围就是 A.16 那个硬性圈
      *
      * 以玩家为心、半径 [HARD_RADIUS_CELLS]（64 格 = 32 米），**画成圆**；圈里每一列从第 0 格铺到
-     * 地面。那条"脚下不会踩空"的硬判据说的就是它。
+     * 地面。**这正是硬性圈那一整片**，所以它底下那些 chunk 要一并标成「已经有地形了」。
      *
      * ## 它是内容，不是配置
      *
-     * A.16 写着**没有代码默认剖面**——"这里该长什么样"是内容问题，该由生成器读着区划产出。这一份
-     * 手写的剖面是给**开局那一圈**用的，因为那时还没有生成器可调；生成器接上之后它该被换掉。
+     * A.16 写着**没有代码默认剖面**——「这里该长什么样」是内容问题，该由生成器读着区划产出。这一份
+     * 手写的剖面是给**开局那一圈**用的，它扮演的是「冒险准备阶段用户和导演讨论时定下的那片地」
+     * （§14.30）。等准备阶段真做出来，它就该被换掉。
      *
-     * ## 还没有标"已生成"
+     * ## 「已经有地形了」是标在哪儿的
      *
-     * [TerrainSnapshot.generated] 是空的。那是 A.16 那条"探索过 = 既定事实"的落点，而它要等生成器
-     * 才有东西读它——现在世界小得一眼看完，标了也没有人会去查。
+     * [TerrainSnapshot.generated] 里。**它不区分来源**（§14.30）：冒险准备定下的、外部导入的、
+     * 生成器长出来的，三者等价——都是「这块地有地形了」。少一个字段，是因为多出来的那个字段没有
+     * 任何一处代码会去分支。
      */
     val ground: TerrainSnapshot by lazy { layGround(WorldDepth()) }
 
     private fun layGround(depth: WorldDepth): TerrainSnapshot {
         // 圆心跟着玩家走，不另写一份坐标——两份写法迟早会漂。
         val seat = tavern().first { it.id == PLAYER }
-        val cx = terrainCellOf(seat.x)
-        val cy = terrainCellOf(seat.y)
+        val home = chunkOf(TerrainCell(terrainCellOf(seat.x), terrainCellOf(seat.y), depth.bottom))
         // 土与石的分界放在七成深处：上面那七十七层（3.85 米）是土，下面是石。
         val stoneTop = depth.bottom + (depth.surface - depth.bottom) * 7 / 10
+        val profile = listOf(
+            TerrainRun("bedrock", depth.bottom, depth.bottom),
+            TerrainRun("stone", depth.bottom + 1, stoneTop),
+            TerrainRun("soil", stoneTop + 1, depth.surface),
+        )
+
+        // **圈是拿整块挑出来的，块里的格一格不少。**早先那版按格画圆，于是硬性圈边上留下半块的
+        // chunk——那些块会被标成「已经有地形」，而界外那几列空着、谁也不会再去补。那正是
+        // 「地形以 chunk 为最小生成单位、不会有厘米级缺口」的反例（§14.30）。
         val columns = buildList {
-            for (dx in -HARD_RADIUS_CELLS..HARD_RADIUS_CELLS) {
-                for (dy in -HARD_RADIUS_CELLS..HARD_RADIUS_CELLS) {
-                    if (dx * dx + dy * dy > HARD_RADIUS_CELLS * HARD_RADIUS_CELLS) continue
-                    add(
-                        TerrainColumn(
-                            x = cx + dx,
-                            y = cy + dy,
-                            runs = listOf(
-                                TerrainRun("bedrock", depth.bottom, depth.bottom),
-                                TerrainRun("stone", depth.bottom + 1, stoneTop),
-                                TerrainRun("soil", stoneTop + 1, depth.surface),
-                            ),
-                        ),
-                    )
+            for (dcx in -HARD_RADIUS_CHUNKS..HARD_RADIUS_CHUNKS) {
+                for (dcy in -HARD_RADIUS_CHUNKS..HARD_RADIUS_CHUNKS) {
+                    if (dcx * dcx + dcy * dcy > HARD_RADIUS_CHUNKS * HARD_RADIUS_CHUNKS) continue
+                    val x0 = (home.x + dcx) * CHUNK_CELLS
+                    val y0 = (home.y + dcy) * CHUNK_CELLS
+                    for (dx in 0 until CHUNK_CELLS) {
+                        for (dy in 0 until CHUNK_CELLS) {
+                            add(TerrainColumn(x = x0 + dx, y = y0 + dy, runs = profile))
+                        }
+                    }
                 }
             }
         }
-        return TerrainSnapshot(columns = columns, depth = depth)
+
+        // 圈里那些 chunk 就是「已经有地形了」的那些。**从列上算出来，不另写一遍半径**：两份算法
+        // 迟早会漂，而漂了之后的表现是"生成器把脚下重铺一遍"。
+        val covered = columns.map { chunkOf(TerrainCell(it.x, it.y, depth.bottom)) }.distinct()
+        return TerrainSnapshot(columns = columns, generated = covered, depth = depth)
+    }
+
+    /**
+     * 开局那张**区划**（附录 A.16）。
+     *
+     * 区划是**导演涂在地图上的意图**，不是事实——「区划是意图，地形是事实」，两者允许不一致。它的
+     * 用处只有一个：生成器读它，决定一片地方该长成什么样。
+     *
+     * 这一份同样是内容，是「游客先涂鸦」那一版的替身：等导演真能自己涂了，这一份就该被它涂出来的
+     * 那张盖掉。
+     */
+    fun zoning(): ZoningSnapshot {
+        val seat = tavern().first { it.id == PLAYER }
+        val home = ZoneCell(zoneCellOf(seat.x), zoneCellOf(seat.y))
+
+        fun at(dx: Int, dy: Int, landform: Landform, note: String) = ZoneBlock(
+            ZoneCell(home.x + dx, home.y + dy),
+            ZoneTile(landform, note),
+        )
+
+        return ZoningSnapshot(
+            listOf(
+                at(0, 0, Landform.TOWN, "灰渡镇中心，酒馆这一片"),
+                at(1, 0, Landform.ROAD, "往东出镇的石板路"),
+                at(2, 0, Landform.ROAD, "出镇之后那条官道"),
+                at(3, 0, Landform.FOREST, "官道北边那片林子"),
+                at(1, 1, Landform.FOREST, "镇东那片老橡树林"),
+                at(0, 1, Landform.TOWN, "镇南的住家"),
+                at(-1, 0, Landform.WILD, "镇西的荒地"),
+                at(-1, 1, Landform.WILD, "镇西南的坡地"),
+                at(0, -1, Landform.WILD, "镇北的野地"),
+            ),
+        )
     }
 
     /**

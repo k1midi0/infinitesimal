@@ -86,3 +86,14 @@ internal fun multiTurn(vararg calls: Triple<String, String, String>): String {
         """{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}""",
     )
 }
+
+/**
+ * 一轮**没有任何工具调用**：模型说完了。
+ *
+ * 对判定那是「这一轮没有查询手」，对导演与生成器那是「这一轮没有手」——两边都由这一帧表示收工，
+ * 而两种情况的意思完全不同，所以两边都得能造出它来。
+ */
+internal fun stop(content: String = ""): String = sse(
+    """{"choices":[{"delta":{"content":"${esc(content)}"}}]}""",
+    """{"choices":[{"delta":{},"finish_reason":"stop"}]}""",
+)

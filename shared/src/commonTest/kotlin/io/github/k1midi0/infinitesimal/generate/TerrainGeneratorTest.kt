@@ -1,0 +1,190 @@
+package io.github.k1midi0.infinitesimal.generate
+
+import io.github.k1midi0.infinitesimal.config.EndpointConfig
+import io.github.k1midi0.infinitesimal.config.ThinkingMode
+import io.github.k1midi0.infinitesimal.judge.Scripted
+import io.github.k1midi0.infinitesimal.judge.stop
+import io.github.k1midi0.infinitesimal.judge.turn
+import io.github.k1midi0.infinitesimal.llm.LlmClient
+import io.github.k1midi0.infinitesimal.session.StartingWorld
+import io.github.k1midi0.infinitesimal.world.ChunkKey
+import io.github.k1midi0.infinitesimal.world.TerrainBox
+import io.github.k1midi0.infinitesimal.world.TerrainCell
+import io.github.k1midi0.infinitesimal.world.World
+import io.github.k1midi0.infinitesimal.world.WorldSnapshot
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+/**
+ * 生成器（A.16、§14.30）。
+ *
+ * 假端点验的是**协议与状态**：手调下去世界有没有变、地块有没有被标上、解不开的参数退回到哪里。
+ * 「模型长得好不好看」不在这里——那是探针的事。
+ */
+class TerrainGeneratorTest {
+
+    /** 硬性圈东边紧挨着的那一块：开局那片地覆盖到 chunk 5，所以这一块是空的。 */
+    private val east = ChunkKey(6, 0)
+
+    private fun world(): World = World.from(
+        WorldSnapshot(
+            StartingWorld.tavern(),
+            StartingWorld.rules(),
+            terrain = StartingWorld.ground,
+            zoning = StartingWorld.zoning(),
+        ),
+    )
+
+    private fun config() = EndpointConfig(
+        baseUrl = "https://api.deepseek.com",
+        apiKey = "test",
+        model = "deepseek-flash",
+        thinking = ThinkingMode.Never,
+    )
+
+    private fun generator(script: Scripted) = TerrainGenerator(LlmClient(config(), script.client))
+
+    private fun request() = TerrainGenerator.Request("镇东那片林子往外延一段，地面是草地。", listOf(east))
+
+    private fun fill(material: String) =
+        """{"x1":96,"y1":0,"z1":0,"x2":111,"y2":15,"z2":256,"material":"$material"}"""
+
+    private fun grown(result: TerrainGenerator.Growth): TerrainGenerator.Growth.Grown {
+        assertTrue(result is TerrainGenerator.Growth.Grown, result.toString())
+        return result as TerrainGenerator.Growth.Grown
+    }
+
+    private fun failed(result: TerrainGenerator.Growth): TerrainGenerator.Growth.FailedProtocol {
+        assertTrue(result is TerrainGenerator.Growth.FailedProtocol, result.toString())
+        return result as TerrainGenerator.Growth.FailedProtocol
+    }
+
+    // ── 长出来 ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun itFillsTheChunkAndThenMarksThatChunkAsHavingTerrain() = runTest {
+        val world = world()
+        assertFalse(world.terrain.isGenerated(east), "开局那片地不该盖到 chunk (6,0)")
+
+        val script = Scripted(
+            listOf(
+                turn("c1", GeneratorTools.FILL_TERRAIN, fill("grass")),
+                stop("这一片长好了。"),
+            ),
+        )
+
+        val result = grown(generator(script).grow(world, request()))
+
+        assertEquals(1, result.attempts, "铺一次、说一声收工 = 一次尝试")
+        assertEquals("grass", world.terrain.materialIdAt(TerrainCell(100, 5, 200)))
+        assertTrue(world.terrain.isGenerated(east), "长完之后这块地就该有地形了")
+        assertEquals(listOf(east), result.chunks)
+    }
+
+    @Test
+    fun aRoundWithNoHandsIsNotAGeneration() = runTest {
+        val world = world()
+        val script = Scripted(listOf(stop("我什么也没干。"), stop("我还是什么也没干。")))
+
+        val result = failed(generator(script).grow(world, request()))
+
+        assertEquals(2, result.attempts)
+        assertTrue(result.problems.single().contains("一件都没长出来"), result.problems.toString())
+        // 一件都没长 = 世界一动没动，而「这块地已经有地形了」这句也不能落下。
+        assertFalse(world.terrain.isGenerated(east))
+    }
+
+    // ── 报错回到模型手里 ───────────────────────────────────────────────────────────
+
+    @Test
+    fun anUnknownMaterialIsToldBackInsteadOfBeingThrown() = runTest {
+        val world = world()
+        val script = Scripted(
+            listOf(
+                turn("c1", GeneratorTools.FILL_TERRAIN, fill("ston")),
+                turn("c2", GeneratorTools.FILL_TERRAIN, fill("stone")),
+                stop(),
+            ),
+        )
+
+        grown(generator(script).grow(world, request()))
+
+        // 第二次请求的 messages 里带着第一次的退回理由——**这就是「回到模型手里」**。
+        assertTrue(script.bodies[1].contains("材质表里没有"), script.bodies[1].takeLast(600))
+        assertEquals("stone", world.terrain.materialIdAt(TerrainCell(100, 5, 200)))
+    }
+
+    @Test
+    fun aBoxBeyondTheWorldIsToldBackToo() = runTest {
+        val world = world()
+        val script = Scripted(
+            listOf(
+                turn(
+                    "c1",
+                    GeneratorTools.FILL_TERRAIN,
+                    """{"x1":96,"y1":0,"z1":-900,"x2":111,"y2":15,"z2":-900,"material":"grass"}""",
+                ),
+                turn("c2", GeneratorTools.FILL_TERRAIN, fill("grass")),
+                stop(),
+            ),
+        )
+
+        grown(generator(script).grow(world, request()))
+
+        assertTrue(script.bodies[1].contains("世界范围之外"), script.bodies[1].takeLast(600))
+    }
+
+    /** `look_terrain` **不落地**：看完这一轮还要接着往下走（与导演那条「一件一件排下去」同形）。 */
+    @Test
+    fun lookingDoesNotEndTheRound() = runTest {
+        val world = world()
+        val script = Scripted(
+            listOf(
+                turn("c1", GeneratorTools.LOOK_TERRAIN, """{"x1":96,"y1":0,"z1":250,"x2":99,"y2":3,"z2":256}"""),
+                turn("c2", GeneratorTools.FILL_TERRAIN, fill("grass")),
+                stop(),
+            ),
+        )
+        val generator = generator(script)
+
+        val result = grown(generator.grow(world, request()))
+
+        assertEquals(3, generator.requestCount, "看一眼、铺一次、收工 = 三次请求")
+        assertEquals(1, result.consequences.size, "看一眼不该变成一条后果")
+    }
+
+    // ── 提示词 ─────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun thePromptCarriesTheRequirementTheChunksTheZoningAndTheSeam() {
+        val world = world()
+        val text = generator(Scripted(listOf(stop()))).preview(world, request())
+
+        assertTrue(text.contains("镇东那片林子往外延一段"), "导演的要求要原样进去")
+        assertTrue(text.contains("chunk (6,0)"), "要长哪几块要写清楚")
+        assertTrue(text.contains("地形格 x 96..111"), text.take(4000))
+        assertTrue(text.contains("的西边接着"), text.substringAfter("接壤处").take(600))
+        assertTrue(text.contains("改地皮那五只用地形格，放东西用厘米"), "单位那句话要在末尾再说一遍")
+    }
+
+    /**
+     * 开局那片地是**拿整块挑出来的圆**（[io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CHUNKS]），
+     * 所以紧挨着它的那两块每一面都真的挨着地形。
+     *
+     * 离得远的地方四面都是空的，那时不该报一句「地面就在第几格」——那是一句假话。
+     */
+    @Test
+    fun aBorderWithNoTerrainAtAllIsNotASeam() {
+        val world = world()
+        val far = TerrainGenerator.Request("很远的地方。", listOf(ChunkKey(20, 20)))
+        val text = generator(Scripted(listOf(stop()))).preview(world, far)
+
+        assertTrue(
+            text.contains("接壤处：这一片四面都不挨着已经长好的地"),
+            text.substringAfter("接壤处").take(200),
+        )
+    }
+}
