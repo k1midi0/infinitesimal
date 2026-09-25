@@ -31,6 +31,9 @@ kotlin {
             implementation(libs.compose.material3)
             implementation(libs.compose.ui)
             implementation(libs.compose.uiToolingPreview)
+            // 出厂预设包（`composeResources/files/builtin-presets.json`）。它是**数据不是代码**：一批
+            // 形状有几千行网格文本，放进源码会把源码淹掉，而它又是可以重扫的东西（spike/PresetSweep）。
+            implementation(libs.compose.components.resources)
 
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
@@ -69,5 +72,11 @@ tasks.withType<Test>().configureEach {
     systemProperty(
         "infinitesimal.effort",
         providers.gradleProperty("infinitesimalEffort").getOrElse(""),
+    )
+    // 出厂预设包扫到哪个文件去。默认是源码树里那个位置（见 spike/PresetSweep），这个旋钮只在
+    // "想先扫到别处看看"时才用得上。
+    systemProperty(
+        "infinitesimal.presetFile",
+        providers.gradleProperty("infinitesimalPresetFile").getOrElse(""),
     )
 }

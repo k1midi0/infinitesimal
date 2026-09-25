@@ -180,13 +180,18 @@ class Judge(
         config: EndpointConfig,
         maxAttempts: Int = 2,
         effort: ReasoningEffort = ReasoningEffort.HIGH,
+        /**
+         * 预设库（A.14）。**它由调用方拿进来，不在这里新建**：建模的产物是一条预设，而那条预设
+         * 该进的是**会话那一份**库——判定、生成器、导演看的是同一个世界，也就该看同一批形状。
+         */
+        presets: PresetLibrary = PresetLibrary(),
     ) : this(
         LlmClient(config.copy(userId = SystemId.JUDGE)),
         maxAttempts,
         effort,
         // 建模独占一池（SystemId.MODELER 的注释）：它的前缀是几百 token 的网格语法、每次都逐字相同，
         // 是这套东西里最该命中缓存的一段。
-        ShapeModeler(LlmClient(config.copy(userId = SystemId.MODELER))),
+        ShapeModeler(LlmClient(config.copy(userId = SystemId.MODELER)), presets = presets),
     )
 
     /** 两步加起来的模型调用次数。 */

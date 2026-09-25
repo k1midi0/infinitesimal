@@ -66,6 +66,14 @@ class TerrainGenerator(
     private val maxAttempts: Int = 2,
     /** 思考档的档位。**留着这个参数只为能再量，不是为了降档**（§12 第 17 项同一条理由）。 */
     val effort: ReasoningEffort = ReasoningEffort.HIGH,
+    /**
+     * 预设库（A.14）。**由调用方拿进来**：出厂包挂在会话上，而生成器与判定看的是同一个世界，
+     * 也就该看同一批形状。
+     *
+     * 名字刻意不叫 `presets`——类里已经有一个同名的只读属性（它转发给 [modeler]），同名会让那个
+     * 属性初始化时读到自己。
+     */
+    presetLibrary: PresetLibrary = PresetLibrary(),
 ) {
 
     /**
@@ -75,14 +83,16 @@ class TerrainGenerator(
         config: EndpointConfig,
         maxAttempts: Int = 2,
         effort: ReasoningEffort = ReasoningEffort.HIGH,
-    ) : this(LlmClient(config.copy(userId = SystemId.GENERATOR)), maxAttempts, effort)
+        presetLibrary: PresetLibrary = PresetLibrary(),
+    ) : this(LlmClient(config.copy(userId = SystemId.GENERATOR)), maxAttempts, effort, presetLibrary)
 
     /**
-     * 造形状的那一层。**它有自己的一份预设库**，与判定那份不共享——这是现阶段的实情，不是设计
-     * （等存档接进来时，预设库该挂在会话上，两边看同一份）。
+     * 造形状的那一层。它拿的是**调用方给的那份库**——建模的产物是一条预设，而那条预设该进的是会话
+     * 那一份（A.14）。
      */
-    private val modeler: ShapeModeler = ShapeModeler(client)
+    private val modeler: ShapeModeler = ShapeModeler(client, presets = presetLibrary)
 
+    /** 库里现在有什么。判定、生成器、导演共用同一份，所以它是**活的**。 */
     val presets: PresetLibrary get() = modeler.presets
 
     var requestCount = 0

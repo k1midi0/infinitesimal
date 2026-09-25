@@ -73,12 +73,21 @@ class GameSession(
     ground: TerrainSnapshot = StartingWorld.ground,
     /** 区划（附录 A.16）。生成器读它，决定一片地方该长成什么样；**它是意图，不是事实**。 */
     zoning: ZoningSnapshot = StartingWorld.zoning(),
+    /**
+     * 预设库（附录 A.14）。**它挂在会话上**，因为它是活的：一局里造出来的东西会进生成那个包，
+     * 而判定、生成器、导演该看**同一份**——三处各拿一份的话，"刚才造过的那张桌子"对另一处就不存在，
+     * 而症状是同一件东西被反复建模。
+     *
+     * 默认是一个**不含出厂包的**空库：那是给测试与探针用的兜底。真实入口（[desktopApp] 的 `Main`）
+     * 在读 [io.github.k1midi0.infinitesimal.world.BuiltinPresets] 之后把它传进来。
+     */
+    presets: PresetLibrary = PresetLibrary(),
 ) {
     val world: World = World.from(
         WorldSnapshot(seed, rules, terrain = ground, zoning = zoning),
     )
     private val renderer = Renderer(config, world)
-    private val judge = Judge(config)
+    private val judge = Judge(config, presets = presets)
 
     /**
      * 导演（§8）。**它自己把请求落到 [SystemId.DIRECTOR] 那个缓存池**，所以传进去的还是原配置。

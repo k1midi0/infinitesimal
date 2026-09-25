@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -30,6 +31,8 @@ import io.github.k1midi0.infinitesimal.config.EndpointConfig
 import io.github.k1midi0.infinitesimal.config.ThinkingMode
 import io.github.k1midi0.infinitesimal.session.GameSession
 import io.github.k1midi0.infinitesimal.ui.GameScreen
+import io.github.k1midi0.infinitesimal.world.BuiltinPresets
+import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import java.io.File
 
 /**
@@ -52,9 +55,56 @@ fun main() = application {
         if (key.isBlank()) {
             KeyScreen(onReady = { apiKey = it })
         } else {
-            // **按密钥 remember**：换了密钥就是一个新的世界，不能把上一个会话接着用。
-            val session = remember(key) { GameSession(configOf(key)) }
-            GameScreen(session)
+            // 出厂预设包是**资源文件**，读它是挂起的，所以进游戏之前有一个很短的状态（§12 第 36 项）。
+            // 它不该静默退回空表：出厂包空着与读不出来是两件完全不同的事（BuiltinPresets 的注释）。
+            val state by produceState<PresetState>(PresetState.Loading, key) {
+                value = runCatching { PresetLibrary(BuiltinPresets.load()) }
+                    .fold(
+                        onSuccess = { PresetState.Ready(it) },
+                        onFailure = { PresetState.Failed(it.message ?: it.toString()) },
+                    )
+            }
+            when (val current = state) {
+                is PresetState.Loading -> WaitingScreen("正在读出厂预设包……")
+                is PresetState.Failed -> WaitingScreen(
+                    "出厂预设包读不出来：${current.why}\n\n" +
+                        "它在 shared/src/commonMain/composeResources/files/builtin-presets.json，" +
+                        "跑一次 spike/PresetSweep 就能重新生成。",
+                )
+
+                // **按密钥 remember**：换了密钥就是一个新的世界，不能把上一个会话接着用。
+                is PresetState.Ready -> {
+                    val session = remember(key, current.library) {
+                        GameSession(configOf(key), presets = current.library)
+                    }
+                    GameScreen(session)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 进游戏之前那个很短的状态。
+ *
+ * 它有两种用法，而两句话都必须是实话：**还在读**与**读坏了**。合成一个"请稍候"会让一次打包错误看起来
+ * 像一次慢启动，而这两件事要做的下一步完全不同。
+ */
+private sealed interface PresetState {
+    data object Loading : PresetState
+    data class Ready(val library: PresetLibrary) : PresetState
+    data class Failed(val why: String) : PresetState
+}
+
+@Composable
+private fun WaitingScreen(message: String) {
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(message, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
