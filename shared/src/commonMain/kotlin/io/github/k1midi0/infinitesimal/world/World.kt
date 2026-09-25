@@ -6,9 +6,12 @@ package io.github.k1midi0.infinitesimal.world
  * 它**只做状态**——不碰模型、不碰文件、不碰界面。渲染器读它，判定与导演写它，而所有写入都从这里
  * 经过，所以"世界里到底有什么"永远只有一个答案。
  *
- * 现在有五种东西：[Entity]、[clock]（世界时间）、[timeline]（未来的事，§8.1）、[terrain]（地形层）
- * 与 [zoning]（区划层），外加一张只读的 [materials]（材质表）。体素形状表还不是独立的一种——它挂在
- * 实体自己的 [Entity.shape] 上。
+ * 现在有七种东西：[Entity]（事实）、[log]（记录）、[clock]（世界时间）、[timeline]（未来的事，
+ * §8.1）、[terrain]（地形层）与 [zoning]（区划层），外加一张只读的 [materials]（材质表）。体素形状表
+ * 还不是独立的一种——它挂在实体自己的 [Entity.shape] 上。
+ *
+ * **[log] 与前六种不是一类。** §2 那三层里，前六种是「事实」（世界现在什么样，可以被改写），只有它是
+ * 「记录」（发生过什么，永不改写）。把它们混在一处思考，就会有人顺手在 [remove] 里也删掉记录。
  */
 class World private constructor(
     private var entities: MutableMap<String, Entity>,
@@ -46,6 +49,14 @@ class World private constructor(
      * 区划层（附录 A.16）：导演的涂鸦，但它是**世界事实**，不是另存的一份笔记（§3.2.4）。
      */
     val zoning: Zoning = Zoning.empty(),
+    /**
+     * **记录层**（§1.5、§6.1、§12 第 20 项）：发生过什么。
+     *
+     * 它与 [entities] 是两份不同的东西，这是刻意的：事实是"世界现在什么样"（可以被改写），记录是
+     * "发生过什么"（**永不改写**）。所以 [remove] 一个实体不会动这里，而"这个角色收到过哪几条"也
+     * 不挂在实体上——角色死了，它收到过什么仍然是记录（§3.2.2）。
+     */
+    val log: EventLog = EventLog.empty(),
 ) {
 
     fun all(): List<Entity> = entities.values.toList()
@@ -97,6 +108,7 @@ class World private constructor(
         materials = materials,
         terrain = terrain.snapshot(),
         zoning = zoning.snapshot(),
+        log = log.snapshot(),
     )
 
     companion object {
@@ -119,6 +131,7 @@ class World private constructor(
             snapshot.materials,
             Terrain.from(snapshot.terrain),
             Zoning.from(snapshot.zoning),
+            EventLog.from(snapshot.log),
         )
     }
 }

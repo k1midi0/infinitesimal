@@ -66,6 +66,21 @@ data class Entity(
      * 这里的是**判定只读的依据**（木制品怕火）。所以它不随动作变化，删掉它等于删掉一样东西的性质。
      */
     val rulebook: Rulebook = Rulebook(),
+    /**
+     * **状态循环**（§3.2.5）：没人理它的时候，它此刻在干什么。**只有角色会写它。**
+     *
+     * 它是[派生量][Cycle.stateAt]的来源，不是存下来的"当前状态"——所以它不因为时间流逝而需要更新，
+     * 也不进任何提示词之外的写入路径。位置**不在**这里（§3.2.5），待办也不在（那是 [todos]）。
+     */
+    val cycle: Cycle = Cycle(),
+    /**
+     * **待办**（§3.2.5）：它打算在某个时刻做什么。与 [cycle] 是两样东西——这一样**要进提示词**，
+     * 因为读它的是模型，不是代码。
+     *
+     * 角色自己也能写（它手上有一只 `plan`），但**到点不等于自动发生**：到点只是出现在它的提示词里，
+     * 那件事照常要过判定。
+     */
+    val todos: List<Todo> = emptyList(),
 ) {
     /** 展示用的整段文字。句子里带着各自的句末标点，直接相连即可。 */
     fun text(): String = sentences.joinToString("")
@@ -115,4 +130,6 @@ data class WorldSnapshot(
     val terrain: TerrainSnapshot = TerrainSnapshot(),
     /** 区划层（附录 A.16）。**留白是合法的**，空快照就是全留白。 */
     val zoning: ZoningSnapshot = ZoningSnapshot(),
+    /** 记录层（§1.5、§6.1）：发生过什么，append-only。 */
+    val log: EventLogSnapshot = EventLogSnapshot(),
 )
