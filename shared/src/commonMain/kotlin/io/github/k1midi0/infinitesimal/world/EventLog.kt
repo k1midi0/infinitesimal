@@ -36,6 +36,10 @@ import kotlinx.serialization.Serializable
  *   ——§6.1 那条「一次提交产生的全部后果不可切开」就落在这个字段上：裁窗口时一条事件要么整个进出，
  *   要么整个不进，不会出现"看到杯子掉在地上却没看到桌子被掀"那种矛盾认知。
  */
+/** 世界坐标上的一点，单位厘米（附录 A.13）。**只在记录层用**——它是"这件事发生在哪"。 */
+@Serializable
+data class Spot(val x: Int, val y: Int, val z: Int)
+
 @Serializable
 data class Event(
     val seq: Long,
@@ -45,12 +49,52 @@ data class Event(
     val actorLabel: String = "",
     val text: String = "",
     val effects: List<String> = emptyList(),
+    /**
+     * **这件事是冲谁说的／做的**（§6.1、§14.39）。
+     *
+     * 事件总线用它决定"推全文还是只推一行标题"：**被指向的给全文，其余只给 `id + 标题`**，模型想看
+     * 哪条就用 `look(id)` 取。这与 §14.37 那条「指向归判定」是同一份数据，只是换了消费者——判定产出它，
+     * 总线读它。
+     *
+     * 空的意思是"没有特定的对象"（一次环顾四周、时间轴到点），那种事对所有人都是标题。
+     */
+    val addressedTo: List<String> = emptyList(),
+    /**
+     * **这件事发生在哪。**
+     *
+     * **记下来，而不是读的时候现查。** 人后来走开了（一次 `Move` 后果就够），而"当时在哪"不该因此变
+     * ——事件总线按范围筛，筛的就是这个数。
+     *
+     * `null` = **没有位置的世界级事件**（时间轴到点那种）。总线把 `null` 当成"哪儿都算"，理由是：
+     * 悄悄丢掉一条真发生过的事，比多推一条要坏得多。这条局限记在 §12 第 20 项。
+     */
+    val spot: Spot? = null,
 ) {
 
+    /** 总线上的引用名。**短、可读、可拼**——模型会把 `e12` 抄进 `look` 的参数里，所以它必须好抄。 */
+    val ref: String get() = "e$seq"
+
     /**
-     * 给提示词看的一行（或者几行）。
+     * **一行标题**（§6.1）：总线只给没被指向的那些看这个。
      *
-     * **id 与名字都给**，理由与 `Npc` 那段【你刚才听见】一样：只印 label 会让模型把说话的人当成自己。
+     * 它必须**短**——总线的作用是让模型知道"有什么可查的"，而不是把它不该看的内容漏出来。所以这里
+     * 截到前 [TITLE_CHARS] 个字，换行压成空格；想看全文就 `look(id)`。
+     *
+     * 截断不是省略号了事：**它是"这里有件事"的信号**，而"是什么事"由模型自己决定要不要花那次调用去查。
+     */
+    fun title(): String {
+        val who = if (actorId == null) "" else "$actorLabel（$actorId）"
+        return when (kind) {
+            EventKind.SAY -> "$who 说：「${clipped(text)}」"
+            EventKind.ACT -> "$who 做了：${clipped(text)}"
+            EventKind.CLOCK -> clipped(text)
+        }.trim()
+    }
+
+    /**
+     * 给提示词看的一行（或者几行）——**全文**。
+     *
+     * **id 与名字都给**，理由与 `Npc` 那段一样：只印 label 会让模型把说话的人当成自己。
      */
     fun line(): String = buildString {
         append(at.toString())
@@ -61,6 +105,15 @@ data class Event(
             EventKind.CLOCK -> append(text)
         }
         effects.forEach { append("\n　　· $it") }
+    }
+
+    private fun clipped(s: String): String {
+        val flat = s.replace('\n', ' ').trim()
+        return if (flat.length <= TITLE_CHARS) flat else flat.take(TITLE_CHARS) + "…"
+    }
+
+    private companion object {
+        const val TITLE_CHARS = 20
     }
 }
 
@@ -115,11 +168,36 @@ class EventLog private constructor(
         text: String,
         effects: List<String> = emptyList(),
         to: Collection<String> = emptyList(),
+        addressedTo: Collection<String> = emptyList(),
+        spot: Spot? = null,
     ): Event {
-        val event = Event(next++, at, kind, actorId, actorLabel, text, effects)
+        val event = Event(next++, at, kind, actorId, actorLabel, text, effects, addressedTo.distinct(), spot)
         events += event
         deliver(to, event.seq)
         return event
+    }
+
+    /**
+     * 流上最新的编号。还没写过任何东西时是 `0`。
+     *
+     * 它是**回合的起点**：一次提交开始之前读一下它，那个数就是"上回合到此为止"（§6.1 的事件总线只装
+     * 上回合，所以它需要一个不随回合漂移的刻度）。
+     */
+    val latestSeq: Long get() = next - 1
+
+    /** 从 [seq] 起（含）的全部事件——**事件总线的原料**。 */
+    fun since(seq: Long): List<Event> = events.filter { it.seq >= seq }
+
+    /**
+     * 按总线上的引用名取一条（模型手上的 `look` 就是这么用的）。
+     *
+     * 宽容一点：`e12` 与 `12` 都认——模型抄一个数字比抄一个前缀容易，而认不出来时它只会白白多花一次
+     * 调用去猜。**认不出来就返回 null**，不抛异常（§1.3：参数校验失败是一次工具失败，不是终止这一轮）。
+     */
+    fun byRef(ref: String): Event? {
+        val digits = ref.trim().removePrefix("e").removePrefix("E")
+        val n = digits.toLongOrNull() ?: return null
+        return byId(n)
     }
 
     /** 单独投递一条已经存在的记录（给"想起来了"这类路径用）。重复投递是幂等的。 */

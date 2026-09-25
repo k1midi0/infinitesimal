@@ -2,10 +2,13 @@ package io.github.k1midi0.infinitesimal.spatial
 
 import io.github.k1midi0.infinitesimal.world.CharacterCard
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.EventKind
+import io.github.k1midi0.infinitesimal.world.Spot
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * 「投递」那一侧的粗筛（§14.37）。
@@ -67,5 +70,82 @@ class WitnessesTest {
     @Test
     fun anActorThatIsNotInTheWorldHasNoAudience() {
         assertEquals(emptyList(), world().witnesses("nobody"))
+    }
+
+    // ── 事件总线（§6.1、§14.39）──────────────────────────────────────────────────────
+
+    @Test
+    fun theBusOnlyShowsThisTurnsEvents() {
+        val world = world()
+        val older = world.log.append(
+            World.StartingClock, EventKind.SAY, "player", "你", "上一回合的话", spot = Spot(1200, 300, 0),
+        )
+        world.log.append(
+            World.StartingClock, EventKind.SAY, "player", "你", "这一回合的话", spot = Spot(1200, 300, 0),
+        )
+
+        // **它是视口，不是日志**：`since` 之前的一律看不见，哪怕它就在旁边。
+        assertEquals(
+            listOf("这一回合的话"),
+            world.bus("dwarf", since = older.seq + 1).map { it.event.text },
+        )
+    }
+
+    @Test
+    fun theBusLeavesOutWhatHappenedOutOfRange() {
+        val world = world()
+        world.log.append(
+            World.StartingClock, EventKind.SAY, "player", "你", "在这边", spot = Spot(1200, 300, 0),
+        )
+        world.log.append(
+            World.StartingClock, EventKind.SAY, "bard", "吟游诗人", "在很远那边", spot = Spot(90_000, 90_000, 0),
+        )
+
+        assertEquals(listOf("在这边"), world.bus("dwarf", since = 0).map { it.event.text })
+    }
+
+    @Test
+    fun beingAddressedGetsYouTheDetailAndMerelyBeingNearGetsYouATitle() {
+        val world = world()
+        world.log.append(
+            World.StartingClock, EventKind.ACT, "player", "你", "我把琴挪了挪",
+            effects = listOf("琴 挪到了 (1100, 400, 0) 厘米"),
+            addressedTo = listOf("dwarf"), spot = Spot(1200, 300, 0),
+        )
+        world.log.append(
+            World.StartingClock, EventKind.ACT, "bard", "吟游诗人", "他清了清嗓子",
+            effects = listOf("某个只有查了才看得到的细节"),
+            spot = Spot(1100, 400, 0),
+        )
+
+        val bus = world.bus("dwarf", since = 0)
+        assertEquals(listOf(true, false), bus.map { it.full })
+        // **分野在后果那几条**：被指向的连细节一起给，其余的只给一行 gist。
+        assertTrue("琴 挪到了" in bus[0].render())
+        assertTrue("某个只有查了才看得到的细节" !in bus[1].render())
+        assertTrue("e" in bus[1].render(), "标题那一行要带编号，否则它没法 look")
+    }
+
+    @Test
+    fun yourOwnDoingIsAlwaysShownInFull() {
+        val world = world()
+        world.log.append(
+            World.StartingClock, EventKind.SAY, "dwarf", "酒馆里的矮人", "我自己说的",
+            spot = Spot(1000, 200, 0),
+        )
+
+        val bus = world.bus("dwarf", since = 0)
+        assertTrue(bus.single().full, "一个人不必去查自己刚说过什么")
+        assertTrue("我自己说的" in bus.single().render())
+    }
+
+    @Test
+    fun anEventWithNoPlaceIsShownToEverybody() {
+        // 时间轴到点那种（没有主体、没有位置）。**宁可多推一条，也不要悄悄丢掉一条真发生过的事**——
+        // 这条局限记在 §12 第 20 项。
+        val world = world()
+        world.log.append(World.StartingClock, EventKind.CLOCK, null, "", "邻居家着了火", spot = null)
+
+        assertEquals(1, world.bus("dwarf", since = 0).size)
     }
 }

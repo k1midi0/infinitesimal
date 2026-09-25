@@ -30,6 +30,7 @@ import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.EventKind
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.Rulebook
+import io.github.k1midi0.infinitesimal.world.Spot
 import io.github.k1midi0.infinitesimal.world.TerrainSnapshot
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
@@ -177,6 +178,22 @@ class GameSession(
      * 串起来永远是对的，只是慢；等 §12 第 40 项那个账单量出来，再决定值不值得拆。
      */
     private val writes = Mutex()
+
+    /**
+     * 这一回合的头一条事件编号（§6.1）。由 [runTurn] 一次提交开始时钉下，随后交给每一个被唤醒的角色当
+     * 事件总线的起点。
+     *
+     * 见 [runTurn] 里那段注释：它是字段而不是参数，是因为**纠正预览会把一回合从中间切开**。
+     */
+    private var turnStartSeq = 0L
+
+    /**
+     * 这一回合的起点事件编号，**只读**（§6.1）。
+     *
+     * 探针与将来的界面要看得见"上回合从哪儿算"——它是事件总线的左边界，而总线上那些 `eN` 编号正是
+     * 角色提示词里印出来的东西。把它暴露出来是为了让那种读数不必去猜。
+     */
+    val turnStart: Long get() = turnStartSeq
 
     /**
      * **区块坐标的显示原点**，整局固定（[ChunkOrigin]）。
@@ -367,6 +384,20 @@ class GameSession(
     suspend fun runTurn(said: String, acted: String, scope: CoroutineScope? = null) {
         val spoken = said.trim()
         val done = acted.trim()
+
+        // **这一回合的起点**（§6.1、§14.39）：事件总线只装上回合，而"上回合从哪儿开始"需要一个不随回合
+        // 漂移的刻度。
+        //
+        // **`+ 1` 不是可有可无的。** 它是这一回合**第一条**事件的编号，而 `latestSeq` 是**上一回合最后一
+        // 条**的编号——少了这个加号，上一回合的收尾（往往正是角色自己刚说的那句）会再出现一次在本回合的
+        // 总线上。探针第一次跑就把这个差一打出来了：第 2 轮的总线里赫然躺着第 1 轮矮人那句话。
+        //
+        // 它读在**任何事件落库之前**，所以这一回合产生的事件编号都 ≥ 它。
+        //
+        // 它是字段而不是参数，理由与别处的状态不同：**纠正预览会把一回合从中间切开**（§4.7）——玩家点
+        // 「应用」时，`runEffects` 与 `afterTurn` 是另一次调用进去的，而那一回合的起点必须是同一个数。
+        // 参数传不过那条断口。
+        turnStartSeq = world.log.latestSeq + 1
 
         // §5.3：气泡只存在当前回合。**在动作之前清**，于是这一轮说的话不会混着上一轮的。
         speech = emptyList()
@@ -888,6 +919,9 @@ class GameSession(
             actorId = PLAYER,
             actorLabel = labelOf(PLAYER),
             text = spoken,
+            // **被指向的给全文，其余给标题**（§6.1）：这一栏就是那个判断的输入。
+            addressedTo = addressed,
+            spot = world.byId(PLAYER)?.let { Spot(it.x, it.y, it.z) },
             to = world.audience(PLAYER, addressed),
         )
     }
@@ -912,6 +946,9 @@ class GameSession(
             actorLabel = labelOf(PLAYER),
             text = intention,
             effects = effects,
+            // 一次动作「指向谁」= **它作用到谁、波及到谁**。被波及的角色拿全文，其余只拿标题。
+            addressedTo = (addressed + affected).distinct(),
+            spot = world.byId(PLAYER)?.let { Spot(it.x, it.y, it.z) },
             to = world.audience(PLAYER, addressed, affected),
         )
     }
@@ -966,7 +1003,16 @@ class GameSession(
             val task = startTask("${labelOf(id)}在回应…")
             val reaction = try {
                 writes.withLock {
-                    npc.wake(world, NpcWaking(id, Heard.Spoken(PLAYER, "你", said), origin))
+                    npc.wake(
+                        world,
+                        NpcWaking(
+                            id,
+                            Heard.Spoken(PLAYER, "你", said),
+                            origin,
+                            // **总线只装上回合**：把这一回合的起点交给它，它才筛得出"刚刚发生了什么"。
+                            sinceSeq = turnStartSeq,
+                        ),
+                    )
                 }
             } catch (t: Throwable) {
                 say(LogLine.Kind.ERROR, "${labelOf(id)}没醒过来：${t.message}")

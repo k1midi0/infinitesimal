@@ -1,23 +1,20 @@
 package io.github.k1midi0.infinitesimal.spike
 
-import io.github.k1midi0.infinitesimal.npc.NPC_MEMORY_WINDOW
 import io.github.k1midi0.infinitesimal.session.GameSession
+import io.github.k1midi0.infinitesimal.npc.Npc
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
 /**
- * **一场真正的多轮对话**（§12 第 3 项、第 43 项、第 44 项）。
+ * **一场真正的多轮对话**（§6.1、§14.39）。
  *
- * `NpcProbe` 里的五场每一场都是**一句话、一个新世界**，所以它验不到"记得住"这件事——而
- * §14.37 刚给角色装上记忆。这一支探针把同一场对话连着跑八轮，一次量三件未完的账：
+ * `NpcProbe` 那五场每一场都是**一句话、一个新世界**，所以它验不到"记得住"这件事。这一支把同一场对话
+ * 连着跑八轮，量的是刀一那三样：
  *
- *  1. **窗口 N**（第 3 项）：它现在被拍成 [NPC_MEMORY_WINDOW] 条。跑过那个数之后会怎样？§6.1 对这条
- *     的原话是「观察 NPC 在多少轮之后开始重复或自相矛盾」——所以第 5 到第 8 轮是真正要看的地方，
- *     那时最早那几轮已经被挤出窗口了。
- *  2. **空动作**（第 43 项）：`Npc.SYSTEM` 第 7 条加了「不要为了做而做，不要为了说而说」。省了几次
- *     调用，一轮里看不出来，八轮里看得出来。
- *  3. **记忆到底有没有用**：第三轮问它"你还记得我刚才说了什么"，而**第六轮问一个它不可能知道的事**
- *     （玩家没说过自己姓什么）——那一问是照妖镜：有记忆不等于该编，**答"不知道"才是对的**。
+ *  1. **历史真的在累积**：每一轮它带在身上的消息条数只增不减。
+ *  2. **真数在涨**：每一轮那一格的 `usage.prompt_tokens` 是**提供方说的**，不是我们估的——它就是压缩
+ *     判据要用的那个锚（§6.1）。这一栏一列出来，"400K 离得有多远"就不是猜的了。
+ *  3. **总线在换**：每一轮它看见的「这一片里刚刚发生的事」应当是**这一回合**的，不是累积的。
  *
  * 跑法（要真 key）：
  *
@@ -27,18 +24,17 @@ import org.junit.Test
  * ```
  *
  * stdout 从 `shared/build/test-results/jvmTest/TEST-*ConversationProbe*.xml` 的 `system-out` 读。
- * **它不是断言型的测试**，是打印读数用的——所以没有 key 时它直接跳过，不报失败。
+ * **它不是断言型的测试**，是打印读数用的——没有 key 时直接跳过，不报失败。
  */
 class ConversationProbe {
 
     /**
-     * 八句，一句一轮。**语序是有意排的**：
+     * 八句，一句一轮。语序是有意排的：
      *
-     *  - 1–2 轮是开场与一个具体的话头（"这酒淡"）——第 3 轮要问的就是它。
-     *  - 4 轮问一件人设卡里的事（它叫杜林），那是**不该靠记忆**的一问，用作对照。
-     *  - 5–6 轮时窗口已经装过 [NPC_MEMORY_WINDOW] 条，前两轮开始被挤出去。
-     *  - 7 轮问一个**玩家从没说过**的事——答"不知道"才对。
-     *  - 8 轮再回到第 2 轮那个话头，看它接不接得上。
+     *  - 第 3 轮问它"我刚才说了什么"——**要它用上累积的历史**，而上一刀它靠的是记录层铺成的窗口。
+     *  - 第 4 轮问它的名字（人设里有，不该靠历史），作对照。
+     *  - 第 6、7 轮问**玩家从没说过**的事——答"不知道"才对，有历史不等于该编。
+     *  - 第 8 轮回到第 2 轮那个话头，看它接不接得上。
      */
     private val script = listOf(
         "你好啊。",
@@ -59,13 +55,16 @@ class ConversationProbe {
         }
 
         runBlocking {
-            val session = GameSession(ProbeSupport.configOf(key))
+            val config = ProbeSupport.configOf(key)
+            // **注入一份自己拿着的 `Npc`**，这样探针读得到它的历史。默认那一份在会话内部，外面看不见。
+            val npc = Npc(config)
+            val session = GameSession(config, npc = npc)
 
             println("═".repeat(100))
-            println("一场八轮的对话｜记忆窗口 $NPC_MEMORY_WINDOW 条")
+            println("一场八轮的对话｜历史累积中")
             println("═".repeat(100))
 
-            val perTurn = mutableListOf<Pair<Int, Int>>()
+            val perTurn = mutableListOf<Triple<Int, Int, Int>>() // 轮次、调用数、prompt token
             script.forEachIndexed { i, said ->
                 val before = session.requestCount
                 val logged = session.log.size
@@ -77,19 +76,25 @@ class ConversationProbe {
                 session.runTurn(said, "")
 
                 val calls = session.requestCount - before
-                perTurn += (i + 1) to calls
+                val prompt = npc.lastUsage?.promptTokens ?: 0
+                perTurn += Triple(i + 1, calls, prompt)
 
                 session.log.drop(logged).forEach { println("  ${it.kind}｜${it.text}") }
 
-                val window = session.world.log.windowOf("dwarf", NPC_MEMORY_WINDOW)
-                println("  ── 它看得见 ${window.size} 条：")
-                window.forEach { println("     · ${it.line().replace("\n", " / ")}") }
-                println("  ── 这一轮花了 $calls 次调用")
+                val conv = npc.conversations.of("dwarf")
+                println("  ── 这一轮花了 $calls 次调用｜它带在身上的消息 ${conv.size} 条")
+                println("  ── 这一次请求的 prompt_tokens（提供方说的）：$prompt")
+                println("  ── 这一回合的总线（${session.world.log.since(session.turnStart).size} 条，起点 e${session.turnStart}）")
+                session.world.log.since(session.turnStart).forEach {
+                    println("     ${it.ref}｜${it.title()}")
+                }
             }
 
             println()
             println("═".repeat(100))
-            println("合计：${perTurn.sumOf { it.second }} 次调用｜${perTurn.joinToString("、") { "第${it.first}轮=${it.second}" }}")
+            println("合计：${perTurn.sumOf { it.second }} 次调用")
+            println("逐轮：调用数 ${perTurn.joinToString("、") { "${it.first}=${it.second}" }}")
+            println("逐轮：prompt_tokens ${perTurn.joinToString("、") { "${it.first}=${it.third}" }}")
             println("世界里还有 ${session.world.all().size} 样东西｜记录层 ${session.world.log.size} 条")
             println("═".repeat(100))
         }

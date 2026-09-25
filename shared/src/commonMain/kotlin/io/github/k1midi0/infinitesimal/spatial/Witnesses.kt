@@ -1,5 +1,6 @@
 package io.github.k1midi0.infinitesimal.spatial
 
+import io.github.k1midi0.infinitesimal.world.Event
 import io.github.k1midi0.infinitesimal.world.World
 
 /**
@@ -49,3 +50,59 @@ internal fun World.audience(
     addressed: Collection<String> = emptyList(),
     affected: Collection<String> = emptyList(),
 ): List<String> = (witnesses(actorId) + addressed + affected + actorId).distinct()
+
+/**
+ * **事件总线**：这个角色此刻该看见的那些事（§6.1、§14.39）。
+ *
+ * ## 它是记录层的一个投影，不是另一份数据
+ *
+ * 记录层（`EventLog`）是 append-only 的、**不注入任何提示词**的；模型看见的是它在**上回合、范围内**
+ * 的一个切片。所以"压掉就真没了"（模型那一侧的遗忘）与"底下还在"（`decompress` 与归因）能同时成立。
+ *
+ * ## 三条判据
+ *
+ *  - **[since] 起**：回合的起点，由会话在一次提交之前读 [io.github.k1midi0.infinitesimal.world.EventLog.latestSeq]
+ *    取到。所以这**不是"最近 N 条"，而是"这一回合的那些"**——换回合就整体换掉，不带历史。
+ *  - **在范围内**：用的是**与判定同一把尺子**（同一个 `RegionBuilder.of`、默认档位）。多算一个半径
+ *    就等于世界里有了两套"附近"，而它们迟早会漂开。
+ *  - **带位置的按位置筛，不带位置的算"哪儿都算"**（见 `Event.spot`）。
+ *
+ * ## 全文还是标题
+ *
+ * [BusLine.full]：**被指向的给全文，其余只给 `ref + 标题`**。这不是省 token 的小手段，而是"投递与唤醒
+ * 分开"那条设计的延伸——**被指向**和**恰好在场**是两回事，而模型该能看出这个差别，并自己决定要不要
+ * 花一次 `look` 去查。（§14.37 把「指向」交给判定，这里就是那个判断的消费者。）
+ *
+ * 自己被点名的、以及自己做的事，一律给全文：一个人不必"去查"自己刚说过什么。
+ */
+internal fun World.bus(actorId: String, since: Long): List<BusLine> {
+    if (byId(actorId) == null) return emptyList()
+    val region = RegionBuilder.of(this, listOf(actorId))
+    return log.since(since)
+        .filter { event ->
+            val spot = event.spot ?: return@filter true
+            region.contains(metreCell(spot.x), metreCell(spot.y))
+        }
+        .map { event ->
+            val mine = event.actorId == actorId
+            BusLine(event, full = mine || actorId in event.addressedTo)
+        }
+}
+
+/**
+ * 总线上的一条。
+ *
+ * @property full `true` = 给全文（被指向的、以及自己的）；`false` = 只给 `ref + 标题`，想看就用 `look`。
+ */
+internal data class BusLine(val event: Event, val full: Boolean) {
+    /**
+     * 提示词里的一行。两种形态的差别是刻意的——见 [World.bus] 的 KDoc。
+     *
+     * **「标题」是一行 gist，所以短句的 gist 约等于原话。** 这是它的固有性质，不是漏洞：一行标题本来
+     * 就该一眼看得出"这是件什么事"。真正的分野在**后果那几条**（`Event.effects`）——那才是"细节"，
+     * 而它只在 `look` 里给。所以这一对不是"看见 / 看不见"，而是"**知道有这么件事** / **知道它到底怎么
+     * 了**"。
+     */
+    fun render(): String =
+        if (full) "- ${event.line()}" else "- ${event.ref}｜${event.title()}（想看细节就 look 它）"
+}

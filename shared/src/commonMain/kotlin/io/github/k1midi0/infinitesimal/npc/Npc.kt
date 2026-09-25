@@ -1,5 +1,6 @@
 package io.github.k1midi0.infinitesimal.npc
 
+import io.github.k1midi0.infinitesimal.config.ContextSettings
 import io.github.k1midi0.infinitesimal.config.EndpointConfig
 import io.github.k1midi0.infinitesimal.config.ReasoningEffort
 import io.github.k1midi0.infinitesimal.config.SystemId
@@ -19,12 +20,14 @@ import io.github.k1midi0.infinitesimal.llm.decodeCall
 import io.github.k1midi0.infinitesimal.spatial.ChunkDetail
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.ChunkView
+import io.github.k1midi0.infinitesimal.spatial.bus
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
 import io.github.k1midi0.infinitesimal.spatial.audience
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.EventKind
 import io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CHUNKS
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
+import io.github.k1midi0.infinitesimal.world.Spot
 import io.github.k1midi0.infinitesimal.world.Todo
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldTime
@@ -71,6 +74,15 @@ data class Waking(
     val listenerId: String,
     val heard: Heard,
     val origin: ChunkOrigin,
+    /**
+     * **事件总线的起点**：这一回合的第一条事件的编号（§6.1、§14.39）。
+     *
+     * 会话在玩家一次提交之前读一下 `EventLog.latestSeq` 拿到它，然后一路带到这里。总线**只装上回合**，
+     * 而"上回合从哪儿开始"是一个不该由角色自己猜的刻度。
+     *
+     * 默认 `0` = 从最开始——只该用在测试与探针里（那会给出一个"什么都算在附近"的总线）。
+     */
+    val sinceSeq: Long = 0,
 )
 
 /**
@@ -108,21 +120,6 @@ data class Reaction(
 }
 
 /**
- * 记忆窗口里装几条（§6.1）。
- *
- * **第一版是拍的一个保守值，它该由实测改掉。** §6.1 对它的原话是「N 由 spike 实测定，不由拍脑袋：
- * 观察 NPC 在多少轮之后开始重复或自相矛盾」。12 条大致是"最近几轮"，而一场对话里一轮往往产生两三条
- * （玩家说一句、做一个动作、矮人应一句）。
- *
- * 按**条**裁而不是按轮：§6.1 那三条裁剪规则里，「一次提交产生的全部后果不可切开」是在**一条事件
- * 内部**保证的（`Event.effects` 是一个整体），跨事件不需要绑定。
- *
- * 放在类外而不是私有伴生对象里，是为了让探针读得到它——`ConversationProbe` 要打印"这一轮它看得见
- * 几条"，而抄一个 12 到探针里就是那种迟早会漂开的东西。
- */
-internal const val NPC_MEMORY_WINDOW = 12
-
-/**
  * 扮演一个 AI 角色（§3.2、§3.4、§5）。
  *
  * ## 它手里有什么
@@ -140,21 +137,33 @@ internal const val NPC_MEMORY_WINDOW = 12
  * 代价是它一次「做」要花两到三次调用（对齐一步、后果一步、可能还有查询手）。那是这一层的真实
  * 账单，不是可以省掉的：**角色的意愿与世界的裁决必须分开**，合起来就等于模型自己给自己发许可。
  *
- * ## 它没有的东西
+ * ## 它记得住
  *
- * **messages 仍然不累积。** 每次唤醒新建一段（§14.36，与导演 §12 第 38 项同一个口径）——它跨回合记得
- * 的东西全部来自**记录层的窗口**（`NPC_MEMORY_WINDOW` 条，§14.37），而不是来自上一次的对话原文。
+ * **它有一场真正的对话。** 每次唤醒产生的消息（它收到的 prompt、它说的、它做的、工具回的）都接进一份
+ * **按角色累积的历史**（[Conversations]），下一次唤醒从那里往下接（§6.1、§14.39）。这一条是 2026-09-26
+ * 改的——在那之前每次唤醒都新建一段，于是它每一句都从零开始，而"记得住"只是有人把记录铺成了提示词。
  *
- * 这两条路的区别是实在的：窗口是**世界对它的广播记录**（谁说了什么、世界因此变了哪几条），不是它自己
- * 那场对话的逐字回放。§6.1 选的就是前者——它可审计，而且不会因为模型上一次的措辞而漂。
+ * **累积不等于什么都记得。** 事件总线只装上回合（`Waking.sinceSeq` 之后），更早的那些只在记录层里、
+ * **不进提示词**——「自然遗忘」是设计要的（§1.5 那条根决策由底下的记录层保住，模型这一侧看不见）。
+ * 重要的东西由待办（§3.2.5）与笔记（§6.3）兜住。
  *
- * **没有笔记、没有状态循环。** 前者是 §6.5，后者是 §12 第 24 项。现在它每次醒来只知道"我是谁、
- * 我在哪、我刚才听见了什么"。
+ * **没有笔记、没有状态循环的那一半。** 笔记是 §6.3（还没做），循环已经在 `Entity.cycle` 上（§14.37）。
+ *
+ * 压缩——超阈之后把一段换成一条摘要、摘要再超阈就再压——是同一条路的下半段，还没做（§6.1）。
  */
 class Npc(
     private val client: LlmClient,
     private val judge: Judge,
     val effort: ReasoningEffort = ReasoningEffort.HIGH,
+    /**
+     * 每个角色那一份**累积的对话历史**（§6.1、§14.39）。
+     *
+     * 默认现开一份——于是只有一个 `Npc` 的进程里，`Conversations` 的生命周期与它相同。**它现在不落盘**
+     * （存档还没做，§12 第 33 项），所以重启就没了；这一点写在 [Conversation] 的 KDoc 上。
+     */
+    val conversations: Conversations = Conversations(),
+    /** 上下文预算（§6.1）。阈值离现实很远，探针里要调小才验得到。 */
+    val settings: ContextSettings = ContextSettings(),
 ) {
 
     /**
@@ -168,10 +177,13 @@ class Npc(
         config: EndpointConfig,
         presets: PresetLibrary = PresetLibrary(),
         effort: ReasoningEffort = ReasoningEffort.HIGH,
+        settings: ContextSettings = ContextSettings(),
     ) : this(
         LlmClient(config.copy(userId = SystemId.NPC)),
         Judge(config, effort = effort, presets = presets),
         effort,
+        Conversations(),
+        settings,
     )
 
     /** 这个角色**自己**发出去的请求数。判定那边的另算（见 [judgeRequestCount]）。 */
@@ -217,19 +229,29 @@ class Npc(
         val acted = mutableListOf<Judgment>()
         val problems = mutableListOf<String>()
 
-        val messages = mutableListOf(
-            ChatMessage.system(SYSTEM),
-            ChatMessage.user(userPrompt(world, waking, listener)),
-        )
+        val system = ChatMessage.system(SYSTEM)
+        val fresh = listOf(ChatMessage.user(userPrompt(world, waking, listener)))
+        val conversation = conversations.of(listener.id)
+
+        // **这一次唤醒产生的全部消息**：请求过的、模型回的、工具答的。它们要一起接进历史，而且
+        // **工具调用与结果必须成对**——只留台词会让消息数组悬空，端点直接 400（§14.31 踩过一次空
+        // `tool_calls`）。
+        val produced = mutableListOf<ChatMessage>()
+        produced += fresh
 
         var round = 0
         while (round < MAX_ROUNDS) {
             round++
             requestCount++
 
+            // 这一次请求里"历史之外"发了多少条——锚要覆盖它们，见下面的 `anchor`。
+            val sent = produced.size
+
             val turn = AssistantTurn.of(
                 client.streamChat(
-                    messages = messages,
+                    // **每轮现拼**：历史 + 这一轮为止产生的。历史那一段永不改变，所以前缀缓存能一路
+                    // 命中到这一次请求新添的那几条（§6.1）。
+                    messages = conversation.request(system, produced),
                     tools = NpcTools.ALL,
                     thinking = ThinkingRequest.of(ThinkingMode.Always, effort),
                     // **不设 `max_tokens`。** 与判定、导演同一条：思维链也算在它里面，限了就会让第二步
@@ -241,18 +263,31 @@ class Npc(
             lastUsage = turn.usage
             if (round == 1) lastFinishReason = turn.finishReason
 
-            // **一个工具都不调 = 它说完了。** 与导演同一条循环规则（§14.33）：它要说几句、做几件事
-            // 本来就是多行的，所以判据是"这一轮没有手"，不是"这一轮没有查询手"（判定那边才是后者）。
-            if (turn.calls.isEmpty()) break
+            // **锚钉在这一次请求上。** 提供方说这个 prompt 多大，那就是真数；`covered = sent` 防的是把
+            // 已经算进这个数的内容再算一遍——算重了会让阈值提前触发，而症状是"它怎么这么早就开始压了"。
+            turn.usage?.let { conversation.anchor(it.promptTokens, sent) }
 
-            messages += turn.asAssistantMessage()
+            val assistant = turn.asAssistantMessage()
+            // **没有工具调用也要留下这一条。** 模型自己说的那段（`content`）就在里面，而 §6.1 的清单里
+            // 有它（「模型自己说的，不是调用工具」）。只有真正空的那条才丢。
+            if (!assistant.content.isNullOrBlank() || turn.calls.isNotEmpty()) {
+                produced += assistant
+            }
+
+            // **一个工具都不调 = 它说完了。** 与导演同一条循环规则（§14.33）：它要说几句、做几件事本来
+            // 就是多行的，所以判据是"这一轮没有手"，不是"这一轮没有查询手"（判定那边才是后者）。
+            if (turn.calls.isEmpty()) break
 
             for (call in turn.calls) {
                 val answer = answerFor(call, world, waking, listener, said, acted)
                 if (answer.problem != null) problems += answer.problem
-                messages += ChatMessage.toolResult(call.id, answer.text)
+                produced += ChatMessage.toolResult(call.id, answer.text)
             }
         }
+
+        // **接进历史。** 这一句就是「正常拼接的多轮上下文」的全部：下一次唤醒时，它从这里往下接
+        // （§6.1、§14.39）。压到阈值之后该发生的事（压成一条摘要、摘要再超阈就再压）是下一刀。
+        conversation.commit(produced)
 
         return Reaction(said, acted, round, problems)
     }
@@ -278,6 +313,7 @@ class Npc(
         NpcTools.SAY -> say(call, world, listener, said)
         NpcTools.ACT -> act(call, world, listener, acted)
         NpcTools.PLAN -> plan(call, world, listener)
+        NpcTools.LOOK -> look(call, world, waking, listener)
         else -> Answered(
             "没有叫「${call.name}」的工具。你现在能用的只有：" +
                 NpcTools.ALL.joinToString("、") { it.function.name } + "。",
@@ -285,6 +321,35 @@ class Npc(
             // "这个动作不成立"——两者要分开，后者是世界的裁定，前者是它自己出了问题。
             "模型调了一只不存在的工具：${call.name}",
         )
+    }
+
+    /**
+     * **查看总线上某一条的细节**（§6.1、§14.39）。
+     *
+     * 它**不是**记录层的入口，而是**总线的入口**——所以判据一并落在"在不在这一回合的总线上"，而那
+     * 同时管住了两件事：**不带历史**（更早的那些查不到，那正是"自然遗忘"）与**在不在附近**（远处的
+     * 事它本来就不该看得见）。
+     *
+     * 查不到不是失败，是这个世界的一个正常结果——那句话得说得像世界在说话（§4.3）。
+     */
+    private fun look(call: ToolCallRequest, world: World, waking: Waking, listener: Entity): Answered {
+        val ref = decodeCall(LookArgs.serializer(), call)?.id?.trim().orEmpty()
+        if (ref.isEmpty()) {
+            return Answered("「id」是空的——把总线上那个编号写进去，形如 e12。", "look 的 id 是空的")
+        }
+
+        val wanted = world.log.byRef(ref)?.seq
+        val line = wanted?.let { seq ->
+            world.bus(listener.id, waking.sinceSeq).firstOrNull { it.event.seq == seq }
+        }
+
+        return if (line == null) {
+            Answered(
+                "这一回合的总线上没有「$ref」这件事——要么它已经过去了，要么它没发生在你附近。",
+            )
+        } else {
+            Answered(line.event.line())
+        }
     }
 
     private fun say(
@@ -311,6 +376,9 @@ class Npc(
             actorId = listener.id,
             actorLabel = listener.label,
             text = text,
+            // **它不知道自己"对谁说"**——`say` 没有指向那一栏，因为一只不点名的手说得越多，它就越容易与
+            // 判定打架。所以这一栏留空：对旁人来说，它说的那句是**标题**，想看细节要自己 `look`（§6.1）。
+            spot = Spot(listener.x, listener.y, listener.z),
             to = world.audience(listener.id),
         )
         return Answered("说出去了。")
@@ -392,6 +460,8 @@ class Npc(
                 actorLabel = listener.label,
                 text = intention,
                 effects = judgment.consequences.map { describeConsequence(it, ::name, world.materials) },
+                addressedTo = judgment.affected.toList(),
+                spot = Spot(listener.x, listener.y, listener.z),
                 to = world.audience(listener.id, affected = judgment.affected),
             )
 
@@ -401,6 +471,7 @@ class Npc(
                 actorId = listener.id,
                 actorLabel = listener.label,
                 text = intention,
+                spot = Spot(listener.x, listener.y, listener.z),
                 to = world.audience(listener.id),
             )
 
@@ -525,13 +596,15 @@ class Npc(
             appendLine()
         }
 
-        appendLine("【你记得的最近这些事】")
-        val window = world.log.windowOf(listener.id, NPC_MEMORY_WINDOW)
-        if (window.isEmpty()) {
-            appendLine("（你刚到这里，还什么都没赶上。）")
+        appendLine("【这一片里刚刚发生的事】")
+        val bus = world.bus(listener.id, waking.sinceSeq)
+        if (bus.isEmpty()) {
+            appendLine("（这一回合，你附近什么都没发生。）")
         } else {
-            // 最早的在前，与发生顺序一致。**最后那几条就是此刻的上下文**——包括刚刚叫醒你的那一句。
-            window.forEach { appendLine("- ${it.line()}") }
+            // **全文还是标题，就是这一节的全部意思**（§6.1、§14.39）：被指向的、以及你自己做的给全文；
+            // 其余的只给编号与一行标题——想看就用 `look`。这不是省 token 的手段，而是「被指向」与
+            // 「恰好在场」本来就是两回事，而模型该看得出这个差别，并自己决定要不要花一次调用去查。
+            bus.forEach { appendLine(it.render()) }
         }
         appendLine()
         appendLine("（这段提示词里，「你」永远指你自己；别人一律带着 id 出现。`player` 就是你对面那个人。）")
@@ -596,3 +669,7 @@ private data class PlanArgs(
     val hour: Int = 12,
     val minute: Int = 0,
 )
+
+/** `look` 的参数。同上。 */
+@Serializable
+private data class LookArgs(val id: String = "")

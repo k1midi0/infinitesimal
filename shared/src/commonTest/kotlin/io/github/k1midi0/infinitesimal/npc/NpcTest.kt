@@ -14,6 +14,7 @@ import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.EventKind
+import io.github.k1midi0.infinitesimal.world.Spot
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldTime
 
@@ -210,24 +211,59 @@ class NpcTest {
     }
 
     @Test
-    fun thePromptCarriesWhatItHeardInEarlierTurns() = runBlocking {
+    fun thePromptCarriesThisTurnsBusAndNothingOlder() = runBlocking {
         val script = Scripted(listOf(stop()))
         val world = world()
-        // 上一次它醒着的时候听见的话——**这一轮它不是被这句叫醒的**，所以它只能从记忆窗口里看到。
-        world.log.append(
+
+        // **上一回合的事。** 它进得了记录层，但**不进总线**——总线只装上回合（§6.1、§14.39）。
+        val older = world.log.append(
             at = world.clock,
             kind = EventKind.SAY,
             actorId = "player",
             actorLabel = "你",
             text = "昨天你还欠我一杯酒。",
+            spot = Spot(1200, 300, 0),
+            to = listOf("dwarf"),
+        )
+        // 这一回合的两件：一件**指着它说**，一件它只是**恰好在那一片**。
+        world.log.append(
+            at = world.clock,
+            kind = EventKind.SAY,
+            actorId = "player",
+            actorLabel = "你",
+            text = "矮人，来杯酒。",
+            addressedTo = listOf("dwarf"),
+            spot = Spot(1200, 300, 0),
+            to = listOf("dwarf"),
+        )
+        world.log.append(
+            at = world.clock,
+            kind = EventKind.ACT,
+            actorId = "bard",
+            actorLabel = "吟游诗人",
+            text = "他把琴挪了挪。",
+            // **细节在这几条里**——而它们才是"全文"与"标题"真正的分野（见下面那句断言的理由）。
+            effects = listOf("琴 挪到了 (1100, 400, 0) 厘米"),
+            spot = Spot(1100, 400, 0),
             to = listOf("dwarf"),
         )
 
-        npcOf(script).wake(world, Waking("dwarf", greeted("你好啊。"), originOf(world)))
+        npcOf(script).wake(
+            world,
+            Waking("dwarf", greeted("你好啊。"), originOf(world), sinceSeq = older.seq + 1),
+        )
 
         val body = script.bodies.single()
-        assertTrue("【你记得的最近这些事】" in body)
-        assertTrue("昨天你还欠我一杯酒。" in body, "记忆窗口是它跨回合记得东西的唯一来源")
+        assertTrue("【这一片里刚刚发生的事】" in body, "总线要进提示词")
+        // **被指向的给全文**：那是冲它说的。
+        assertTrue("矮人，来杯酒。" in body, "被指向的那句要原文进去")
+        // **没被指向的只给标题。** 标题是一行 gist，所以**短句的 gist 约等于原话**——这是"一行标题"固有
+        // 的性质，不是漏洞。真正的分野在**后果那几条**：那是细节，只在 `look` 里给。
+        assertTrue("他把琴挪了挪" in body, "标题要有一行，否则它不知道有什么可查的")
+        assertTrue("挪到了" !in body, "没被指向的**不给后果那几条**——细节要自己 look")
+        // **上回合之前的不进来**——那就是「自然遗忘」，而底层还留着（记录层不注入）。
+        assertTrue("昨天你还欠我一杯酒。" !in body, "更早的不进总线")
+        assertEquals(1, world.log.byId(older.seq)?.let { listOf(it) }?.size ?: 0, "但记录层里还在")
     }
 
     @Test
@@ -247,5 +283,85 @@ class NpcTest {
         assertEquals(2, todos.size)
         assertEquals("去东街找那个木匠", todos.last().what)
         assertEquals(WorldTime.of(2, 9, 30), todos.last().at)
+    }
+
+    @Test
+    fun whatItDidLastTimeIsStillInTheHistoryThisTime() = runBlocking {
+        val script = Scripted(
+            listOf(
+                turn("c1", "say", """{"text":"……嗯。"}"""),
+                stop(),
+                stop(),
+            ),
+        )
+        val world = world()
+        val npc = npcOf(script)
+
+        npc.wake(world, Waking("dwarf", greeted("你好啊。"), originOf(world)))
+        val afterFirst = npc.conversations.of("dwarf").size
+        npc.wake(world, Waking("dwarf", greeted("又来一句。"), originOf(world)))
+        val afterSecond = npc.conversations.of("dwarf").size
+
+        // **历史只增不减**（§6.1）：第二次唤醒是接在第一次后面的，不是新开一段。
+        assertTrue(afterSecond > afterFirst, "历史要累积（$afterFirst → $afterSecond）")
+        // 而客观证据是**请求体本身**：第二次唤醒发的那个 prompt 里应当带着上一轮的台词。
+        // 帧的顺序是 [第一次唤醒 r1, 第一次唤醒 r2, 第二次唤醒 r1]。
+        assertTrue("……嗯。" in script.bodies[2], "上一轮的台词要在这一次的请求里")
+    }
+
+    @Test
+    fun lookFetchesTheDetailThatTheBusOnlyHintedAt() = runBlocking {
+        val script = Scripted(listOf(turn("c1", "look", """{"id":"e1"}"""), stop()))
+        val world = world()
+        // 别人做的事，而且**不是冲它说的**——所以总线上只有一行标题。
+        val event = world.log.append(
+            at = world.clock,
+            kind = EventKind.ACT,
+            actorId = "bard",
+            actorLabel = "吟游诗人",
+            text = "他把琴挪了挪。",
+            effects = listOf("琴 挪到了 (1100, 400, 0) 厘米"),
+            spot = Spot(1100, 400, 0),
+        )
+
+        npcOf(script).wake(
+            world,
+            Waking("dwarf", greeted("你好啊。"), originOf(world), sinceSeq = event.seq),
+        )
+
+        assertEquals(2, script.bodies.size, "它调了 look，所以要第二个来回把结果递回去")
+        assertTrue("琴 挪到了" in script.bodies[1], "look 的全文要真的回到模型手上")
+    }
+
+    @Test
+    fun lookingAtSomethingOutsideTheBusSaysSoInsteadOfFailing() = runBlocking {
+        val script = Scripted(listOf(turn("c1", "look", """{"id":"e1"}"""), stop()))
+        val world = world()
+        val older = world.log.append(
+            at = world.clock,
+            kind = EventKind.SAY,
+            actorId = "player",
+            actorLabel = "你",
+            text = "上一回合的秘密",
+            spot = Spot(1200, 300, 0),
+        )
+        world.log.append(
+            at = world.clock,
+            kind = EventKind.SAY,
+            actorId = "player",
+            actorLabel = "你",
+            text = "这一回合的话",
+            spot = Spot(1200, 300, 0),
+        )
+
+        val reaction = npcOf(script).wake(
+            world,
+            Waking("dwarf", greeted("你好啊。"), originOf(world), sinceSeq = older.seq + 1),
+        )
+
+        // **不是失败，是世界的一个正常结果**（§4.3）：那句话得说得像世界在说话。
+        assertTrue("这一回合的总线上没有" in script.bodies[1], "查不到要说清楚，不能编")
+        assertTrue("上一回合的秘密" !in script.bodies[1], "更早的绝不漏出去——那正是自然遗忘")
+        assertTrue(reaction.problems.isEmpty(), "查不到不是协议问题")
     }
 }

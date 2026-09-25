@@ -112,4 +112,34 @@ class GameSessionRecordTest {
         // 而对齐没成功时 `address` 没有答案，所以**没有人被唤醒**——这一片里的人收到的是投递。
         assertEquals(listOf(Spoken(PLAYER, "你好啊。")), session.speech)
     }
+
+    /**
+     * **每一回合的起点紧接在上一回合之后，不重叠。**
+     *
+     * 这条差一值得单独钉住：`turnStart` 是这一回合**第一条**事件的编号，而 `EventLog.latestSeq` 是上一
+     * 回合**最后一条**的编号。少写那个 `+ 1`，上一回合的收尾（往往正是角色自己刚说的那句）会再出现一次
+     * 在本回合的事件总线上——而它看起来完全正常，只是那句台词重复了。第一次联机跑就是它打出来的。
+     */
+    @Test
+    fun eachTurnStartsRightAfterThePreviousOne() = runBlocking {
+        val script = Scripted(
+            listOf(
+                turn("c1", "say", """{"text":"嗯。"}"""),
+                stop(),
+                turn("c2", "say", """{"text":"又一句。"}"""),
+                stop(),
+            ),
+        )
+        val session = sessionOf(script)
+
+        session.runTurn("第一句", "")
+        val firstStart = session.turnStart
+        val firstEnd = session.world.log.latestSeq
+
+        session.runTurn("第二句", "")
+
+        assertEquals(1L, firstStart, "第一回合从 e1 起")
+        assertTrue(firstEnd > 0, "第一回合得真的落了事件，否则这一条什么都没验")
+        assertEquals(firstEnd + 1, session.turnStart, "第二回合紧接在上一回合之后，一条都不重叠")
+    }
 }
