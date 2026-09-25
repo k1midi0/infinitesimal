@@ -10,6 +10,7 @@ import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.session.StartingWorld
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
+import io.github.k1midi0.infinitesimal.world.Active
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.Note
@@ -41,9 +42,19 @@ class NpcNotePromptTest {
         thinking = ThinkingMode.Always,
     )
 
-    /** 把矮人换成一份带着指定笔记的。**其余实体原样留着**——开局世界那几张图要被画得出来。 */
+    /**
+     * 把矮人换成一份**带着指定笔记、而且已经脱轨**的。**其余实体原样留着**——开局世界那几张图要被
+     * 画得出来。
+     *
+     * **脱轨是必须的**（§3.2.1）：在走循环的角色看不见自己的笔记（保留但不注入），所以不脱轨的话
+     * 这一整个测试类问的都会是同一句"那些不在这儿"。
+     */
     private fun worldWith(notes: List<Note>, clock: WorldTime = World.StartingClock): World {
-        val dwarf = StartingWorld.tavern().first { it.id == "dwarf" }.copy(notes = notes)
+        val base = StartingWorld.tavern().first { it.id == "dwarf" }
+        val dwarf = base.copy(
+            notes = notes,
+            active = Active(since = clock, target = base.cycle.beatAt(clock)),
+        )
         val snap = StartingWorld.snapshot()
         return World.from(
             snap.copy(

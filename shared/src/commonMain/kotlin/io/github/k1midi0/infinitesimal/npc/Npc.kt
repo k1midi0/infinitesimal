@@ -32,6 +32,7 @@ import io.github.k1midi0.infinitesimal.world.Spot
 import io.github.k1midi0.infinitesimal.world.Todo
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldTime
+import io.github.k1midi0.infinitesimal.world.canArrive
 import io.github.k1midi0.infinitesimal.world.due
 import io.github.k1midi0.infinitesimal.world.live
 import io.github.k1midi0.infinitesimal.world.nextId
@@ -112,6 +113,14 @@ data class Reaction(
     val rounds: Int,
     /** 工具参数解不开、判定的契约被违反之类。**不抛异常，收集起来给日志**（§1.3）。 */
     val problems: List<String>,
+    /**
+     * **这一次唤醒里它回到循环上了没有**（§3.2.1、§14.43）。
+     *
+     * 它值得单独一格，因为 `arrive` **不是世界事件**——世界没因此改变什么（它只是不再脱轨），所以
+     * 外部只看「活跃有没有变」的话，看不出**是它自己回去的**还是别处把它清掉的。这一格就是那个答案，
+     * 而探针与测试要读的正是它。
+     */
+    val arrived: Boolean = false,
 ) {
     /**
      * 它什么也没做。
@@ -150,7 +159,9 @@ data class Reaction(
  * **不进提示词**——「自然遗忘」是设计要的（§1.5 那条根决策由底下的记录层保住，模型这一侧看不见）。
  * 重要的东西由待办（§3.2.5）与笔记（§6.3）兜住。
  *
- * **没有状态循环的那一半。** 循环已经在 `Entity.cycle` 上（§14.37）。
+ * **循环在 `Entity.cycle` 上**（§14.37），而"此刻没在走循环"在 `Entity.active` 上（§3.2.1）：那一档
+ * 打开笔记（看得见、写得了）与回归（`arrive`）两件事，而**不打开唤醒**——醒来的判据只有"被判定点名"
+ * 一条。
  *
  * 压缩——超阈之后把一段换成一条摘要、摘要再超阈就再压——与笔记（它主动写、常驻注入、不参与压缩）
  * 是同一条路的两半，都已经做进来了（§14.41、§14.42）。
@@ -236,6 +247,8 @@ class Npc(
         // 撤掉一条过期的、同时记下一条真的，是同一件事的两面，不该被这条闸挡住。
         var wroteNote = false
         val noteGate = { wroteNote = true }
+        // **它这一趟回家了吗**（§14.43）：`arrive` 不是世界事件，所以这个事实只能从它这一侧的记录读出来。
+        var wentHome = false
 
         val system = ChatMessage.system(SYSTEM)
         val conversation = conversations.of(listener.id)
@@ -243,26 +256,30 @@ class Npc(
         // **超阈才提压缩那件事，而且提在同一次请求里**（§6.1、§14.39）：不另开一次调用——这是"顺手做"
         // 的全部意思。而"该不该收一收"由**代码**算出来告诉它：它看不到自己的上下文有多大，我们看到。
         val body = userPrompt(world, waking, listener)
-        val plain = listOf(ChatMessage.user(body))
         val suggested = conversation.suggestRange()?.takeIf {
-            conversation.overThreshold(settings, system, plain)
+            conversation.overThreshold(settings, system, listOf(ChatMessage.user(body)))
         }
-        val fresh = if (suggested == null) {
-            plain
-        } else {
-            listOf(ChatMessage.user(body + "\n\n" + compactionSection(suggested)))
-        }
+        val tail = if (suggested == null) "" else "\n\n" + compactionSection(suggested)
 
         // **这一次唤醒产生的全部消息**：请求过的、模型回的、工具答的。它们要一起接进历史，而且
         // **工具调用与结果必须成对**——只留台词会让消息数组悬空，端点直接 400（§14.31 踩过一次空
         // `tool_calls`）。
         val produced = mutableListOf<ChatMessage>()
-        produced += fresh
 
         var round = 0
         while (round < MAX_ROUNDS) {
             round++
             requestCount++
+
+            // **提示词每一轮重拼**，而不是一次唤醒拼一次。
+            //
+            // 这不是为了性能——恰恰相反，它多花一点时间，买的是**它自己刚才做的事这一轮就看得见**：
+            // 它写下一条笔记之后，那条笔记要出现在下一轮的【你记下的事】里（否则它得等到下一次被唤醒
+            // 才知道自己写成功了，而中间那几轮它是"盲写"）；它搬过一次位置之后，下一轮的空间框要跟着
+            // 变。一条一次唤醒只拼一次的提示词，在这两处都会给出**看着完全正常、其实已经过时**的答案。
+            val listenerNow = world.byId(waking.listenerId) ?: listener
+            val fresh = listOf(ChatMessage.user(userPrompt(world, waking, listenerNow) + tail))
+            produced += fresh
 
             // 这一次请求里"历史之外"发了多少条——锚要覆盖它们，见下面的 `anchor`。
             val sent = produced.size
@@ -299,7 +316,9 @@ class Npc(
             if (turn.calls.isEmpty()) break
 
             for (call in turn.calls) {
-                val answer = answerFor(call, world, waking, listener, conversation, said, acted, wroteNote, noteGate)
+                val answer = answerFor(
+                    call, world, waking, listener, conversation, said, acted, wroteNote, noteGate,
+                ) { wentHome = true }
                 if (answer.problem != null) problems += answer.problem
                 produced += ChatMessage.toolResult(call.id, answer.text)
             }
@@ -309,7 +328,7 @@ class Npc(
         // （§6.1、§14.39）。压到阈值之后该发生的事（压成一条摘要、摘要再超阈就再压）是下一刀。
         conversation.commit(produced)
 
-        return Reaction(said, acted, round, problems)
+        return Reaction(said, acted, round, problems, arrived = wentHome)
     }
 
     /** 一只手的答复。解开的东西与解不开的东西走同一条路回去。 */
@@ -332,6 +351,7 @@ class Npc(
         acted: MutableList<Judgment>,
         wroteNote: Boolean,
         noteWritten: () -> Unit,
+        wentHome: () -> Unit,
     ): Answered = when (call.name) {
         NpcTools.SAY -> say(call, world, listener, said)
         NpcTools.ACT -> act(call, world, listener, acted)
@@ -339,6 +359,8 @@ class Npc(
         NpcTools.LOOK -> look(call, world, waking, listener)
         NpcTools.COMPACT -> compact(call, conversation)
         NpcTools.NOTE -> note(call, world, listener, wroteNote, noteWritten)
+        // **回归只在它真的脱轨时才有这条路**：在循环里的角色调用它，是"我回到我本来就在的地方"。
+        NpcTools.ARRIVE -> arrive(call, world, listener, wentHome)
         else -> Answered(
             "没有叫「${call.name}」的工具。你现在能用的只有：" +
                 NpcTools.ALL.joinToString("、") { it.function.name } + "。",
@@ -511,6 +533,20 @@ class Npc(
                 "note 的参数不是合法 JSON",
             )
 
+        // **从世界里重新拿一份**，与 `plan` 同一条理由：一次唤醒里连调两次时，拿进函数时那一份会让
+        // 第一条笔记被覆盖掉，而"写了一条、另一条没了"没有任何东西会报。
+        val now = world.byId(listener.id) ?: listener
+
+        // **在循环里的角色写不了笔记**（§3.2.1：笔记保留但不注入）。写下来的东西它自己看不见，那等于
+        // 把记忆丢进一个抽屉——而它会以为记下了。这一道与下面 `notesSection` 那一道是同一件事的两面：
+        // **能看见才写得了**。它得先成为活跃的（被指向），才有这只手。
+        if (now.active == null) {
+            return Answered(
+                "你现在没有在写笔记——你正走在你自己的循环上，而那些笔记这会儿不在你眼前。" +
+                    "有人来找你说话、你脱轨之后，这一只才作数。",
+            )
+        }
+
         val text = args.text.trim()
         if (text.isEmpty()) {
             return Answered("「text」是空的——那件要记住的事得用一句话写出来。", "note 的 text 是空的")
@@ -524,8 +560,8 @@ class Npc(
         }
 
         // **从世界里重新拿一份**，与 `plan` 同一条理由：一次唤醒里连调两次时，拿进函数时那一份会让
-        // 第一条笔记被覆盖掉，而"写了一条、另一条没了"没有任何东西会报。
-        val now = world.byId(listener.id) ?: listener
+        // 第一条笔记被覆盖掉，而"写了一条、另一条没了"没有任何东西会报。（上面那道活跃闸已经拿过一份，
+        // 它在那些判断之后不会再变——唤醒是串行的。）
         val live = now.notes.live()
         val supersedes = args.supersedes.trim().ifEmpty { null }
 
@@ -568,6 +604,50 @@ class Npc(
                 "记下了；「$supersedes」那条以后不再出现在你眼前（它还留着，只是你看不见了）。"
             },
         )
+    }
+
+    /**
+     * **回到自己的循环上**（§3.2.1、§12 第 46 项）。
+     *
+     * 分工是这一刀的全部形状：**模型提出，代码确认它有没有资格说这句话。** 循环那一格只有一句状态、
+     * 没有位置（§12 第 23 项），所以"到没到"只有它自己知道；而"此刻那一格是不是它说要回的那一格"
+     * 是代码知道的事（`Active.canArrive`，比的是 [io.github.k1midi0.infinitesimal.world.Beat.atMinute]
+     * ——两句不同的状态指向同一件事是常事，而同一句话出现在两格里也是常事，只有时刻不会撞）。
+     *
+     * ## 它不记任何东西
+     *
+     * 这一趟的经历留在两处本来就在的地方：**对话历史**（累积的多轮上下文，压过也在）与**它自己写的
+     * 那些笔记**。为回归再写一份摘要是第二种记法，而两种记法迟早会不一致。
+     *
+     * ## 两道拒绝
+     *
+     *  - **它本来就在循环里**——"我回到我本来就在的地方"不是一次回归，而放过它会让"活跃"这个状态
+     *    由一次误调用决定。
+     *  - **此刻那一格不是它要回的那一格**——那一刻它还没到。理由会把它现在该在的那一格原文写出来，
+     *    于是它知道该等到什么时候（或者该去做什么）。
+     */
+    private fun arrive(call: ToolCallRequest, world: World, listener: Entity, arrived: () -> Unit): Answered {
+        val args = decodeCall(ArriveArgs.serializer(), call)
+            ?: return Answered("参数读不出来——要 state（你要回到的那一格的状态原文）。", "arrive 的参数不是合法 JSON")
+
+        val now = world.byId(listener.id) ?: listener
+        val active = now.active
+            ?: return Answered(
+                "你本来就走在自己的循环上——没有要回的地方。这一只只在有人把你叫脱轨之后才作数。",
+            )
+
+        if (!active.canArrive(now.cycle, world.clock)) {
+            val here = now.cycle.beatAt(world.clock)?.state
+            return Answered(
+                "还不到那一格。你此刻按循环应该在做的，是「" + (here ?: "（你的循环是空的）") + "」" +
+                    "——等它转到你要回的那一格，你再说一次。" +
+                    "（你写下的是「${args.state.trim()}」；那一格不是它。）",
+            )
+        }
+
+        world.put(now.copy(active = null))
+        arrived()
+        return Answered("你回到了循环上（此刻本该做的：「${active.target?.state}」）。这一趟就到这儿。")
     }
 
     /**
@@ -749,6 +829,16 @@ class Npc(
             appendLine()
         }
 
+        // **脱轨那一档**（§3.2.1）：它此刻没在走循环。这一节存在的理由是**它得知道自己还能回去**
+        // ——没有它，一个被叫住的矮人只会一直待在这一档里，而"回到循环上"这件事根本没有入口。
+        listener.active?.let {
+            appendLine("【你现在没有在走你平常的那个循环】")
+            appendLine("有人把你叫住了，所以你此刻在做的是这一趟的事。做完了就用 `${NpcTools.ARRIVE}` 回去。")
+            val back = it.target?.state ?: listener.cycle.beatAt(world.clock)?.state
+            if (back != null) appendLine("你要回的那一格是：「$back」。")
+            appendLine()
+        }
+
         // **待办**（§3.2.5）：到点了**不是自动发生，而是提醒它**。它照常要动手、照常要过判定。
         val due = listener.todos.due(world.clock)
         if (due.isNotEmpty()) {
@@ -795,10 +885,31 @@ class Npc(
      *
      * 只列 [live] 那些。被替代的仍然留在存储里（§6.4），但**同时列出两条互相矛盾的话，模型会两条都
      * 信**——而那正是最难查的一类 bug。
+     *
+     * ## 在循环里的不注入
+     *
+     * [Entity.active] 为 `null` 时这一节**只说一句"那些不在这儿"**。这不是省 token，是 §3.2.1 那条：
+     * 氛围 NPC 的记忆**保留但不注入**——「它一直在库里，也一直按 §6.1 的规则累积；省下来的不是记忆，
+     * 而是**唤醒**」。一节打印出来又在同一处被忽略，会让"这一刻它到底记不记得"变得没人说得清。
      */
     private fun notesSection(listener: Entity): String = buildString {
-        val live = listener.notes.live()
         appendLine("【你记下的事】")
+
+        // **在循环里的角色看不见自己的笔记**（§3.2.1：**保留但不注入**）。库里一直在，只是不装进提示词
+        // ——「氛围 NPC 有和剧情 NPC 一样的完整上下文与记忆……省下来的不是记忆，而是唤醒」（§3.2）。
+        //
+        // 与上面 `note` 里那道闸是同一件事的两面：**能看见才写得了**。不活跃时它写下来的东西自己看不见，
+        // 所以那只手也会打回。
+        if (listener.active == null) {
+            if (listener.notes.isNotEmpty()) {
+                appendLine("（你在走自己那个循环的时候，这些不装进你眼前。）")
+            } else {
+                appendLine("（还没有。真需要记的时候，等有人把你叫住之后再说。）")
+            }
+            return@buildString
+        }
+
+        val live = listener.notes.live()
         if (live.isEmpty()) {
             appendLine("（还没有。有什么不能忘的，用 `${NpcTools.NOTE}` 那只手记下来——它不会像历史那样被压掉。）")
             return@buildString
@@ -861,7 +972,9 @@ class Npc(
             - `look`：看这一回合附近某件事的细节（提示词里只给了它一行标题的那些）。
             - `compact`：**只在你被告知「该收一收了」时**，把最老的那一段历史压成一条摘要。
             - `note`：记下一件不能忘的事。**它每轮都回到你眼前，而且不会被压掉**——所以要紧的事记在
-              这里，而不是指望它留在对话里。
+              这里，而不是指望它留在对话里。**只有你脱轨的时候才作数**（你在走循环的时候看不见自己的
+              笔记，那时写下来等于丢进抽屉）。
+            - `arrive`：**回到你的循环上**。只在你脱轨（有人把你叫住）之后才有这条路，做完这一趟就用它。
 
             规矩：
 
@@ -886,6 +999,9 @@ class Npc(
                压得越狠；而笔记不会。谁欠你什么、你答应了谁什么、你打听到的消息，都该记下来。
                反过来，**不值得记的就别记**——记满之后你得撤掉一条旧笔记（把它的编号写进
                `supersedes`），而撤掉哪一条是要你自己判断的。一条笔记写一句话，别抄整段对话。
+            10. **记得回去。** 提示词里有【你现在没有在走你平常的那个循环】那一节时，说明你已经被
+               叫脱轨了、不在过你平常的日子。那一趟的事做完了，就用 `arrive` 回到循环上——把那一格
+               的状态原文填进去。**别一直待在外面**：你的日子有自己的钟点。
         """.trimIndent()
     }
 }
@@ -927,3 +1043,7 @@ private data class NoteArgs(
     val tag: String = "",
     val supersedes: String = "",
 )
+
+/** `arrive` 的参数。同上。 */
+@Serializable
+private data class ArriveArgs(val state: String = "")

@@ -47,16 +47,25 @@ data class Cycle(val beats: List<Beat> = emptyList()) {
     val isEmpty: Boolean get() = beats.isEmpty()
 
     /**
-     * 此刻按循环本该在做什么。**没有循环就是没有答案**（`null`），不是"空闲"——那是两件事。
+     * 此刻落在哪一格。**没有循环就是没有答案**（`null`），不是"空闲"——那是两件事。
      *
      * 取「不晚于此刻的最后一格」。**此刻早于当天第一格时取当天最后一格**：那是跨夜那一格的正确读法
      * （23:00 打烊之后到次日 07:00 开门之前，人还在"打烊"那一格里），而不是"今天还没开始"。
      */
-    fun stateAt(now: WorldTime): String? {
+    fun beatAt(now: WorldTime): Beat? {
         if (beats.isEmpty()) return null
         val minute = now.minuteOfDay
-        return (beats.lastOrNull { it.atMinute <= minute } ?: beats.last()).state
+        return beats.lastOrNull { it.atMinute <= minute } ?: beats.last()
     }
+
+    /**
+     * 此刻按循环本该在做什么。
+     *
+     * 它与 [beatAt] 是同一件事的两种给法：**只读那句话的人用这个**（提示词里注入的那一行），
+     * **要拿整格的人用那个**（活跃化的回归判据要读 [Beat.atMinute]，读不到它就分不出"这一格"与
+     * "另一格恰好写着同一句话"）。
+     */
+    fun stateAt(now: WorldTime): String? = beatAt(now)?.state
 
     /** 按时刻排好。**存进去时不必有序**——模型写出来大概率是无序的，排序是代码的事。 */
     fun sorted(): Cycle = Cycle(beats.sortedBy { it.atMinute })

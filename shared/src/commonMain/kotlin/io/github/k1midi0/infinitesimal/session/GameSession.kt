@@ -1061,6 +1061,12 @@ class GameSession(
         }
 
         if (reaction.silent) say(LogLine.Kind.NOTE, "（$name 没什么反应）")
+
+        // **它自己回到了循环上**（§3.2.1、§14.43）。这一行要写出来，因为 `arrive` **不是世界事件**：
+        // 世界没因此改变什么（它只是不再脱轨），所以只看"活跃有没有变"的话，看不出是它自己回去的——
+        // 而这件事对玩家是有信息量的（那个矮人回去干它的活了）。
+        if (reaction.arrived) say(LogLine.Kind.OK, "（$name 回到了自己的日子上）")
+
         return reaction.said
     }
 

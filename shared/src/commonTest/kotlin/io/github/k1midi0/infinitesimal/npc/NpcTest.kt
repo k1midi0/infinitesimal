@@ -12,6 +12,7 @@ import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.session.StartingWorld
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
+import io.github.k1midi0.infinitesimal.world.Active
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.EventKind
@@ -55,6 +56,25 @@ class NpcTest {
 
     private fun originOf(world: World): ChunkOrigin =
         ChunkOrigin.atPlayerStart(world.chunkOfEntity("player") ?: ChunkKey(0, 0))
+
+    /**
+     * 同上，但那个矮人**已经脱轨**（§3.2.1）。
+     *
+     * 笔记那几只手的测试全要它：**在循环里的角色写不了笔记**（那一道闸与"在循环里看不见自己的笔记"
+     * 是同一件事的两面）。目标那一格取它此刻本来就在的那一格——18:00 开局，`arrive` 因此随时能成。
+     */
+    private fun offCycle(world: World): World {
+        val dwarf = world.byId("dwarf") ?: return world
+        world.put(
+            dwarf.copy(
+                active = Active(
+                    since = world.clock,
+                    target = dwarf.cycle.beatAt(world.clock),
+                ),
+            ),
+        )
+        return world
+    }
 
     private fun greeted(text: String) = Heard.Spoken("player", "你", text)
 
@@ -407,7 +427,7 @@ class NpcTest {
                 stop(),
             ),
         )
-        val world = world()
+        val world = offCycle(world())
 
         val reaction = npcOf(script).wake(world, Waking("dwarf", greeted("酒先记着。"), originOf(world)))
 
@@ -431,7 +451,7 @@ class NpcTest {
                 stop(),
             ),
         )
-        val world = world()
+        val world = offCycle(world())
         val npc = npcOf(script)
 
         npc.wake(world, Waking("dwarf", greeted("记着。"), originOf(world)))
@@ -458,7 +478,7 @@ class NpcTest {
                 stop(),
             ),
         )
-        val world = world()
+        val world = offCycle(world())
         val npc = npcOf(script)
 
         npc.wake(world, Waking("dwarf", greeted("记着。"), originOf(world)))
@@ -491,7 +511,7 @@ class NpcTest {
                 stop(),
             ),
         )
-        val world = world()
+        val world = offCycle(world())
 
         val reaction = npcOf(script).wake(world, Waking("dwarf", greeted("算了。"), originOf(world)))
 
@@ -512,7 +532,7 @@ class NpcTest {
                 stop(),
             ),
         )
-        val world = world()
+        val world = offCycle(world())
 
         npcOf(script).wake(world, Waking("dwarf", greeted("有件事。"), originOf(world)))
 
@@ -527,7 +547,7 @@ class NpcTest {
     @Test
     fun afullNotebookRefusesUntilItRetiresOne() = runBlocking {
         // **先把上限写满。** 用一份只有两条的笔记与一个上限 2 的设置，省得造二十条。
-        val full = world().byId("dwarf")!!.copy(
+        val full = offCycle(world()).byId("dwarf")!!.copy(
             notes = listOf(
                 Note("n1", "第一件旧事。", at = WorldTime.of(1, 17)),
                 Note("n2", "第二件旧事。", at = WorldTime.of(1, 17)),
@@ -564,7 +584,7 @@ class NpcTest {
 
     @Test
     fun retiringOneAndWritingOneFitsThroughTheSameWaking() = runBlocking {
-        val full = world().byId("dwarf")!!.copy(
+        val full = offCycle(world()).byId("dwarf")!!.copy(
             notes = listOf(
                 Note("n1", "第一件旧事。", at = WorldTime.of(1, 17)),
                 Note("n2", "第二件旧事。", at = WorldTime.of(1, 17)),
@@ -604,7 +624,7 @@ class NpcTest {
                 stop(),
             ),
         )
-        val world = world()
+        val world = offCycle(world())
 
         val reaction = npcOf(script).wake(world, Waking("dwarf", greeted("听着。"), originOf(world)))
 
@@ -624,7 +644,7 @@ class NpcTest {
                 stop(),
             ),
         )
-        val world = world()
+        val world = offCycle(world())
 
         val reaction = npcOf(script).wake(world, Waking("dwarf", greeted("记一下。"), originOf(world)))
 

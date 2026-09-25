@@ -2,7 +2,9 @@ package io.github.k1midi0.infinitesimal.spike
 
 import io.github.k1midi0.infinitesimal.config.ContextSettings
 import io.github.k1midi0.infinitesimal.session.GameSession
+import io.github.k1midi0.infinitesimal.session.LogLine
 import io.github.k1midi0.infinitesimal.npc.Npc
+import io.github.k1midi0.infinitesimal.world.Active
 import io.github.k1midi0.infinitesimal.world.live
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
@@ -211,6 +213,7 @@ class ConversationProbe {
 
             noteScript.forEachIndexed { i, said ->
                 val before = session.requestCount
+                val logged = session.log.size
                 session.runTurn(said, "")
 
                 val conv = npc.conversations.of("dwarf")
@@ -220,6 +223,12 @@ class ConversationProbe {
                     "prompt_tokens ${npc.lastUsage?.promptTokens}｜" +
                     "历史 ${conv.size} 段（原文 ${conv.rawCount}、摘要 ${conv.summaryCount}）｜" +
                     "笔记 ${notes.live().size}/${notes.size} 条")
+
+                // **它答了什么。** 这一支探针现在要看的另一格是"它写下的笔记这一轮就看得见"（§14.43 那个
+                // 修掉的 bug）：所以答话本身也是读数——下一轮它若照着笔记说话，就是那条链活的证据。
+                session.log.drop(logged).forEach {
+                    if (it.kind == LogLine.Kind.SAY) println("     ${it.text}")
+                }
 
                 // **它自己写的那些**：这一支探针真正要看的读数。空着也是一个读数——说明它没觉得有什么
                 // 值得记，或者提示词里那条规矩不够硬。
@@ -239,6 +248,79 @@ class ConversationProbe {
             println("最后：历史 ${conv.size} 段｜原文 ${conv.rawCount}｜摘要 ${conv.summaryCount}（最高 " +
                 "${conv.summaries().maxOfOrNull { it.tier } ?: 0} 级）")
             println("笔记：活 ${notes.live().size} 条、共 ${notes.size} 条（被替代 ${notes.size - notes.live().size} 条）")
+            println("═".repeat(100))
+        }
+    }
+
+    /**
+     * **脱轨那一趟：它会不会自己回家**（§3.2.1、§14.43）。
+     *
+     * 这一支要看的不是"它会不会写笔记"（上一支量过了），而是**它认不认得出"这一趟结束了"**——以及
+     * 它在不打算回家的时候，会不会把自己按在那一格里出不来。而 `arrive` 是**有代码把关**的：
+     * 它得落在目标那一格上才放行（`Active.canArrive`），所以这一支同时也在量"它会不会点错格"。
+     *
+     * 与上一支的差别只有一处：**开局前把矮人标成脱轨**——目标取它此刻本来就在的那一格（18:00）。
+     * 于是回归随时可成，而"它想不想回去"就完全落在它自己身上。
+     *
+     * 跑法同上（`-PinfinitesimalLiveKeyFile=...`）。
+     */
+    @Test
+    fun anOffCycleNpcMayGoHomeOnItsOwn() {
+        val key = ProbeSupport.keyOrNull() ?: run {
+            println("（没有 key，跳过）")
+            return
+        }
+
+        runBlocking {
+            val config = ProbeSupport.configOf(key)
+            val npc = Npc(config, settings = ContextSettings(compressAfterTokens = 6_000))
+            val session = GameSession(config, npc = npc)
+
+            // **标它脱轨。** 目标写它此刻本来就在的那一格，于是"回家"这件事随时成立——要不要回，
+            // 完全是它自己的判断。这一刀里标状态的是导演或玩家（§14.43 决定之一）。
+            val dwarf = session.world.byId("dwarf")
+            if (dwarf != null) {
+                session.world.put(
+                    dwarf.copy(
+                        active = Active(
+                            since = session.world.clock,
+                            target = dwarf.cycle.beatAt(session.world.clock),
+                        ),
+                    ),
+                )
+            }
+
+            println("═".repeat(100))
+            println("脱轨着的矮人｜它会不会自己回家（目标：${dwarf?.cycle?.beatAt(session.world.clock)?.state}）")
+            println("═".repeat(100))
+
+            listOf(
+                "你好啊。",
+                "这酒怎么这么淡？",
+                "算了，你忙你的吧。",
+                "我先走了。",
+                "（我还站在这儿。）",
+            ).forEachIndexed { i, said ->
+                val logged = session.log.size
+                session.runTurn(said, "")
+
+                val now = session.world.byId("dwarf")
+                println()
+                println("── 第 ${i + 1} 轮 ── 玩家说：「$said」")
+                session.log.drop(logged).forEach { println("     ${it.text}") }
+                println("     ［活跃=${now?.active != null}］")
+                println(
+                    "     ［它此刻那一格：${now?.cycle?.beatAt(session.world.clock)?.atMinute}" +
+                        "（${now?.cycle?.beatAt(session.world.clock)?.state}）｜" +
+                        "目标是：${now?.active?.target?.atMinute ?: "—"}］",
+                )
+            }
+
+            println()
+            println("═".repeat(100))
+            println("最后：活跃=${session.world.byId("dwarf")?.active != null}｜笔记 " +
+                "${session.world.byId("dwarf")?.notes.orEmpty().size} 条")
+            println("要读的那一格：**它自己说了要回去吗；以及它点的那一格对不对**")
             println("═".repeat(100))
         }
     }
