@@ -13,7 +13,9 @@ import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.EventKind
 import io.github.k1midi0.infinitesimal.world.World
+import io.github.k1midi0.infinitesimal.world.WorldTime
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -188,5 +190,62 @@ class NpcTest {
         // 听见的那句话原样进去，不做任何处理（§5.1）
         assertTrue("你好啊。" in body)
         assertTrue("玩家说的话" !in body, "话不做改写——原样交给它")
+    }
+
+    @Test
+    fun thePromptCarriesItsRhythmAndItsPendingErrand() = runBlocking {
+        val script = Scripted(listOf(stop()))
+        val world = world()
+
+        npcOf(script).wake(world, Waking("dwarf", greeted("你好啊。"), originOf(world)))
+
+        val body = script.bodies.single()
+        // **状态循环**（§3.2.5）：基线由代码查表得出，**零模型调用**；被唤醒时注入一行，否则一个正在
+        // 打烊的酒保会表现得像个一直在等你来的人。开局是 18:00，正落在"招呼客人"那一格里。
+        assertTrue("【没人打扰的时候，你此刻本来在做什么】" in body, "循环要进提示词")
+        assertTrue("招呼客人" in body, "而且要是那一刻那一格，不是随便一格")
+        // **待办**（§3.2.5）：到点了**不是自动发生，而是提醒它**——所以它得看见。
+        assertTrue("【你打算做的事（已经到点了）】" in body)
+        assertTrue("塞上" in body, "开局那条待办是 17:30 的，18:00 已经到点")
+    }
+
+    @Test
+    fun thePromptCarriesWhatItHeardInEarlierTurns() = runBlocking {
+        val script = Scripted(listOf(stop()))
+        val world = world()
+        // 上一次它醒着的时候听见的话——**这一轮它不是被这句叫醒的**，所以它只能从记忆窗口里看到。
+        world.log.append(
+            at = world.clock,
+            kind = EventKind.SAY,
+            actorId = "player",
+            actorLabel = "你",
+            text = "昨天你还欠我一杯酒。",
+            to = listOf("dwarf"),
+        )
+
+        npcOf(script).wake(world, Waking("dwarf", greeted("你好啊。"), originOf(world)))
+
+        val body = script.bodies.single()
+        assertTrue("【你记得的最近这些事】" in body)
+        assertTrue("昨天你还欠我一杯酒。" in body, "记忆窗口是它跨回合记得东西的唯一来源")
+    }
+
+    @Test
+    fun itCanScheduleSomethingForItself() = runBlocking {
+        val script = Scripted(
+            listOf(
+                turn("c1", "plan", """{"day":2,"hour":9,"minute":30,"what":"去东街找那个木匠"}"""),
+                stop(),
+            ),
+        )
+        val world = world()
+
+        npcOf(script).wake(world, Waking("dwarf", greeted("你明天有事么？"), originOf(world)))
+
+        // 开局那条 17:30 的待办还在，新的挂在它后面——**两条都在**，不是被顶掉。
+        val todos = world.byId("dwarf")?.todos.orEmpty()
+        assertEquals(2, todos.size)
+        assertEquals("去东街找那个木匠", todos.last().what)
+        assertEquals(WorldTime.of(2, 9, 30), todos.last().at)
     }
 }

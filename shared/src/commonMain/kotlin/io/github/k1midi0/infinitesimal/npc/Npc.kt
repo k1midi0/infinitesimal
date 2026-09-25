@@ -8,6 +8,7 @@ import io.github.k1midi0.infinitesimal.judge.Judge
 import io.github.k1midi0.infinitesimal.judge.JudgeRequest
 import io.github.k1midi0.infinitesimal.judge.Judgment
 import io.github.k1midi0.infinitesimal.judge.RulebookView
+import io.github.k1midi0.infinitesimal.judge.describeConsequence
 import io.github.k1midi0.infinitesimal.llm.AssistantTurn
 import io.github.k1midi0.infinitesimal.llm.ChatMessage
 import io.github.k1midi0.infinitesimal.llm.LlmClient
@@ -19,10 +20,15 @@ import io.github.k1midi0.infinitesimal.spatial.ChunkDetail
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.ChunkView
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
+import io.github.k1midi0.infinitesimal.spatial.audience
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.EventKind
 import io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CHUNKS
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
+import io.github.k1midi0.infinitesimal.world.Todo
 import io.github.k1midi0.infinitesimal.world.World
+import io.github.k1midi0.infinitesimal.world.WorldTime
+import io.github.k1midi0.infinitesimal.world.due
 import io.github.k1midi0.infinitesimal.world.rendered
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.Serializable
@@ -251,8 +257,9 @@ class Npc(
         said: MutableList<Spoken>,
         acted: MutableList<Judgment>,
     ): Answered = when (call.name) {
-        NpcTools.SAY -> say(call, listener, said)
+        NpcTools.SAY -> say(call, world, listener, said)
         NpcTools.ACT -> act(call, world, listener, acted)
+        NpcTools.PLAN -> plan(call, world, listener)
         else -> Answered(
             "没有叫「${call.name}」的工具。你现在能用的只有：" +
                 NpcTools.ALL.joinToString("、") { it.function.name } + "。",
@@ -262,13 +269,57 @@ class Npc(
         )
     }
 
-    private fun say(call: ToolCallRequest, listener: Entity, into: MutableList<Spoken>): Answered {
+    private fun say(
+        call: ToolCallRequest,
+        world: World,
+        listener: Entity,
+        into: MutableList<Spoken>,
+    ): Answered {
         val text = decodeCall(SayArgs.serializer(), call)?.text?.trim()
         if (text.isNullOrEmpty()) {
             return Answered("「text」是空的——你要说的那句话得写进去。", "say 的 text 是空的")
         }
         into += Spoken(listener.id, text)
+
+        // **进记录层**（§6.1）。角色说的话与玩家说的话是同一类事实，所以走同一个形状：原话原样、
+        // 投递给这一片里的人。
+        //
+        // **它不知道自己在"对谁说"**——`say` 没有指向那一栏，因为一只不点名的手说得越多，它就越
+        // 容易与判定打架。所以这里的投递就是"这一片里的人都收到了"，而唤醒别人这件事由**玩家的**
+        // 那一轮负责（§14.37）——NPC 的话不再唤醒别人，深度钉在 1。
+        world.log.append(
+            at = world.clock,
+            kind = EventKind.SAY,
+            actorId = listener.id,
+            actorLabel = listener.label,
+            text = text,
+            to = world.audience(listener.id),
+        )
         return Answered("说出去了。")
+    }
+
+    /**
+     * **给自己安排一件将来做的事**（§3.2.5）。它**不产生任何后果**——世界一个字都不动，只是那个角色
+     * 从此多了一条待办。
+     *
+     * 到点之后它出现在提示词里，然后照常要动手、照常要过判定。这条线不能松：如果到点就自动发生，
+     * 世界上会出现一批没人做过、也没有痕迹的改变。
+     */
+    private fun plan(call: ToolCallRequest, world: World, listener: Entity): Answered {
+        val args = decodeCall(PlanArgs.serializer(), call)
+        val what = args?.what?.trim()
+        if (what.isNullOrEmpty()) {
+            return Answered("「what」是空的——那件事用一句话写清楚。", "plan 的 what 是空的")
+        }
+        if (args.hour !in 0..23) return Answered("「hour」得是 0 到 23。", "plan 的 hour 越界：${args.hour}")
+        if (args.minute !in 0..59) return Answered("「minute」得是 0 到 59。", "plan 的 minute 越界：${args.minute}")
+
+        val at = WorldTime.of(day = args.day, hour = args.hour, minute = args.minute)
+        // **从世界里重新拿一份，不用传进来的那份。** 一次唤醒里连调两次 `plan` 时，第二份要是拿的还是
+        // 进函数时那一份，第一条待办就被覆盖掉了——而"写了一条、另一条没了"没有任何东西会报。
+        val now = world.byId(listener.id) ?: listener
+        world.put(now.copy(todos = now.todos + Todo(at, what)))
+        return Answered("记下了：${at}，$what。到点它会提醒你，**但它不会自己发生**。")
     }
 
     /**
@@ -297,6 +348,10 @@ class Npc(
         val known = named.filter { world.byId(it) != null }
         val unknown = named - known.toSet()
 
+        // **标签要先抓下来。** 判定落库之后被 Destroy 的东西就不在世界里了，那时候再查名字只能拿到
+        // id。与玩家那一轮同一条理由。
+        val labels = world.all().associate { it.id to it.label }
+
         val judgment = judge.judgeAndCommit(
             world,
             JudgeRequest(
@@ -308,6 +363,31 @@ class Npc(
             ),
         )
         into += judgment
+
+        // **落地了才写记录**——与玩家那一轮同一条判据：驳回的、协议失败的不是世界里发生过的事。
+        fun name(id: String) = labels[id] ?: world.byId(id)?.label ?: id
+        when (judgment) {
+            is Judgment.Applied -> world.log.append(
+                at = world.clock,
+                kind = EventKind.ACT,
+                actorId = listener.id,
+                actorLabel = listener.label,
+                text = intention,
+                effects = judgment.consequences.map { describeConsequence(it, ::name, world.materials) },
+                to = world.audience(listener.id, affected = judgment.affected),
+            )
+
+            is Judgment.Unchanged -> world.log.append(
+                at = world.clock,
+                kind = EventKind.ACT,
+                actorId = listener.id,
+                actorLabel = listener.label,
+                text = intention,
+                to = world.audience(listener.id),
+            )
+
+            else -> Unit
+        }
 
         val told = describe(judgment)
         return if (unknown.isEmpty()) {
@@ -394,16 +474,49 @@ class Npc(
         }
         appendLine()
 
-        appendLine("【你刚才听见】")
+        appendLine("【你为什么现在醒着】")
         when (val heard = waking.heard) {
             is Heard.Spoken -> {
                 // **id 与名字都给。** 玩家那个实体的 label 是「你」（那是从玩家自己的视角起的名字），
                 // 而在这段提示词里「你」指的是这个角色自己——只印 label 会让模型把说话的人当成自己。
-                appendLine("- ${heard.fromLabel}（${heard.fromId}）开口说：「${heard.text}」")
+                //
+                // **它和下面那段记忆里最后一条是同一句话，这份重复是刻意的。** 两段回答的是两个问题：
+                // 这一段是"**现在**为什么醒了"（一个关于此刻的事实），下面那段是"**我记得**什么"（一段
+                // 历史）。让这一段去指下面那一条，就等于把"叫醒它的那句话到没到"绑在"记录先写了没有"
+                // 上——一个纯粹的调用顺序依赖，而这类错这个项目已经踩过两次（规则书、地形）。
+                appendLine("${heard.fromLabel}（${heard.fromId}）刚刚对你开口说：「${heard.text}」")
             }
         }
         appendLine()
-        appendLine("（这段提示词里，「你」永远指你自己；别人一律带着 id 出现。）")
+
+        // **状态循环**（§3.2.5）：基线。它由代码查表得出，**不花任何模型调用**——氛围 NPC 能有成百个
+        // 而成本零增量，全部来源就是这一行是纯代码。而模型接管之后必须知道"它本来在干什么"，否则
+        // 一个正在打烊的酒保会表现得像一个一直在等你来的人。
+        listener.cycle.stateAt(world.clock)?.let {
+            appendLine("【没人打扰的时候，你此刻本来在做什么】")
+            appendLine(it)
+            appendLine()
+        }
+
+        // **待办**（§3.2.5）：到点了**不是自动发生，而是提醒它**。它照常要动手、照常要过判定。
+        val due = listener.todos.due(world.clock)
+        if (due.isNotEmpty()) {
+            appendLine("【你打算做的事（已经到点了）】")
+            due.forEach { appendLine("- ${it.at}：${it.what}") }
+            appendLine("（它们不会自己发生。要做就得动手，做不做由你。）")
+            appendLine()
+        }
+
+        appendLine("【你记得的最近这些事】")
+        val window = world.log.windowOf(listener.id, WINDOW)
+        if (window.isEmpty()) {
+            appendLine("（你刚到这里，还什么都没赶上。）")
+        } else {
+            // 最早的在前，与发生顺序一致。**最后那几条就是此刻的上下文**——包括刚刚叫醒你的那一句。
+            window.forEach { appendLine("- ${it.line()}") }
+        }
+        appendLine()
+        appendLine("（这段提示词里，「你」永远指你自己；别人一律带着 id 出现。`player` 就是你对面那个人。）")
     }
 
     private companion object {
@@ -417,13 +530,26 @@ class Npc(
          */
         const val MAX_ROUNDS = 8
 
+        /**
+         * 记忆窗口里装几条（§6.1）。
+         *
+         * **第一版是拍的一个保守值，它该由实测改掉。** §6.1 对它的原话是「N 由 spike 实测定，不由拍
+         * 脑袋：观察 NPC 在多少轮之后开始重复或自相矛盾」。12 条大致是"最近几轮"，而一场对话里一轮
+         * 往往产生两三条（说一句、做一件、让别人也应一声）。
+         *
+         * 按**条**裁而不是按轮：§6.1 那三条裁剪规则里，「一次提交产生的全部后果不可切开」是在
+         * **一条事件内部**保证的（`Event.effects` 是一个整体），跨事件不需要绑定。
+         */
+        const val WINDOW = 12
+
         val SYSTEM = """
             你扮演这个世界里的一个人。你不是助手，不讲故事，不替别人做决定——你只做你自己那个人。
 
-            你能做两件事，都靠调工具：
+            你能做三件事，都靠调工具：
             - `say`：开口说一句话。
             - `act`：做一个动作。**它成不成立由另一个独立的判定系统裁决**——你说了要做什么，不等于
               你做成了。被驳回是常事，驳回理由会说清为什么，你可以换个做法再试一次。
+            - `plan`：给自己安排一件将来要做的事。它不影响眼前这一刻。
 
             规矩：
 
@@ -439,7 +565,10 @@ class Npc(
             6. **一次醒来通常只说一句，最多两句。** 对话是一来一回的——一口气说上四句，读起来像自
                言自语，不像有人在你对面。要做的事也最多一件；被驳回了就换个做法或者干脆不做，
                不要对着同一件事反复试。
-            7. 你说话就是说话，不要加旁白、不要写"（他笑了笑）"这种舞台提示——那是别人看见的，
+            7. **不要为了做而做，不要为了说而说。** 别人只是跟你打个招呼，你回一句话就够了，不必
+               顺手再做个动作；没什么想说的就什么都不说。**一次醒来只说话、或者只回一句就结束，
+               都是完整的反应**——手里那两只手不是任务清单，不用每轮都过一遍。
+            8. 你说话就是说话，不要加旁白、不要写"（他笑了笑）"这种舞台提示——那是别人看见的，
                不是你说出口的。
         """.trimIndent()
     }
@@ -452,3 +581,12 @@ private data class SayArgs(val text: String = "")
 /** `act` 的参数。同上。 */
 @Serializable
 private data class ActArgs(val intention: String = "", val targets: String = "")
+
+/** `plan` 的参数。同上——**全带默认值**，解不开时退回一个明天中午，由上面那些判断统一报出来。 */
+@Serializable
+private data class PlanArgs(
+    val what: String = "",
+    val day: Int = 1,
+    val hour: Int = 12,
+    val minute: Int = 0,
+)

@@ -2,6 +2,7 @@ package io.github.k1midi0.infinitesimal.session
 
 import io.github.k1midi0.infinitesimal.config.EndpointConfig
 import io.github.k1midi0.infinitesimal.config.ThinkingMode
+import io.github.k1midi0.infinitesimal.world.EventKind
 import io.github.k1midi0.infinitesimal.world.TimelineEntry
 import io.github.k1midi0.infinitesimal.world.WorldTime
 import kotlin.test.Test
@@ -78,5 +79,28 @@ class GameSessionWaitTest {
         assertEquals(WorldTime.of(2, 6), session.clock)
         assertTrue(session.log.any { it.text.contains("天亮了") })
         assertEquals(null, session.nextStop, "两件都过了，就没什么可等的了")
+    }
+
+    /**
+     * **时间轴是计划，记录层是记录**（§1.5、§12 第 20 项）。到期的事被取走之后，它该进事件流——
+     * append-only，过了这一局还在。
+     *
+     * 这一条合上的是一个存在很久的缺口：早先它们只落在会话日志里，而那是界面上的东西，重开就没了。
+     */
+    @Test
+    fun whatCameDueLandsInTheRecordNotJustInTheLog() = runBlocking {
+        val session = session()
+        session.world.timeline.put(entry("fire", WorldTime.of(2, 2), "邻居家着了火"))
+
+        session.waitUntilNextNow()
+
+        val recorded = session.world.log.all().filter { it.kind == EventKind.CLOCK }
+        assertEquals(1, recorded.size)
+        assertEquals("邻居家着了火", recorded.single().text)
+        // **记的是它到点的那个时刻，不是"现在"**——两个值在快进里恰好一样，但写法不能靠这个巧合。
+        assertEquals(WorldTime.of(2, 2), recorded.single().at)
+        assertEquals(null, recorded.single().actorId, "世界级的事没有主体")
+        // 玩家就在那一片里，所以他收到（投递范围与别处同一把尺子）。
+        assertTrue(recorded.single().seq in session.world.log.deliveredTo(PLAYER))
     }
 }

@@ -13,6 +13,7 @@ import io.github.k1midi0.infinitesimal.judge.Judge
 import io.github.k1midi0.infinitesimal.judge.JudgeRequest
 import io.github.k1midi0.infinitesimal.judge.Judgment
 import io.github.k1midi0.infinitesimal.judge.TargetAlignment
+import io.github.k1midi0.infinitesimal.judge.describeConsequence
 import io.github.k1midi0.infinitesimal.npc.Heard
 import io.github.k1midi0.infinitesimal.npc.Npc
 import io.github.k1midi0.infinitesimal.npc.Reaction
@@ -21,10 +22,12 @@ import io.github.k1midi0.infinitesimal.npc.Waking as NpcWaking
 import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.Renderer
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
+import io.github.k1midi0.infinitesimal.spatial.audience
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
 import io.github.k1midi0.infinitesimal.spatial.requiredChunks
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.EventKind
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.TerrainSnapshot
@@ -84,6 +87,13 @@ class PendingAlignment internal constructor(
      * 句话凭空消失，而它明明已经写在日志里了。
      */
     val said: String,
+    /**
+     * **这句话是说给谁听的**（§14.37）。第一步给的，与 [targets] 分开。
+     *
+     * 它与 [said] 一起等：玩家点「应用」之后才轮到这些人被唤醒。**它不是"谁听得见"**——旁边的人照样
+     * 收得到这件事（记录层的投递，代码做的），只是不会因此醒过来。
+     */
+    val addressed: List<String>,
     /** 玩家当初勾的那些。 */
     val picked: List<String>,
     /** 判定对齐出来的那些。**与 [picked] 不同，这是它存在的理由。** */
@@ -369,8 +379,11 @@ class GameSession(
         if (done.isNotEmpty()) {
             judgeAndCommit(done, spoken, scope)
         } else if (spoken.isNotEmpty()) {
-            // 只说话、不做事。**这一轮照样要收尾**：硬圈该补的补，导演该看的看（§14.33）。
-            afterTurn("", spoken, scope)
+            // 只说话、不做事。**这一轮照样要过第一步**——要判的是「这句话指向谁」，那是语义判断，代码
+            // 做不了（§14.37）。而它的产物只有一栏：听者。说话不产生后果，所以没有第二步。
+            val addressed = addressedBy(spoken)
+            recordSpeech(spoken, addressed)
+            afterTurn("", spoken, addressed, scope)
         }
     }
 
@@ -390,7 +403,7 @@ class GameSession(
         val p = pending ?: return
         run(scope, "算后果…") {
             pending = null
-            runEffects(p.turn, p.targets, p.intention, p.said, scope)
+            runEffects(p.turn, p.targets, p.intention, p.said, p.addressed, scope)
         }
     }
 
@@ -398,7 +411,7 @@ class GameSession(
     suspend fun applyPendingNow(scope: CoroutineScope? = null) {
         val p = pending ?: return
         pending = null
-        runEffects(p.turn, p.targets, p.intention, p.said, scope)
+        runEffects(p.turn, p.targets, p.intention, p.said, p.addressed, scope)
     }
 
     /**
@@ -437,8 +450,23 @@ class GameSession(
 
         say(LogLine.Kind.NOTE, "（你等到 ${stop.at}）")
         stop.happened.forEach { say(LogLine.Kind.NOTE, "· ${it.what}") }
-        // 到期的那些**已经从时间轴上取走**（时间轴是计划，不是记录）。它们该进记录层——**记录层还
-        // 没有**（§1.5），所以此刻它们只落在日志里，这也是"刚才那段时间里发生过什么"唯一的去处。
+        // 到期的那些**已经从时间轴上取走**（时间轴是计划，不是记录），所以这里就是它们唯一的落点。
+        //
+        // **记录层现在有了**（§14.37），于是 §12 第 20 项那个缺口在这里合上：它们进事件流，append-only，
+        // 过了这一局也还在。投递范围与别处同一把尺子——以玩家为中心的那一片。
+        //
+        // 一条局限写在明处：**这是一次世界级的事，而它的受众只按玩家身边那一片算**。远处一个同样该
+        // 知道"酒馆打烊了"的角色收不到——等角色多起来、时间轴上有跨地点的事时，这里要重新想。
+        stop.happened.forEach { item ->
+            world.log.append(
+                at = stop.at,
+                kind = EventKind.CLOCK,
+                actorId = null,
+                actorLabel = "",
+                text = item.what,
+                to = world.audience(PLAYER),
+            )
+        }
     }
 
     /**
@@ -561,6 +589,10 @@ class GameSession(
                 intention = intention,
                 selected = picked,
                 centers = picked,
+                // **把话一起递进去，于是说话与动作共用这一次第一步**（§14.37）。早先它不在这里，
+                // 说话要单独再跑一次对齐去找听者——"说+做"的一轮因此花两次调用，而两次之间还多出
+                // 一处会漂开的地方。
+                said = said,
             ),
         )
         val alignment = try {
@@ -571,10 +603,23 @@ class GameSession(
             return
         }
 
+        // **说话那件事与动作走哪条路无关，所以记录写在分岔之前。**
+        //
+        // 这是被测试逼出来的一条：第一版把 `recordSpeech` 写在 `Aligned` 那一支里，于是"说了句话 +
+        // 做了个指向不存在的东西的动作"这一轮里，**那句话连同它的记录一起消失了**——而它明明已经说
+        // 出口了。动作对不对齐得上，改变不了"他说过这句话"。
+        //
+        // 而对齐没成功时 `address` 那一栏没有答案，所以**没有人被指向**：这一片里的人照样收得到
+        // （投递），只是没人因此醒过来（唤醒）。
+        val addressed = (alignment as? TargetAlignment.Aligned)
+            ?.let { charactersAmong(it.addressed) }
+            ?: emptyList()
+        recordSpeech(said, addressed)
+
         when (alignment) {
-            is TargetAlignment.Aligned ->
+            is TargetAlignment.Aligned -> {
                 if (alignment.targets.toSet() != picked.toSet()) {
-                    pending = PendingAlignment(intention, said, picked, alignment.targets, turn)
+                    pending = PendingAlignment(intention, said, addressed, picked, alignment.targets, turn)
                     say(
                         LogLine.Kind.NOTE,
                         "对齐到：${alignment.targets.joinToString("、") { name(it) }}" +
@@ -583,8 +628,9 @@ class GameSession(
                     status = ""
                     return
                 } else {
-                    runEffects(turn, alignment.targets, intention, said, scope)
+                    runEffects(turn, alignment.targets, intention, said, addressed, scope)
                 }
+            }
 
             is TargetAlignment.Rejected -> {
                 // 这是给玩家看的那一层：**不出现任何系统词**。
@@ -615,6 +661,7 @@ class GameSession(
         targets: List<String>,
         intention: String,
         said: String,
+        addressed: List<String>,
         scope: CoroutineScope?,
     ) {
         // 同一个理由：标签要在落库之前抓。
@@ -681,8 +728,27 @@ class GameSession(
                 say(LogLine.Kind.NOTE, "   （这一次动作当作没发生；世界没动）")
             }
         }
+        // **记录层**（§6.1）：这一次动作真的落地了才写。
+        //
+        // 驳回的、协议失败的、没落在任何东西上的**都不记**——它们不是世界里发生过的事，而是一次没有
+        // 落地的尝试。记进去只会让别人的窗口里充满「某人试过、没成」，那不是记录，是噪声。
+        //
+        // 后果那几条**和这条记录绑在同一个字段上**（`Event.effects`）：§6.1 那条「一次提交产生的全部
+        // 后果不可切开」就落在那里——裁窗口时不会出现"看到杯子掉在地上却没看到桌子被掀"。
+        when (judgment) {
+            is Judgment.Applied -> recordAction(
+                intention,
+                judgment.consequences.map { describe(it, ::name) },
+                judgment.affected,
+                addressed,
+            )
+
+            is Judgment.Unchanged -> recordAction(intention, emptyList(), emptyList(), addressed)
+            else -> Unit
+        }
+
         selection = emptySet()
-        afterTurn(intention, said, scope)
+        afterTurn(intention, said, addressed, scope)
     }
 
     /**
@@ -711,13 +777,18 @@ class GameSession(
      * 2. **缓冲圈**：由**快速档**每回合看一眼，后台跑，**不挡玩家**。它觉得这一带还不用长，那是
      *    合法的结果——用户对这一条的原话是「什么都不做是合法结果」。
      */
-    private suspend fun afterTurn(intention: String, said: String, scope: CoroutineScope?) {
+    private suspend fun afterTurn(
+        intention: String,
+        said: String,
+        addressed: List<String>,
+        scope: CoroutineScope?,
+    ) {
         // **顺序是有理由的，不能换。**
         //
-        // 说与做都落完之后，先让**听见的人反应**（§5）——它们是这一轮的直接后果，而下一件事（补地形）
+        // 说与做都落完之后，先让**被指向的人反应**（§5）——它们是这一轮的直接后果，而下一件事（补地形）
         // 是世界的账，跟这一轮无关。反过来写的话，玩家会先看到"这一带还缺几块地"，再看到矮人答话，
         // 而事实发生的顺序正好相反。
-        val replies = hearAndReact(said, scope)
+        val replies = hearAndReact(said, addressed, scope)
 
         closeGap()
         // scope 为 null = 调用方是 spike 的挂起入口，它自己拿着协程；那一看就不起（否则一次
@@ -740,17 +811,21 @@ class GameSession(
     // ── 说话与听见（§5） ────────────────────────────────────────────────────────────
 
     /**
-     * 谁听得见这句话——**由判定的第一步裁**（§14.36）。
+     * 「这句话说给谁听」——**由判定的第一步裁**（§14.37）。
      *
      * 它走的是与「做」完全相同的第一步：同一个 `beginTurn`、同一份空间框、同一段提示词。唯一的区别
      * 是**跑完第一步就丢掉那个 `Turn`**：说话没有第二步，它不产生后果。
      *
+     * **它只在"只说话、不做事"时才被调到。** 说了又做的那种一轮里，第一步是 `judgeAndCommit` 跑的，
+     * 而这一栏已经从同一份 `Aligned` 里拿到了——"说话与动作共用一次第一步"正是 §14.37 要买的东西：
+     * 早先说话要单独再跑一次对齐去找听者（一次真金白银的调用）。
+     *
      * 驳回在这里不是失败。判定说"这一片里没有你点的那个东西"时，那句话**照样说出去了**——只是没人
-     * 听见。这个区别在界面上是看得出来的：日志里有「你说：…」，后面跟着「（没有人应声）」。
+     * 被指向。这个区别在界面上是看得出来的：日志里有「你说：…」，后面跟着「（没有人应声）」。
      */
-    private suspend fun hearersOf(spoken: String): List<String> {
+    private suspend fun addressedBy(spoken: String): List<String> {
         val picked = selection.toList()
-        phase("看谁听得见…")
+        phase("这句话是说给谁听的…")
 
         val turn = judge.beginTurn(
             world,
@@ -758,10 +833,11 @@ class GameSession(
                 actorId = PLAYER,
                 actorLabel = "你",
                 // **写成一次动作，而不是一串引文。** 判定的第一步读的是"这次动作指向谁"，而它认得的
-                // 动作形状就是这种第一人称的句子——`targetingPrompt` 里那条「我喊了一嗓子」正对着它。
+                // 动作形状就是这种第一人称的句子。
                 intention = "我开口说：「$spoken」",
                 selected = picked,
                 centers = picked,
+                said = spoken,
             ),
         )
 
@@ -773,7 +849,7 @@ class GameSession(
         }
 
         return when (alignment) {
-            is TargetAlignment.Aligned -> alignment.targets.filter { isCharacter(it) && it != PLAYER }
+            is TargetAlignment.Aligned -> charactersAmong(alignment.addressed)
 
             is TargetAlignment.Rejected -> {
                 say(LogLine.Kind.REJECT, "「${alignment.reason}」")
@@ -786,6 +862,58 @@ class GameSession(
                 emptyList()
             }
         }
+    }
+
+    /** 从一堆 id 里挑出**真在世界上、且真是角色的**那些——模型偶尔会报一个不存在的东西。 */
+    private fun charactersAmong(ids: List<String>): List<String> =
+        ids.filter { it != PLAYER && isCharacter(it) }.distinct()
+
+    // ── 记录层（§6.1） ──────────────────────────────────────────────────────────────
+
+    /**
+     * 把这一轮**说的话**写进记录层，并投递给这一片里的人（§14.37）。
+     *
+     * **投递不等于唤醒。** 隔壁桌收到了"他刚才说过那句话"，那进了它的记忆；而醒过来回应，只有被指向
+     * 的人才会。§3.2 那句「**投递总是发生，唤醒才是例外**」在代码里就是这一行与 [hearAndReact] 的
+     * 差别——而氛围 NPC 能有成百个而成本零增量，全部来源也是它。
+     *
+     * 它记的是**原话**（用户的裁定：「结构化一行，原话原样，代码拼」）。不加工是有理由的：一份由模型
+     * 转述过的历史，与"它当时到底听到了哪一句"是两个问题，而后者才是记录该回答的那个。
+     */
+    private fun recordSpeech(spoken: String, addressed: List<String>) {
+        if (spoken.isEmpty()) return
+        world.log.append(
+            at = world.clock,
+            kind = EventKind.SAY,
+            actorId = PLAYER,
+            actorLabel = labelOf(PLAYER),
+            text = spoken,
+            to = world.audience(PLAYER, addressed),
+        )
+    }
+
+    /**
+     * 把这一次**动作**写进记录层。**只有真的落地了的那种才写**——调用点负责判。
+     *
+     * [effects] 就是日志里那几条「· …」，**同一份文字**、不另写一遍：两处各写一遍之后迟早会有一处
+     * 先漂开，而症状是"记录里说的和玩家看到的不一样"，那种错没有任何东西会报。
+     */
+    private fun recordAction(
+        intention: String,
+        effects: List<String>,
+        affected: Collection<String>,
+        addressed: List<String>,
+    ) {
+        if (intention.isEmpty()) return
+        world.log.append(
+            at = world.clock,
+            kind = EventKind.ACT,
+            actorId = PLAYER,
+            actorLabel = labelOf(PLAYER),
+            text = intention,
+            effects = effects,
+            to = world.audience(PLAYER, addressed, affected),
+        )
     }
 
     /**
@@ -813,21 +941,28 @@ class GameSession(
      *
      * ## 深度钉在 1
      *
-     * **NPC 说的话不再唤醒别人。** 它会成环（两个矮人互相接话可以一直接下去），而更深的一层理由是
-     * 历史还不累积（§12 第 38 项）：一段只装着一句话的上下文，接不出有意义的三轮对话。等 §6 的滚动
-     * 窗口做出来，这一条该和它一起重新想。
+     * **NPC 说的话不再唤醒别人。** 它会成环——两个矮人互相接话可以一直接下去，而每一轮都是一次真金
+     * 白银的调用，且**没有一条自然的终止条件**：人聊天本来就可以一直聊。
+     *
+     * 早先这里的理由写的是「历史还不累积，一段只装着一句话的上下文接不出有意义的三轮对话」（§12 第
+     * 38 项），并注明"等 §6 的滚动窗口做出来，这一条该和它一起重新想"。**窗口做出来了（§14.37），
+     * 而结论没变**：现在挡着它的是成环与成本，不再是上下文太薄。要放开，得先有一条轮次上限，而那件事
+     * 没人真正需要——一个不接别人话的矮人看起来一点也不坏。
      */
-    private suspend fun hearAndReact(said: String, scope: CoroutineScope?): List<Spoken> {
+    private suspend fun hearAndReact(
+        said: String,
+        addressed: List<String>,
+        scope: CoroutineScope?,
+    ): List<Spoken> {
         if (said.isEmpty()) return emptyList()
 
-        val hearers = hearersOf(said)
-        if (hearers.isEmpty()) {
+        if (addressed.isEmpty()) {
             say(LogLine.Kind.NOTE, "（没有人应声——这一片里没有别人）")
             return emptyList()
         }
 
         val replies = mutableListOf<Spoken>()
-        for (id in hearers) {
+        for (id in addressed) {
             val task = startTask("${labelOf(id)}在回应…")
             val reaction = try {
                 writes.withLock {
@@ -962,26 +1097,12 @@ class GameSession(
         log = emptyList()
     }
 
-    private fun describe(c: Consequence, name: (String) -> String): String = when (c) {
-        is Consequence.Move -> "${name(c.id)} 挪到了 (${c.x}, ${c.y}, ${c.z}) 厘米"
-        is Consequence.SetAttribute -> "${name(c.id)} 的「${c.key}」变成「${c.value}」"
-        is Consequence.ChangeAppearance -> "${name(c.id)} 只是外表变了（描述作废）"
-        is Consequence.Destroy -> "${name(c.id)} 从世界里消失了"
-        is Consequence.Spawn -> "出现了「${c.entity.label}」"
-        is Consequence.Replace -> "${name(c.oldId)} 变成了「${c.entity.label}」（另一个东西）"
-        is Consequence.SetShape -> "${name(c.id)} 有了形状（占 ${c.shape.cellCount} 个格）"
-        // ── 地形（第八类，附录 A.15）────────────────────────────────────────────────
-        // 玩家的日志里不出现"地形格"这种系统词？**这里出现是有意的**：地形改动没有"一样东西"可以
-        // 指代，玩家能对上的只有位置。等界面能画地形之后，这一行应该换成坐标。
-        is Consequence.FillTerrain ->
-            "这一片地上铺了${materialName(c.material)}（框里 ${c.box.cellCount} 个格）"
-        is Consequence.DigTerrain -> "这一片地被挖空了（框里 ${c.box.cellCount} 个格）"
-        is Consequence.ReplaceTerrain ->
-            "这一片里的${materialName(c.from)}变成了${materialName(c.to)}（框里 ${c.box.cellCount} 个格）"
-    }
-
-    /** 材质 id → 给人看的名字。表里找不到就原样回那个 id——**不编一个名字出来**。 */
-    private fun materialName(id: String): String = world.materials.byId(id)?.name ?: id
+    /**
+     * 一条后果给人看的一句话。**实现搬到了 `judge/ConsequenceView.kt`**——它现在有三个消费者
+     * （玩家日志、记录层、AI 角色自己的动作），三处各写一遍迟早会漂开。
+     */
+    private fun describe(c: Consequence, name: (String) -> String): String =
+        describeConsequence(c, name, world.materials)
 
     /** 给界面显示"这是什么、在哪"。**位置只来自坐标**——关系不存成事实（附录 A.5）。 */
     fun subtitleOf(entity: Entity): String =

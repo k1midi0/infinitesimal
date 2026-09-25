@@ -1,7 +1,9 @@
 package io.github.k1midi0.infinitesimal.session
 
+import io.github.k1midi0.infinitesimal.world.Beat
 import io.github.k1midi0.infinitesimal.world.CHUNK_CELLS
 import io.github.k1midi0.infinitesimal.world.CharacterCard
+import io.github.k1midi0.infinitesimal.world.Cycle
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CHUNKS
 import io.github.k1midi0.infinitesimal.world.Landform
@@ -12,8 +14,10 @@ import io.github.k1midi0.infinitesimal.world.TerrainCell
 import io.github.k1midi0.infinitesimal.world.TerrainColumn
 import io.github.k1midi0.infinitesimal.world.TerrainRun
 import io.github.k1midi0.infinitesimal.world.TerrainSnapshot
+import io.github.k1midi0.infinitesimal.world.Todo
 import io.github.k1midi0.infinitesimal.world.WorldDepth
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
+import io.github.k1midi0.infinitesimal.world.WorldTime
 import io.github.k1midi0.infinitesimal.world.ZoneBlock
 import io.github.k1midi0.infinitesimal.world.ZoneCell
 import io.github.k1midi0.infinitesimal.world.ZoneTile
@@ -239,9 +243,9 @@ object StartingWorld {
         // **开局世界里唯一的另一个活人**（§14.36）。它是**氛围 NPC** 的样板：§3.2 说这类角色无人
         // 值守时"根本不是 AI"——代码查状态循环就知道它在干什么，零模型调用；只有被搭话时才唤醒。
         //
-        // 它的**状态循环**还没做（§12 第 24 项），所以现在它只是"待在这儿"。这不影响这一刀要验的
-        // 那件事——**被指向才唤醒、唤醒之后走同一套判定**——因为循环管的是"没人理它时它在干什么"，
-        // 而被唤醒时那件事一定已经被接管了。
+        // **它的状态循环与待办（§14.37）** 是这个样板真正的骨架：`cycle` 是作息（代码查表，不花钱），
+        // `todos` 是打算（进提示词，到点提醒它）。两样都不影响"被指向才唤醒、唤醒之后走同一套判定"
+        // 那条路——循环管的是"没人理它时它在干什么"，而被唤醒时那件事一定已经被接管了。
         Entity(
             id = "dwarf",
             kind = "角色",
@@ -251,6 +255,24 @@ object StartingWorld {
             x = 1000, y = 200, z = GROUND,
             attributes = mapOf("两手" to "捧着自己那只锡杯", "神色" to "半醉"),
             shape = Shapes.box(45, 30, 120),
+            // 作息写成四条，**跨夜那一格是刻意的**：23:00 打烊之后到次日 07:00 开门之前，人还在
+            // "打烊"那一格里——`Cycle.stateAt` 的环绕读法就是为这一条写的。
+            cycle = Cycle(
+                listOf(
+                    Beat(atMinute = 7 * 60, state = "在后厨生火、把杯子一只只擦干净，等第一个客人进门。"),
+                    Beat(atMinute = 12 * 60, state = "坐在柜台后面吃自己那份午饭，谁也不理。"),
+                    Beat(atMinute = 18 * 60, state = "站在柜台后面招呼客人，手里那块布一直没停过。"),
+                    Beat(atMinute = 23 * 60, state = "灭灯、闩门、把椅子倒扣在桌上。"),
+                ),
+            ),
+            // **开局就有一条到点的待办**，这是有意的：到点提醒那条路不装一条真待办就永远验不到。
+            // 它是一件小事、而且不需要什么目标，所以不会把一场对话搅成一次行动。
+            todos = listOf(
+                Todo(
+                    at = WorldTime.of(day = 1, hour = 17, minute = 30),
+                    what = "后厨那扇窗子关不严，夜里风大，得找块木头把缝塞上。",
+                ),
+            ),
             cards = listOf(
                 CharacterCard(
                     "身份",

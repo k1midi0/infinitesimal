@@ -1,6 +1,7 @@
 package io.github.k1midi0.infinitesimal.npc
 
 import io.github.k1midi0.infinitesimal.llm.ToolDefinition
+import io.github.k1midi0.infinitesimal.llm.int
 import io.github.k1midi0.infinitesimal.llm.text
 import io.github.k1midi0.infinitesimal.llm.tool
 
@@ -39,6 +40,17 @@ object NpcTools {
      */
     const val ACT = "act"
 
+    /**
+     * **安排一件将来要做的事**——写进它自己的 [io.github.k1midi0.infinitesimal.world.Todo]（§3.2.5）。
+     *
+     * 这是「**角色自己也能写待办**」那条设计的落点，而它与[状态循环][io.github.k1midi0.infinitesimal.world.Cycle]
+     * 不是一个东西：循环是作息（谁什么时候开门），归导演；待办是打算（明天去修铠甲），归它自己。
+     *
+     * **到点不等于自动发生**：到点了它只是出现在提示词里，那件事照常要过判定（这只手不产生后果，
+     * 世界一个字都不会动）。
+     */
+    const val PLAN = "plan"
+
     val ALL: List<ToolDefinition> = listOf(
         tool(
             SAY,
@@ -63,6 +75,17 @@ object NpcTools {
                     "**拿不准就不填**——判定会自己对齐它该落在哪些东西上。",
             ),
             optional = listOf("targets"),
+        ),
+        tool(
+            PLAN,
+            "给自己安排一件**将来**要做的事。到点之后它会在你的提示词里出现，提醒你去做——" +
+                "**而它不会自己发生**：到时候你还是得真的动手，那件事照常要过判定。" +
+                "它不影响眼前这一刻，所以只有真的有事要安排时才用它。",
+            int("day", "第几天（今天是第几天，看上面【现在】那一段）"),
+            int("hour", "几点，0–23"),
+            int("minute", "几分，0–59，不填就是 0"),
+            text("what", "那件事，一句话（例如「去东街找那个木匠」）"),
+            optional = listOf("minute"),
         ),
     )
 }
