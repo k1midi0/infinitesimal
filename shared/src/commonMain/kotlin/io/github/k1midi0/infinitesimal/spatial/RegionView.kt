@@ -174,28 +174,7 @@ object RegionView {
         }.trimEnd()
     }
 
-    private fun describe(world: World, e: Entity): String {
-        return buildString {
-            append(e.label)
-            append("   id=").append(e.id)
-            // **坐标印成厘米**：世界存的就是厘米，而"够不够得着"要算的正是它。格子那边的粗粒度
-            // 留给网格，精度留在这里。
-            append("   (").append(e.x).append(", ").append(e.y).append(", ").append(e.z).append(") 厘米")
-            // **属性必须印出来，这不是装饰。**
-            //
-            // 世界对一样东西的真相就装在这几个键值里——酒杯的「内容物=半杯麦酒」、木桌的「材质=橡木」。
-            // 不印，判定手里就只有一个光秃秃的名字，于是玩家说「那杯麦酒」、实体叫「酒杯」时，它
-            // （**正确地，因为它只知道名字**）驳回了「这一片里没有麦酒」。根不在这里，但那一次驳回
-            // 之所以看起来像"同义说法没处理"，正是因为属性没送到它手里（§14.24）。
-            //
-            // **只印属性，不印 `sentences`。** 那些是按句存的散文描述，是判定的**产物**而不是它的输入
-            // （渲染在读它、判定在写它），而且长得多——一个桶的描述几百字，列十几样东西就装不下了。
-            if (e.attributes.isNotEmpty()) {
-                append("   ")
-                append(e.attributes.entries.joinToString("、") { "${it.key}=${it.value}" })
-            }
-        }
-    }
+    private fun describe(world: World, e: Entity): String = describeThing(world, e)
 
     /**
      * 图例里的一行：**一行一种材质**。
@@ -251,4 +230,26 @@ object RegionView {
     }
 
     private fun pad(s: String): String = " " + s.padEnd(2)
+}
+
+/**
+ * 清单里的一行：**一样东西叫什么、id 是什么、在哪、身上带着什么属性。**
+ *
+ * 从 [RegionView] 里抽出来，因为现在**有两份视图要列东西**：判定那份空间框，与角色那份"我在的这一
+ * 块"（`spatial/ChunkDetail.kt`）。两处各写一遍之后，迟早有一处先漂开——而这里漂开的后果是具体的：
+ * **属性不印，读的人手里就只剩一个光秃秃的名字**，于是"那杯麦酒"与实体名"酒杯"对不上（§14.24）。
+ *
+ * **只印属性，不印 `sentences`。** 那些是按句存的散文描述，是判定的**产物**而不是它的输入
+ * （渲染在读它、判定在写它），而且长得多——一个桶的描述几百字，列十几样东西就装不下了。
+ *
+ * 坐标**印成厘米**：世界存的就是厘米，而"够不够得着"要算的正是它。格子那边的粗粒度留给网格。
+ */
+internal fun describeThing(world: World, e: Entity): String = buildString {
+    append(e.label)
+    append("   id=").append(e.id)
+    append("   (").append(e.x).append(", ").append(e.y).append(", ").append(e.z).append(") 厘米")
+    if (e.attributes.isNotEmpty()) {
+        append("   ")
+        append(e.attributes.entries.joinToString("、") { "${it.key}=${it.value}" })
+    }
 }

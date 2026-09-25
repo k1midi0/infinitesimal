@@ -15,15 +15,21 @@ const val ZONE_TERRAIN_CELLS = ZONE_CM / TERRAIN_CM
 
 /**
  * 一片地方是什么样子。**闭合枚举**——它只有这几种，写列表外的词是协议内失败，不是新地貌。
+ *
+ * ## 为什么有一个 [glyph]
+ *
+ * [label] 是给人读的（「镇」「林」），而**它没法进网格**：中文在等宽字体里占两列，一张 9×9 的图会
+ * 散架，而对齐正是网格的全部价值。所以网格里用 [glyph] 这个 ASCII 字符，真正的名字写在下边的图例里
+ * ——与 `spatial/RegionView.kt` 里材质那套做法逐字相同。
  */
-enum class Landform(val label: String) {
-    CITY("城"),
-    TOWN("镇"),
-    ROAD("路"),
-    FOREST("林"),
-    WILD("野"),
-    WATER("水"),
-    MOUNTAIN("山"),
+enum class Landform(val label: String, val glyph: Char) {
+    CITY("城", 'C'),
+    TOWN("镇", 'T'),
+    ROAD("路", 'R'),
+    FOREST("林", 'F'),
+    WILD("野", 'W'),
+    WATER("水", '~'),
+    MOUNTAIN("山", '^'),
 }
 
 /**

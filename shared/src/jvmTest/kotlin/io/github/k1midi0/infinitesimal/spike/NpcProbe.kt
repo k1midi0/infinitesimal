@@ -5,6 +5,7 @@ import io.github.k1midi0.infinitesimal.judge.Judge
 import io.github.k1midi0.infinitesimal.npc.Npc
 import io.github.k1midi0.infinitesimal.session.GameSession
 import io.github.k1midi0.infinitesimal.session.StartingWorld
+import io.github.k1midi0.infinitesimal.spatial.ChunkDetail
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.ChunkView
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
@@ -63,7 +64,11 @@ class NpcProbe {
         if (dwarf == null || here == null) {
             println("（世界里没有矮人）")
         } else {
-            println(ChunkView.render(tavernownly, originOf(tavernownly), here, radius = HARD_RADIUS_CHUNKS))
+            println("── 远的那一张：这一带是什么地方（八米一格）──")
+            println(ChunkView.renderLandform(tavernownly, originOf(tavernownly), here, radius = HARD_RADIUS_CHUNKS))
+            println()
+            println("── 近的那一张：它手边有什么（一米一格）──")
+            println(ChunkDetail.render(tavernownly, here, "dwarf"))
             println()
             println("矮人在 (${dwarf.x}, ${dwarf.y}, ${dwarf.z}) 厘米；人设 ${dwarf.cards.size} 张卡。")
         }

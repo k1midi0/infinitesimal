@@ -15,6 +15,7 @@ import io.github.k1midi0.infinitesimal.llm.ThinkingRequest
 import io.github.k1midi0.infinitesimal.llm.ToolCallRequest
 import io.github.k1midi0.infinitesimal.llm.Usage
 import io.github.k1midi0.infinitesimal.llm.decodeCall
+import io.github.k1midi0.infinitesimal.spatial.ChunkDetail
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.ChunkView
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
@@ -372,15 +373,24 @@ class Npc(
         }
 
         appendLine("【你这双眼睛看得见的一片】")
-        // 半径与玩家硬圈一样大（用户裁定，§14.36）。`@` 那一格是**你自己站的地方**——这个函数是
-        // 给导演写的，"玩家"是它的用词；在角色这里它标记的是这个角色自己。
+        // **两个尺度，各答一个问题**（§14.36），理由写在 `spatial/ChunkDetail.kt` 上：
+        //
+        //   粗的（八米一格）：这一带是什么地方   —— 城/镇/路/林/野
+        //   细的（一米一格）：我手边有什么       —— 具体哪样东西、脚下什么材质
+        //
+        // 早先这里只有粗的那一份，而它画的是"有没有地形"——实测出来是一张**全是同一个字符**的图
+        // （矮人那 9×9 里 81 格全是 `#`）。那不是错，那是空的：图上没有一个字是它还不知道的。
         val here = world.chunkOfEntity(listener.id)
         if (here == null) {
             appendLine("（你不在任何一块地上）")
         } else {
-            appendLine(ChunkView.render(world, waking.origin, here, radius = HARD_RADIUS_CHUNKS))
-            appendLine("一格是八米。`@` 是你自己那一块，`#` 是已经有地的地方，`.` 是还没有长出来的空地。")
-            appendLine("**图外面有什么，你不知道。**")
+            appendLine("**远的那一张（八米一格）：这一带是什么地方。**")
+            appendLine(ChunkView.renderLandform(world, waking.origin, here, radius = HARD_RADIUS_CHUNKS))
+            appendLine()
+            appendLine("**近的那一张（一米一格）：你手边有什么。**")
+            appendLine(ChunkDetail.render(world, here, listener.id))
+            appendLine()
+            appendLine("**两张图之外有什么，你不知道**——也不要猜。")
         }
         appendLine()
 
@@ -419,14 +429,17 @@ class Npc(
 
             1. **你就是人设里那个人。** 你的身份、脾气、知道些什么，一律以人设为准；人设里没写的，
                不要自己编一个出来。
-            2. **你只看得见你身边这一片。** 下面那张图就是你的全部视野。图外面有什么，你不知道——
+            2. **你只看得见你身边这一片。** 下面那两张图就是你的全部视野。图外面有什么，你不知道——
                也不要猜。
             3. **你不掌控世界。** 不要描述自己做成了什么，那是判定的活；你只说自己要做什么、
                说什么。
             4. **什么都不做是允许的。** 不想理就是不想理，那也是一个反应——不要为了"有反应"而硬说
                一句。
-            5. 说一句就调一次 `say`，做一件就调一次 `act`。做完了就停下来，不要一直调下去。
-            6. 你说话就是说话，不要加旁白、不要写"（他笑了笑）"这种舞台提示——那是别人看见的，
+            5. 说一句就调一次 `say`，做一件就调一次 `act`。**做完了就停下来**，不要一直调下去。
+            6. **一次醒来通常只说一句，最多两句。** 对话是一来一回的——一口气说上四句，读起来像自
+               言自语，不像有人在你对面。要做的事也最多一件；被驳回了就换个做法或者干脆不做，
+               不要对着同一件事反复试。
+            7. 你说话就是说话，不要加旁白、不要写"（他笑了笑）"这种舞台提示——那是别人看见的，
                不是你说出口的。
         """.trimIndent()
     }

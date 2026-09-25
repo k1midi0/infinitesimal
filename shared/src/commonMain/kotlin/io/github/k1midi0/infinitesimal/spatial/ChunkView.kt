@@ -4,12 +4,16 @@ import io.github.k1midi0.infinitesimal.world.BUFFER_RADIUS_CHUNKS
 import io.github.k1midi0.infinitesimal.world.CHUNK_CELLS
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CHUNKS
+import io.github.k1midi0.infinitesimal.world.Landform
+import io.github.k1midi0.infinitesimal.world.TERRAIN_CM
 import io.github.k1midi0.infinitesimal.world.TerrainBox
 import io.github.k1midi0.infinitesimal.world.TerrainCell
 import io.github.k1midi0.infinitesimal.world.World
+import io.github.k1midi0.infinitesimal.world.ZoneCell
 import io.github.k1midi0.infinitesimal.world.chunkOf
 import io.github.k1midi0.infinitesimal.world.floorDiv
 import io.github.k1midi0.infinitesimal.world.terrainCellOf
+import io.github.k1midi0.infinitesimal.world.zoneCellOf
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.sqrt
@@ -140,6 +144,57 @@ object ChunkView {
         origin: ChunkOrigin,
         player: ChunkKey,
         radius: Int = BUFFER_RADIUS_CHUNKS,
+    ): String = disc(world, origin, player, radius) { ax, ay, withinHard ->
+        cell(world, player, ax, ay, withinHard)
+    }
+
+    /**
+     * **同一个圆盘，换一个问法：这一带是什么地方。**
+     *
+     * [render] 回答的是导演的问题——「哪一块还没有地形」，所以它的字符全是"有地/缺地"。而角色的
+     * 问题是另一个：「我四周是什么地方」。拿导演那张图去答它，结果是**一整片同样的 `#`**（实测：
+     * 矮人那张 9×9 图上一个别的字都没有，§14.36），那不是错，那是空的。
+     *
+     * 所以这一版把**地貌**画上去（区划层，§12 第 28 项：十米一格，城/镇/路/林/野/水/山），于是同一
+     * 张图变成「你在镇子中心，往东是石板路，再往东是官道」。**缺地那两格照旧保留**——`!` 与 `.` 在
+     * 这一版里仍然有意义，它们是"这里还不存在"。
+     *
+     * 中文进不了网格（等宽字体里占两列，图会散架），所以格子里是 ASCII，名字在下边的图例里。
+     */
+    fun renderLandform(
+        world: World,
+        origin: ChunkOrigin,
+        player: ChunkKey,
+        radius: Int = HARD_RADIUS_CHUNKS,
+    ): String {
+        // 图例只列**这一片里真的出现过**的地貌，不把七个枚举抄一遍。
+        val seen = linkedSetOf<Landform>()
+        val grid = disc(world, origin, player, radius) { ax, ay, withinHard ->
+            landformCell(world, player, ax, ay, withinHard, seen)
+        }
+        return buildString {
+            append(grid)
+            append('\n')
+            append("@ 是你自己站的那一块。")
+            append("一格是八米：C 城、T 镇、R 路、F 林、W 野、~ 水、^ 山；")
+            append("# 是有地但还没划进任何一片地方，")
+            append("! 是这一带还缺、.")
+            append(" 是更远处还缺。\n")
+            if (seen.isNotEmpty()) {
+                append("这一片里出现的：")
+                append(seen.joinToString("、") { "${it.glyph} ${it.label}" })
+                append('\n')
+            }
+        }
+    }
+
+    /** 圆盘那一套排版。两个视图的行头列头逐字相同——它们是同一张图的两种问法。 */
+    private fun disc(
+        world: World,
+        origin: ChunkOrigin,
+        player: ChunkKey,
+        radius: Int,
+        glyph: (ax: Int, ay: Int, withinHard: Boolean) -> Char,
     ): String {
         val width = 2 * radius + 1
         val r2 = radius * radius
@@ -162,7 +217,7 @@ object ChunkView {
                 val d2 = dx * dx + dy * dy
                 val ch = when {
                     d2 > r2 -> ' '
-                    else -> cell(world, player, ax, ay, d2 <= hard2)
+                    else -> glyph(ax, ay, d2 <= hard2)
                 }
                 sb.append(ch)
             }
@@ -209,6 +264,42 @@ object ChunkView {
         world.terrain.isGenerated(ChunkKey(ax, ay)) -> GENERATED
         withinHard -> REQUIRED
         else -> OPTIONAL
+    }
+
+    /**
+     * [renderLandform] 那一版的一格。
+     *
+     * **顺序是有意的**：自己那一块永远最优先（`@`），因为"我在哪"是读图的人第一个要找的东西；
+     * 其次是缺地（`!`/`.`）——那是"这里还不存在"，比"这里是什么地方"更硬的信息；然后才轮到地貌。
+     *
+     * 区划是十米一格、区块是八米一块，两者**不对齐**：一块区块可能横跨两个区划格。这里取的是
+     * **区块中心那一点落在哪个区划格里**——区划本来就是"这一片大致是什么"，不是逐格的真值
+     * （附录 A.16：区划是意图，地形是事实，两者允许不一致）。
+     */
+    private fun landformCell(
+        world: World,
+        player: ChunkKey,
+        ax: Int,
+        ay: Int,
+        withinHard: Boolean,
+        seen: MutableSet<Landform>,
+    ): Char {
+        if (ax == player.x && ay == player.y) return PLAYER
+        if (!world.terrain.isGenerated(ChunkKey(ax, ay))) {
+            return if (withinHard) REQUIRED else OPTIONAL
+        }
+
+        // 区块中心的世界厘米坐标（一块 8 米见方，所以中心在 +4 米）。
+        val centreCm = CHUNK_CELLS * TERRAIN_CM / 2
+        val tile = world.zoning.tileAt(
+            ZoneCell(
+                zoneCellOf(ax * CHUNK_CELLS * TERRAIN_CM + centreCm),
+                zoneCellOf(ay * CHUNK_CELLS * TERRAIN_CM + centreCm),
+            ),
+        ) ?: return GENERATED
+
+        seen += tile.landform
+        return tile.landform.glyph
     }
 
     /**

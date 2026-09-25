@@ -12,8 +12,9 @@ import io.github.k1midi0.infinitesimal.session.StartingWorld
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
 import io.github.k1midi0.infinitesimal.world.ChunkKey
+import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
-import io.github.k1midi0.infinitesimal.world.WorldSnapshot
+
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -39,8 +40,12 @@ class NpcTest {
         thinking = ThinkingMode.Always,
     )
 
-    private fun world(seed: List<io.github.k1midi0.infinitesimal.world.Entity> = StartingWorld.tavern()): World =
-        World.from(WorldSnapshot(seed))
+    /**
+     * 开局世界。**用 `StartingWorld.snapshot()`，不要手写 `WorldSnapshot(tavern())`**——后者看着对，
+     * 而它漏掉规则书、地形、区划三样（§14.36 里那个坑，探针第一版就这么栽过）。
+     */
+    private fun world(seed: List<Entity> = StartingWorld.tavern()): World =
+        World.from(StartingWorld.snapshot().copy(entities = seed))
 
     private fun originOf(world: World): ChunkOrigin =
         ChunkOrigin.atPlayerStart(world.chunkOfEntity("player") ?: ChunkKey(0, 0))
@@ -174,9 +179,12 @@ class NpcTest {
         assertFalse("口癖" in body, "卡的标题永不进提示词")
         // 结构化属性进去——它是"世界状态"，与卡是两回事
         assertTrue("半醉" in body)
-        // 视野：区块地图那一段，以及它自己的位置
+        // 视野：两张图，各一个尺度（§14.36）
         assertTrue("【你这双眼睛看得见的一片】" in body)
-        assertTrue("图外面有什么，你不知道" in body)
+        assertTrue("远的那一张" in body && "近的那一张" in body, "粗的看地方，细的看手边")
+        assertTrue("两张图之外有什么，你不知道" in body)
+        // 细的那张要真的带出它手边的东西——不然两张都只是背景
+        assertTrue("【这一块里的东西】" in body)
         // 听见的那句话原样进去，不做任何处理（§5.1）
         assertTrue("你好啊。" in body)
         assertTrue("玩家说的话" !in body, "话不做改写——原样交给它")
