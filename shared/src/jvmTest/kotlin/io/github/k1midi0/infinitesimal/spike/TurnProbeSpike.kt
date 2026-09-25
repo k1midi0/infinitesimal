@@ -3,6 +3,7 @@ package io.github.k1midi0.infinitesimal.spike
 import io.github.k1midi0.infinitesimal.session.GameSession
 import io.github.k1midi0.infinitesimal.session.LogLine
 import io.github.k1midi0.infinitesimal.session.PLAYER
+import io.github.k1midi0.infinitesimal.session.StartingWorld
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -74,8 +75,11 @@ class TurnProbeSpike {
         assertTrue(pending.targets.isNotEmpty(), "该补出对象来")
         assertEquals(emptyList(), pending.picked, "玩家什么都没勾")
         // **停在这里世界必须一个字都没动。** 这是整条预览能成立的前提：第一步只对齐，不改世界。
-        // 酒杯还在 80 厘米的桌面上（关系不存成事实，位置就是坐标——附录 A.5）。
-        assertEquals(80, session.world.byId("wine_cup")?.z, "预览期间酒杯还该在桌面上")
+        // 酒杯还摆在桌上（关系不存成事实，位置就是坐标——附录 A.5）。**基准从内容里取，不写死数字**：
+        // 世界坐标整个抬到地面之上（`GROUND`）之后，这里原来那个 `80` 就不再是"桌面上"了，而它当时
+        // 报出来的话（"酒杯还该在桌面上"）看着像判定错了，不像一个过期的夹具。
+        val onTheTable = StartingWorld.tavern().first { it.id == "wine_cup" }.z
+        assertEquals(onTheTable, session.world.byId("wine_cup")?.z, "预览期间酒杯还该在桌面上")
         assertTrue(
             session.log.none { it.kind == LogLine.Kind.OK },
             "还没应用，不该有「成立」那一行：\n" + session.log.joinToString("\n") { "  [${it.kind}] ${it.text}" },
@@ -90,6 +94,23 @@ class TurnProbeSpike {
         )
         assertTrue(session.selection.isEmpty(), "跑完一轮该清空勾选")
         println("▸ ③b 点了「应用」：第二步跑完，世界动了")
+
+        // ── ③c 把酒杯放下：这是 ③ 的后果逼出来的一步 ────────────────────────────────
+
+        /*
+         * 端起酒杯之后，玩家身上多了一条「两手 = 端着酒杯」。下一步要抡斧头，而判定把那一支**正确地
+         * 驳回了**：
+         *
+         *     你两手都端着酒杯呢……斧头是挂在腰上的，得腾出手来才能握住它抡起来……
+         *
+         * 那条理由是对的——端着酒还能劈桌子，本来就不该成立。所以错的是这一支探针的场景：它假设了两轮
+         * 之间玩家什么都没拿。**这一条是这一刀之后才露出来的**：判定的玩家状态比以前厚，于是"上一步
+         * 留下了什么"开始真的影响下一步。
+         */
+        session.clearSelection()
+        session.runTurn(said = "", acted = "我把手里那杯麦酒放回桌上。")
+        if (session.pending != null) session.applyPendingNow()
+        println("▸ ③c 把酒杯放下：玩家空出手来了")
 
         // ── ④ 看过的东西被毁掉：先证明预览拦得住，再放行 ────────────────────────────
 
@@ -116,7 +137,10 @@ class TurnProbeSpike {
 
         assertTrue(
             session.world.byId("oak_table") == null,
-            "桌子该没了。世界里现在有：${session.world.all().joinToString("、") { it.id }}",
+            "桌子该没了。世界里现在有：${session.world.all().joinToString("、") { it.id }}" +
+                // 这一支的结论是**模型给的**，所以失败时唯一能说明问题的是日志尾巴：被驳回了、
+                // 还是换了另一种改法，两句理由完全不同。
+                "｜日志尾：\n" + session.log.takeLast(14).joinToString("\n") { "  [${it.kind}] ${it.text}" },
         )
         assertTrue(
             "oak_table" !in session.observations,
