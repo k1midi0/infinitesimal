@@ -1,5 +1,6 @@
 package io.github.k1midi0.infinitesimal.npc
 
+import io.github.k1midi0.infinitesimal.config.ContextSettings
 import io.github.k1midi0.infinitesimal.config.EndpointConfig
 import io.github.k1midi0.infinitesimal.config.ThinkingMode
 import io.github.k1midi0.infinitesimal.judge.Judge
@@ -14,9 +15,11 @@ import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.EventKind
+import io.github.k1midi0.infinitesimal.world.Note
 import io.github.k1midi0.infinitesimal.world.Spot
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldTime
+import io.github.k1midi0.infinitesimal.world.live
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -363,5 +366,270 @@ class NpcTest {
         assertTrue("这一回合的总线上没有" in script.bodies[1], "查不到要说清楚，不能编")
         assertTrue("上一回合的秘密" !in script.bodies[1], "更早的绝不漏出去——那正是自然遗忘")
         assertTrue(reaction.problems.isEmpty(), "查不到不是协议问题")
+    }
+
+    // ── 笔记（§6.3、§6.4、§6.6） ────────────────────────────────────────────────────
+
+    /**
+     * 一次唤醒发出来的那些请求体。
+     *
+     * **不从某个固定下标取**：一次唤醒发几个请求是不定的（每调一次手就多一个来回，最后一次总是模型空手
+     * 收工），照下标取会随脚本改动而错位，而且错了看着还挺像对的。
+     *
+     * 它把工具结果那几条消息也算进来——那是**故意的**：被退回去的话就写在工具结果里，而"它有没有收到
+     * 那句话"正是要验的。代价是断言用的字符串必须足够特别，不能是提示词里到处都有的词。
+     */
+    private fun bodiesIn(script: Scripted, from: Int = 0) = script.bodies.drop(from)
+
+    /** 同上，但只留**提示词**那几条（`user`）——要看"模型当下眼前有什么"时用这个。 */
+    private fun promptsIn(script: Scripted, from: Int = 0) =
+        bodiesIn(script, from).filter { "\"role\":\"user\"" in it }
+
+    /**
+     * **这一次请求新拼的那一段提示词。**
+     *
+     * 一个请求体里装着整串历史，而历史里存着**之前几次请求的提示词**（它们本身就是消息）。所以"这一次
+     * 给它的提示词里有没有某一节"不能拿整个请求体去查——那会查到旧的、甚至查到一次还没有笔记时的自己。
+     * 最后一次 `user` 消息之后的那一截才是这一次新拼的。
+     */
+    private fun lastPromptIn(body: String): String =
+        body.substringAfterLast("\"role\":\"user\"")
+
+    /** 【你记下的事】那一节，掐到下一节开头。**只在这一次的提示词里找**。 */
+    private fun notesSectionIn(body: String): String =
+        lastPromptIn(body).substringAfter("【你记下的事】").substringBefore("【这一片里刚刚发生的事】")
+
+    @Test
+    fun itCanWriteDownSomethingItMustNotForget() = runBlocking {
+        val script = Scripted(
+            listOf(
+                turn("c1", "note", """{"text":"玩家欠我一杯酒，说下次给钱。","tag":"约"}"""),
+                stop(),
+            ),
+        )
+        val world = world()
+
+        val reaction = npcOf(script).wake(world, Waking("dwarf", greeted("酒先记着。"), originOf(world)))
+
+        assertTrue(reaction.problems.isEmpty(), "写笔记不是协议问题")
+        val notes = world.byId("dwarf")?.notes.orEmpty()
+        assertEquals(1, notes.size)
+        assertEquals("玩家欠我一杯酒，说下次给钱。", notes.single().text)
+        assertEquals("约", notes.single().tag)
+        assertEquals("n1", notes.single().id)
+        assertEquals(world.clock, notes.single().at, "笔记要落上写下来的时刻")
+        assertEquals(null, notes.single().supersedes)
+    }
+
+    @Test
+    fun anoteItWroteComesBackOnTheNextWaking() = runBlocking {
+        val script = Scripted(
+            listOf(
+                turn("c1", "note", """{"text":"玩家欠我一杯酒。"}"""),
+                stop(),
+                // 第二次唤醒：它什么都不用做，这一帧只是让请求发出去
+                stop(),
+            ),
+        )
+        val world = world()
+        val npc = npcOf(script)
+
+        npc.wake(world, Waking("dwarf", greeted("记着。"), originOf(world)))
+        npc.wake(world, Waking("dwarf", greeted("刚才说的事呢？"), originOf(world)))
+
+        // **常驻注入**（§6.3）：第二次唤醒发给模型的提示词里要有它——请求体是客观证据，不是我们自己的账。
+        val second = bodiesIn(script).last()
+        val section = notesSectionIn(second)
+        assertTrue("【你记下的事】" in lastPromptIn(second), "笔记那一节每轮都要在")
+        assertTrue("玩家欠我一杯酒。" in section, "上一轮记下的事这一轮要回到眼前")
+        assertTrue("n1" in section, "编号要在——它是点名替代一条旧笔记时唯一的抓手")
+    }
+
+    @Test
+    fun replacingANoteRetiresTheOldOneWithoutDeletingIt() = runBlocking {
+        val script = Scripted(
+            listOf(
+                turn("c1", "note", """{"text":"玩家欠我一杯酒。"}"""),
+                stop(),
+                turn("c2", "note", """{"text":"那杯酒他已经还了。","supersedes":"n1"}"""),
+                stop(),
+                // **第三次唤醒只为看一眼**：前两次里各写一条，而"被替代的那条不再注入"要在**下一次**
+                // 唤醒的提示词里才看得出来——写它的那一次，提示词早就拼好了。
+                stop(),
+            ),
+        )
+        val world = world()
+        val npc = npcOf(script)
+
+        npc.wake(world, Waking("dwarf", greeted("记着。"), originOf(world)))
+        npc.wake(world, Waking("dwarf", greeted("还你酒。"), originOf(world)))
+        val beforeThirdWake = script.bodies.size
+        npc.wake(world, Waking("dwarf", greeted("还有事么？"), originOf(world)))
+
+        val notes = world.byId("dwarf")?.notes.orEmpty()
+        // **两条都在**（§6.4：永不删除），而只有新的那条还算数。
+        assertEquals(2, notes.size)
+        assertEquals("n1", notes.last().supersedes)
+        assertEquals(listOf("n2"), notes.live().map { it.id })
+
+        // 而"还算数"这件事在提示词里看得见：新的在、旧的**不在**。两条同时出现的话，模型会两条都信。
+        //
+        // **只看这一次唤醒新拼的那一段**：请求体里装着历史，而历史里存着之前几次的提示词——拿整个
+        // 请求体去查，会查到一次还没有笔记（或者还有旧笔记）时的自己。
+        val fresh = bodiesIn(script, from = beforeThirdWake).map { lastPromptIn(it) }
+        assertTrue(fresh.isNotEmpty(), "第三次唤醒应当发出请求")
+        assertTrue(fresh.any { "那杯酒他已经还了。" in it }, "新的那条要在眼前")
+        assertTrue(fresh.none { "玩家欠我一杯酒。" in it }, "被替代的不再注入——那正是 §6.4 要防的那类 bug")
+    }
+
+    @Test
+    fun pointingAtANoteThatIsNotThereIsRefusedRatherThanSilentlyTreatedAsNew() = runBlocking {
+        val script = Scripted(
+            listOf(
+                // 身上一条笔记都没有，却点名要替代 n7。
+                turn("c1", "note", """{"text":"那件事算了。","supersedes":"n7"}"""),
+                stop(),
+            ),
+        )
+        val world = world()
+
+        val reaction = npcOf(script).wake(world, Waking("dwarf", greeted("算了。"), originOf(world)))
+
+        // **拒绝，而不是顺手当成"新添一条"。** 后者会让它以为自己撤掉了一句过期的话，而那句其实还在
+        // 眼前——于是它同时相信两条（§6.4 里最难查的那类 bug）。
+        assertTrue(world.byId("dwarf")?.notes.orEmpty().isEmpty(), "什么都没写进去")
+        val afterRefusal = bodiesIn(script).last()
+        assertTrue("n7" in afterRefusal, "退回去的话要把它写的编号还给它，它才知道错在哪")
+        assertTrue(reaction.problems.isEmpty(), "参数没错，是那条笔记不存在——不是协议问题")
+    }
+
+    @Test
+    fun onlyOneNewNotePerWaking() = runBlocking {
+        val script = Scripted(
+            listOf(
+                turn("c1", "note", """{"text":"第一件要紧事。"}"""),
+                turn("c2", "note", """{"text":"第二件要紧事。"}"""),
+                stop(),
+            ),
+        )
+        val world = world()
+
+        npcOf(script).wake(world, Waking("dwarf", greeted("有件事。"), originOf(world)))
+
+        // §6.6 那道频率闸：**每回合至多一条新的**，否则一次唤醒就能把上限写满。
+        val notes = world.byId("dwarf")?.notes.orEmpty()
+        assertEquals(1, notes.size)
+        assertEquals("第一件要紧事。", notes.single().text)
+        assertEquals(3, script.bodies.size, "它调了第二次 note，所以要第三个来回把结果递回去")
+        assertTrue("已经记下一条" in script.bodies[2], "第二次要被打回，而理由是可执行的")
+    }
+
+    @Test
+    fun afullNotebookRefusesUntilItRetiresOne() = runBlocking {
+        // **先把上限写满。** 用一份只有两条的笔记与一个上限 2 的设置，省得造二十条。
+        val full = world().byId("dwarf")!!.copy(
+            notes = listOf(
+                Note("n1", "第一件旧事。", at = WorldTime.of(1, 17)),
+                Note("n2", "第二件旧事。", at = WorldTime.of(1, 17)),
+            ),
+        )
+        val world = World.from(
+            StartingWorld.snapshot().let { snap ->
+                snap.copy(entities = snap.entities.map { if (it.id == "dwarf") full else it })
+            },
+        )
+        val script = Scripted(
+            listOf(
+                turn("c1", "note", """{"text":"第三件事。"}"""),
+                stop(),
+            ),
+        )
+
+        val npc = Npc(
+            LlmClient(config(), script.client),
+            Judge(LlmClient(config(), script.client)),
+            settings = ContextSettings(noteLimit = 2),
+        )
+        val reaction = npc.wake(world, Waking("dwarf", greeted("还有件事。"), originOf(world)))
+
+        assertEquals(2, world.byId("dwarf")?.notes?.size, "到顶了就不许再添")
+        assertTrue(reaction.problems.isEmpty())
+        // 打回的理由要**可执行**（§1.3）：说清哪几条在、该怎么办。到顶时静默丢弃是最坏的做法——
+        // 它以为记下了，而那条从来没进过提示词。
+        val back = bodiesIn(script).last()
+        assertTrue("记满" in back, "要说清为什么不行")
+        assertTrue("n1" in back && "第二件旧事。" in back, "还要把现在这几条摊给它看")
+        assertTrue("supersedes" in back, "以及它该怎么做")
+    }
+
+    @Test
+    fun retiringOneAndWritingOneFitsThroughTheSameWaking() = runBlocking {
+        val full = world().byId("dwarf")!!.copy(
+            notes = listOf(
+                Note("n1", "第一件旧事。", at = WorldTime.of(1, 17)),
+                Note("n2", "第二件旧事。", at = WorldTime.of(1, 17)),
+            ),
+        )
+        val world = World.from(
+            StartingWorld.snapshot().let { snap ->
+                snap.copy(entities = snap.entities.map { if (it.id == "dwarf") full else it })
+            },
+        )
+        val script = Scripted(
+            listOf(
+                // 「旧事不作数了，同时记一件新的」——那是同一件事的两面，不该被频率闸或上限挡住。
+                turn("c1", "note", """{"text":"旧事已经了了。","supersedes":"n1"}"""),
+                stop(),
+            ),
+        )
+
+        val npc = Npc(
+            LlmClient(config(), script.client),
+            Judge(LlmClient(config(), script.client)),
+            settings = ContextSettings(noteLimit = 2),
+        )
+        npc.wake(world, Waking("dwarf", greeted("那事完了。"), originOf(world)))
+
+        val notes = world.byId("dwarf")?.notes.orEmpty()
+        assertEquals(3, notes.size, "新的那一条写进去了")
+        assertEquals(listOf("n2", "n3"), notes.live().map { it.id }, "而 n1 从此不算数")
+    }
+
+    @Test
+    fun aNoteTooLongToBeANoteIsRefused() = runBlocking {
+        val long = "甲".repeat(201)
+        val script = Scripted(
+            listOf(
+                turn("c1", "note", """{"text":"$long"}"""),
+                stop(),
+            ),
+        )
+        val world = world()
+
+        val reaction = npcOf(script).wake(world, Waking("dwarf", greeted("听着。"), originOf(world)))
+
+        assertTrue(world.byId("dwarf")?.notes.orEmpty().isEmpty())
+        assertTrue("太长" in bodiesIn(script).last(), "退回去的话要带上字数，它才知道该缩到多短")
+        // **它确实被记成了一次协议问题**：那条太长的笔记谁都没写下去，而这件事不能静默——静默的话
+        // 它以为记下了，而那一刻从来没进过笔记。与 `say` 的空台词走的是同一条路。
+        assertEquals(1, reaction.problems.size)
+        assertTrue("200" in reaction.problems.single(), "诊断里要说清上限是多少")
+    }
+
+    @Test
+    fun anEmptyNoteComesBackAsSomethingItCanFix() = runBlocking {
+        val script = Scripted(
+            listOf(
+                turn("c1", "note", """{"text":"   "}"""),
+                stop(),
+            ),
+        )
+        val world = world()
+
+        val reaction = npcOf(script).wake(world, Waking("dwarf", greeted("记一下。"), originOf(world)))
+
+        assertTrue(world.byId("dwarf")?.notes.orEmpty().isEmpty())
+        assertEquals(1, reaction.problems.size)
+        assertTrue("text" in reaction.problems.single())
     }
 }

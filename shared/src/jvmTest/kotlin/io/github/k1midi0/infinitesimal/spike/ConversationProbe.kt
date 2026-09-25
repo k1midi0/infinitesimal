@@ -3,6 +3,7 @@ package io.github.k1midi0.infinitesimal.spike
 import io.github.k1midi0.infinitesimal.config.ContextSettings
 import io.github.k1midi0.infinitesimal.session.GameSession
 import io.github.k1midi0.infinitesimal.npc.Npc
+import io.github.k1midi0.infinitesimal.world.live
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 
@@ -149,6 +150,95 @@ class ConversationProbe {
             println()
             println("═".repeat(100))
             println("最后：历史 ${conv.size} 段｜原文 ${conv.rawCount}｜摘要 ${conv.summaryCount}")
+            println("═".repeat(100))
+        }
+    }
+
+    /**
+     * 十句话，一句一轮。**它不是 [script] 的加长版，而是另一场**：这一场要看的是压缩真的发生的那几轮里，
+     * 它会不会把要紧的事写进笔记（§6.3、§6.42）。
+     *
+     * 语序是有意排的：
+     *
+     *  - 第 2 轮那句「阿黛尔答应周一还我三枚银币」是**一句约定**——正是笔记该记的东西。
+     *  - 第 3、5、6、7 轮是催促与它自己报出的两个数（三枚、后天中午）——**这些细节一旦被压掉就没了**。
+     *  - 第 10 轮回头问第 2 轮那件事，看它靠什么接住（摘要、笔记，还是两样都不够）。
+     */
+    private val noteScript = listOf(
+        "你好啊。",
+        "阿黛尔答应周一还我三枚银币，你替我记着。",
+        "那笔钱她到底还了没有？",
+        "这酒怎么这么淡。",
+        "我是说，阿黛尔欠我的那三枚银币。",
+        "她说明天还是后天来着？",
+        "后天中午，在哪儿碰头来着？",
+        "算了，你先把酒给我倒上。",
+        "镇上最近还有什么别的事？",
+        "再问一次：阿黛尔那三枚银币的事，你还记得多少？",
+    )
+
+    /**
+     * **笔记真的会发生吗，以及它会不会先记住再压掉**（§6.3、§14.42）。
+     *
+     * 与 `aTightThresholdActuallyFires` 同一场阈值 6000 的设置，量的是这一刀那两件事：
+     *
+     *  1. **它自己看得出什么值得记**——不是我们告诉它"这一句要记"，而是它在一场普通的对话里判断出
+     *     「阿黛尔答应周一还三枚银币」这件事将来还有用。
+     *  2. **笔记与压缩各干各的**——压了多少轮，笔记那一节都在；而它超了上限会自己撤掉旧的。
+     *
+     * 跑法（要真 key）：
+     *
+     * ```
+     * .\gradlew.bat :shared:jvmTest --tests "*ConversationProbe*" --rerun `
+     *   -PinfinitesimalLiveKeyFile="C:\Users\20758\Desktop\测试key.txt"
+     * ```
+     */
+    @Test
+    fun notesAndCompactionShareTheSameConversation() {
+        val key = ProbeSupport.keyOrNull() ?: run {
+            println("（没有 key，跳过）")
+            return
+        }
+
+        runBlocking {
+            val config = ProbeSupport.configOf(key)
+            val npc = Npc(config, settings = ContextSettings(compressAfterTokens = 6_000))
+            val session = GameSession(config, npc = npc)
+
+            println("═".repeat(100))
+            println("阈值 6000｜笔记与压缩同场｜看它会不会先记下要紧的事再压")
+            println("═".repeat(100))
+
+            noteScript.forEachIndexed { i, said ->
+                val before = session.requestCount
+                session.runTurn(said, "")
+
+                val conv = npc.conversations.of("dwarf")
+                val notes = session.world.byId("dwarf")?.notes.orEmpty()
+                println()
+                println("── 第 ${i + 1} 轮 ── 调用 ${session.requestCount - before} 次｜" +
+                    "prompt_tokens ${npc.lastUsage?.promptTokens}｜" +
+                    "历史 ${conv.size} 段（原文 ${conv.rawCount}、摘要 ${conv.summaryCount}）｜" +
+                    "笔记 ${notes.live().size}/${notes.size} 条")
+
+                // **它自己写的那些**：这一支探针真正要看的读数。空着也是一个读数——说明它没觉得有什么
+                // 值得记，或者提示词里那条规矩不够硬。
+                notes.forEach { n ->
+                    val mark = if (n.supersedes == null) "新" else "替 ${n.supersedes}"
+                    println("     笔记 ${n.id}（$mark）${if (n.tag.isEmpty()) "" else "[${n.tag}]"}：${n.text}")
+                }
+                conv.summaries().forEach {
+                    println("     摘要 ${it.blockId}：第 ${it.tier} 级，盖 h${it.pos}–h${it.coveredThrough}（${it.covered} 条原文）")
+                }
+            }
+
+            val conv = npc.conversations.of("dwarf")
+            val notes = session.world.byId("dwarf")?.notes.orEmpty()
+            println()
+            println("═".repeat(100))
+            println("最后：历史 ${conv.size} 段｜原文 ${conv.rawCount}｜摘要 ${conv.summaryCount}（最高 " +
+                "${conv.summaries().maxOfOrNull { it.tier } ?: 0} 级）")
+            println("笔记：活 ${notes.live().size} 条、共 ${notes.size} 条（被替代 ${notes.size - notes.live().size} 条）")
             println("═".repeat(100))
         }
     }

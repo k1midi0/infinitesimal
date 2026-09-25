@@ -26,12 +26,15 @@ import io.github.k1midi0.infinitesimal.spatial.audience
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.EventKind
 import io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CHUNKS
+import io.github.k1midi0.infinitesimal.world.Note
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.Spot
 import io.github.k1midi0.infinitesimal.world.Todo
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldTime
 import io.github.k1midi0.infinitesimal.world.due
+import io.github.k1midi0.infinitesimal.world.live
+import io.github.k1midi0.infinitesimal.world.nextId
 import io.github.k1midi0.infinitesimal.world.rendered
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.Serializable
@@ -147,9 +150,10 @@ data class Reaction(
  * **不进提示词**——「自然遗忘」是设计要的（§1.5 那条根决策由底下的记录层保住，模型这一侧看不见）。
  * 重要的东西由待办（§3.2.5）与笔记（§6.3）兜住。
  *
- * **没有笔记、没有状态循环的那一半。** 笔记是 §6.3（还没做），循环已经在 `Entity.cycle` 上（§14.37）。
+ * **没有状态循环的那一半。** 循环已经在 `Entity.cycle` 上（§14.37）。
  *
- * 压缩——超阈之后把一段换成一条摘要、摘要再超阈就再压——是同一条路的下半段，还没做（§6.1）。
+ * 压缩——超阈之后把一段换成一条摘要、摘要再超阈就再压——与笔记（它主动写、常驻注入、不参与压缩）
+ * 是同一条路的两半，都已经做进来了（§14.41、§14.42）。
  */
 class Npc(
     private val client: LlmClient,
@@ -228,6 +232,10 @@ class Npc(
         val said = mutableListOf<Spoken>()
         val acted = mutableListOf<Judgment>()
         val problems = mutableListOf<String>()
+        // **这一回合新写的笔记**（§6.6 那道频率闸：每回合至多一条新的）。被替代的不算新写的——
+        // 撤掉一条过期的、同时记下一条真的，是同一件事的两面，不该被这条闸挡住。
+        var wroteNote = false
+        val noteGate = { wroteNote = true }
 
         val system = ChatMessage.system(SYSTEM)
         val conversation = conversations.of(listener.id)
@@ -291,7 +299,7 @@ class Npc(
             if (turn.calls.isEmpty()) break
 
             for (call in turn.calls) {
-                val answer = answerFor(call, world, waking, listener, conversation, said, acted)
+                val answer = answerFor(call, world, waking, listener, conversation, said, acted, wroteNote, noteGate)
                 if (answer.problem != null) problems += answer.problem
                 produced += ChatMessage.toolResult(call.id, answer.text)
             }
@@ -322,12 +330,15 @@ class Npc(
         conversation: Conversation,
         said: MutableList<Spoken>,
         acted: MutableList<Judgment>,
+        wroteNote: Boolean,
+        noteWritten: () -> Unit,
     ): Answered = when (call.name) {
         NpcTools.SAY -> say(call, world, listener, said)
         NpcTools.ACT -> act(call, world, listener, acted)
         NpcTools.PLAN -> plan(call, world, listener)
         NpcTools.LOOK -> look(call, world, waking, listener)
         NpcTools.COMPACT -> compact(call, conversation)
+        NpcTools.NOTE -> note(call, world, listener, wroteNote, noteWritten)
         else -> Answered(
             "没有叫「${call.name}」的工具。你现在能用的只有：" +
                 NpcTools.ALL.joinToString("、") { it.function.name } + "。",
@@ -466,6 +477,97 @@ class Npc(
         val now = world.byId(listener.id) ?: listener
         world.put(now.copy(todos = now.todos + Todo(at, what)))
         return Answered("记下了：${at}，$what。到点它会提醒你，**但它不会自己发生**。")
+    }
+
+    /**
+     * **记下一条不能忘的事**（§6.3、§6.6）。它是「防遗忘」那道闸——与压缩是同一个问题的两面。
+     *
+     * ## 三条拒绝，每一条都是一个可执行的理由
+     *
+     * 与 `compact`、`plan` 同一条规矩（§1.3）：**拒绝不是失败**，那段文字会原样回到模型手上，它据此
+     * 换个做法。所以每条理由都写清"该怎么改"。
+     *
+     *  1. **空的正文**——没有要记的东西。
+     *  2. **点名替代一条不存在的**——编号写错了。**这里必须拒绝，不能顺手当成"新添一条"**：那会让
+     *     它以为自己撤掉了一条过期的话，而那条其实还在眼前，于是模型同时相信两条（§6.4）。
+     *  3. **活笔记到顶**——它必须点名替代掉一条。到顶时静默丢弃是最坏的做法：它以为记下了，而那条
+     *     从来没进过提示词。
+     *
+     * ## 频率闸
+     *
+     * 每回合至多**新添**一条（§6.6）。而"写一条新的、同时替代一条旧的"不占这个名额——那是同一件事的
+     * 两面（「他还清了」既是一条新的，也让旧的失效），挡它没有道理。
+     */
+    private fun note(
+        call: ToolCallRequest,
+        world: World,
+        listener: Entity,
+        wroteNote: Boolean,
+        written: () -> Unit,
+    ): Answered {
+        val args = decodeCall(NoteArgs.serializer(), call)
+            ?: return Answered(
+                "参数读不出来——要 text，还有可选的 tag、supersedes。",
+                "note 的参数不是合法 JSON",
+            )
+
+        val text = args.text.trim()
+        if (text.isEmpty()) {
+            return Answered("「text」是空的——那件要记住的事得用一句话写出来。", "note 的 text 是空的")
+        }
+        if (text.length > MAX_NOTE_CHARS) {
+            return Answered(
+                "这条太长了（${text.length} 字，最多 $MAX_NOTE_CHARS）——笔记是一句话，不是一段日记。" +
+                    "把它压成一句再写。",
+                "note 的 text 太长：${text.length} 字，上限 $MAX_NOTE_CHARS",
+            )
+        }
+
+        // **从世界里重新拿一份**，与 `plan` 同一条理由：一次唤醒里连调两次时，拿进函数时那一份会让
+        // 第一条笔记被覆盖掉，而"写了一条、另一条没了"没有任何东西会报。
+        val now = world.byId(listener.id) ?: listener
+        val live = now.notes.live()
+        val supersedes = args.supersedes.trim().ifEmpty { null }
+
+        if (supersedes != null && live.none { it.id == supersedes }) {
+            return Answered(
+                "你身上没有「$supersedes」这么一条还没作废的笔记。现在这些是：" +
+                    live.joinToString("、") { it.id }.ifEmpty { "（一条都没有）" } +
+                    "——不替代任何一条的话，supersedes 就留空。",
+            )
+        }
+        if (supersedes == null && wroteNote) {
+            return Answered("这一趟你已经记下一条了。真要再记一条，下一次醒来再写。")
+        }
+        if (supersedes == null && live.size >= settings.noteLimit) {
+            return Answered(
+                "你已经记满 ${settings.noteLimit} 条了。把**不再算数的那一条的编号**写进 supersedes" +
+                    "（现在这些是：" + live.joinToString("、") { "${it.id}「${it.text}」" } + "）——" +
+                    "那样它不是被删掉，只是以后不再出现在你眼前。",
+            )
+        }
+
+        val added = now.copy(
+            notes = now.notes + Note(
+                id = now.notes.nextId(),
+                text = text,
+                tag = args.tag.trim(),
+                at = world.clock,
+                supersedes = supersedes,
+            ),
+        )
+        world.put(added)
+        written()
+
+        // **它不必把编号抄回去**：每一条笔记每一轮都在提示词里带着自己的编号出现，所以这句话里不放编号
+        // 也不会让下一次的 `supersedes` 无从下手。
+        return Answered(
+            if (supersedes == null) {
+                "记下了。以后每一轮它都在你眼前。"
+            } else {
+                "记下了；「$supersedes」那条以后不再出现在你眼前（它还留着，只是你看不见了）。"
+            },
+        )
     }
 
     /**
@@ -656,6 +758,11 @@ class Npc(
             appendLine()
         }
 
+        // **笔记**（§6.3）：它自己写的、**常驻注入**的那些。与压缩是同一个问题的两面——压掉的东西
+        // 只剩摘要里写了什么，而这一节永远在。
+        appendLine(notesSection(listener))
+        appendLine()
+
         appendLine("【这一片里刚刚发生的事】")
         val bus = world.bus(listener.id, waking.sinceSeq)
         if (bus.isEmpty()) {
@@ -670,6 +777,59 @@ class Npc(
         appendLine("（这段提示词里，「你」永远指你自己；别人一律带着 id 出现。`player` 就是你对面那个人。）")
     }
 
+    /**
+     * **它自己记下的那些事**（§6.3、§6.5）。
+     *
+     * ## 为什么这一节在末尾
+     *
+     * **前面每一节都逐字不变，只有这一节与事件总线会变。** 前缀缓存认的正是"旧的那一段有没有被改动"
+     * （§14.5 量过：缓存只对上下文本身已经很长的系统有意义），所以把会变的东西排在最后，前面那一大段
+     * 的地图、人设、规矩就能一路命中。总线与它谁先谁后无所谓——两者都在变化区的同一侧。
+     *
+     * ## 为什么它不参与压缩
+     *
+     * 压缩压的是**消息数组**（`Conversation` 里那串段）。这一节每一轮都被重新拼出来，压多少次都碰不到
+     * 它。这正是 §6.3 那条分工：要紧的东西靠笔记与待办兜住，不是靠把压缩阈值调高。
+     *
+     * ## 被替代的不注入
+     *
+     * 只列 [live] 那些。被替代的仍然留在存储里（§6.4），但**同时列出两条互相矛盾的话，模型会两条都
+     * 信**——而那正是最难查的一类 bug。
+     */
+    private fun notesSection(listener: Entity): String = buildString {
+        val live = listener.notes.live()
+        appendLine("【你记下的事】")
+        if (live.isEmpty()) {
+            appendLine("（还没有。有什么不能忘的，用 `${NpcTools.NOTE}` 那只手记下来——它不会像历史那样被压掉。）")
+            return@buildString
+        }
+
+        // **老的先放、新的后放**，而预算不够时从**最老的**那头截——最近记的通常还热着。
+        val kept = mutableListOf<Note>()
+        var used = 0
+        for (note in live.reversed()) {
+            val cost = noteLineOf(note).length + 1
+            if (used + cost > settings.noteBudgetChars && kept.isNotEmpty()) break
+            used += cost
+            kept += note
+        }
+        kept.asReversed().forEach { appendLine(noteLineOf(it).trimEnd()) }
+
+        val dropped = live.size - kept.size
+        if (dropped > 0) {
+            // **截断要看得见**（§6.5）：静默消失会让它以为"我没记过这件事"，然后重新写一条——
+            // 于是越记越多、越多越看不见。
+            appendLine("（上面是最新的 ${kept.size} 条；还有 $dropped 条更早的没装进来。")
+            appendLine("　那些还在，只是这一轮看不到——真要用，先替代掉几条不再算数的。）")
+        }
+    }
+
+    /** 一条笔记怎么印出来。**编号必须在**——模型点名替代一条旧笔记时，那是它唯一的抓手。 */
+    private fun noteLineOf(note: Note): String {
+        val tag = if (note.tag.isEmpty()) "" else "（${note.tag}）"
+        return "- ${note.id}$tag：${note.text}\n"
+    }
+
     private companion object {
 
         /**
@@ -681,6 +841,15 @@ class Npc(
          */
         const val MAX_ROUNDS = 8
 
+        /**
+         * 一条笔记最多几个字。
+         *
+         * 它不是内容审查，是**形状的守卫**：笔记是"一句话的事实"，不是日记。放开了写，一条笔记就能把
+         * 整个注入预算吃掉，而症状是"提示词里忽然只剩一条笔记"——那看起来像笔记系统坏了，其实是有人
+         * 在里面写了一整段。
+         */
+        const val MAX_NOTE_CHARS = 200
+
         val SYSTEM = """
             你扮演这个世界里的一个人。你不是助手，不讲故事，不替别人做决定——你只做你自己那个人。
 
@@ -691,6 +860,8 @@ class Npc(
             - `plan`：给自己安排一件将来要做的事。它不影响眼前这一刻。
             - `look`：看这一回合附近某件事的细节（提示词里只给了它一行标题的那些）。
             - `compact`：**只在你被告知「该收一收了」时**，把最老的那一段历史压成一条摘要。
+            - `note`：记下一件不能忘的事。**它每轮都回到你眼前，而且不会被压掉**——所以要紧的事记在
+              这里，而不是指望它留在对话里。
 
             规矩：
 
@@ -711,6 +882,10 @@ class Npc(
                都是完整的反应**——手里那两只手不是任务清单，不用每轮都过一遍。
             8. 你说话就是说话，不要加旁白、不要写"（他笑了笑）"这种舞台提示——那是别人看见的，
                不是你说出口的。
+            9. **要紧的事记进 `note`，不要指望对话替你记住。** 你带在身上的历史会被压短，越早的事
+               压得越狠；而笔记不会。谁欠你什么、你答应了谁什么、你打听到的消息，都该记下来。
+               反过来，**不值得记的就别记**——记满之后你得撤掉一条旧笔记（把它的编号写进
+               `supersedes`），而撤掉哪一条是要你自己判断的。一条笔记写一句话，别抄整段对话。
         """.trimIndent()
     }
 }
@@ -743,4 +918,12 @@ private data class CompactArgs(
     val to: Long = -1,
     val summary: String = "",
     val topic: String = "",
+)
+
+/** `note` 的参数。同上——全带默认值，解不开时由上面那几个判断统一报出来。 */
+@Serializable
+private data class NoteArgs(
+    val text: String = "",
+    val tag: String = "",
+    val supersedes: String = "",
 )
