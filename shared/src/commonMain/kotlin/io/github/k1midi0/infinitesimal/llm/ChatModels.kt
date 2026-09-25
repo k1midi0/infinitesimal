@@ -53,7 +53,20 @@ data class ChatMessage(
             content: String? = null,
             reasoningContent: String? = null,
             toolCalls: List<ToolCall>? = null,
-        ) = ChatMessage(ROLE_ASSISTANT, content, reasoningContent, toolCalls)
+        ) = ChatMessage(
+            ROLE_ASSISTANT,
+            content,
+            reasoningContent,
+            // **空数组不能上线。** 端点的原话是 `Invalid 'messages[N].tool_calls': empty array.
+            // Expected an array with minimum length 1, but got an empty array instead.`——
+            // 一个「一只工具都没调」的助手回合，这个字段该**整个不出现**，而不是出现一个空的。
+            //
+            // 这不是洁癖。历史里出现这种助手消息是**正常的**：建模那一层在「模型一句话没说、一个
+            // 工具都没调」时会把这一轮原样记进去，因为它接着要拿这条历史去追问（`ShapeModeler`
+            // 的 `raw.assistant()` 写在 `calls.isEmpty()` 判断**之前**）。在那之前，那条路径要真
+            // 走到，整次建模就是一次 400。
+            toolCalls?.takeIf { it.isNotEmpty() },
+        )
 
         fun toolResult(toolCallId: String, content: String) =
             ChatMessage(ROLE_TOOL, content, toolCallId = toolCallId)
