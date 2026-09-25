@@ -54,6 +54,16 @@ data class JudgeRequest(
      * [sharedPrefix] 必须两步逐字相同（§7.5），把随步骤变的东西放进去，第二步的缓存就全灭。
      */
     val centers: List<String>,
+    /**
+     * **这一轮说了什么话**（原话，没有就是空串）。§14.37。
+     *
+     * 它进的是第一步，因为要判的是「**这句话指向谁**」——那是一个语义判断，代码做不了。而它一旦进来，
+     * 说话与动作就**共用同一次第一步**：早先说话要单独再跑一次对齐去找听者，于是"说+做"的一轮要花
+     * 两次调用，还多出一处两条路会漂开的地方。
+     *
+     * 它**不进**第二步：第二步算的是动作的后果，而说话不产生后果。
+     */
+    val said: String = "",
 )
 
 /** 判定发生在哪一步。驳回是"选错了"还是"做不成"，玩家能做的事完全不同。 */
@@ -67,7 +77,17 @@ enum class Stage {
 
 sealed interface TargetAlignment {
     /** 对齐好了：这些才是这次动作作用的东西。**可能为空**——"我环顾四周"确实不作用在任何东西上。 */
-    data class Aligned(val targets: List<String>) : TargetAlignment
+    data class Aligned(
+        val targets: List<String>,
+        /**
+         * **这句话是说给谁听的**（§14.37）。这次没有话要说时是空的。
+         *
+         * 它与 [targets] 分开，是两件事：`targets` 决定**这次动作作用在什么上**（也是纠正预览要比对的
+         * 那一份），这个决定**谁被唤醒**。混成一栏的话，"跟同伴闲聊一句"与"大吼一嗓子"就分不开了
+         * ——而它们在世界里完全不同。
+         */
+        val addressed: List<String> = emptyList(),
+    ) : TargetAlignment
 
     /** 看不出这次动作指着什么。理由给玩家看。 */
     data class Rejected(val reason: String) : TargetAlignment
@@ -320,6 +340,7 @@ class Judge(
         }
 
         val targets = mutableListOf<String>()
+        val addressed = mutableListOf<String>()
         var rejection: String? = null
         for (call in calls) {
             when (call.name) {
@@ -328,6 +349,13 @@ class Judge(
                         listOf("target 的参数不是合法 JSON：${call.arguments.take(160)}"),
                     )
                     targets += args.id
+                }
+
+                JudgeTools.ADDRESS -> {
+                    val args = decode(TargetArgs.serializer(), call) ?: return TargetAlignment.Malformed(
+                        listOf("address 的参数不是合法 JSON：${call.arguments.take(160)}"),
+                    )
+                    addressed += args.id
                 }
 
                 JudgeTools.REJECT_TARGETS -> {
@@ -349,7 +377,7 @@ class Judge(
         }
         rejection?.let { return TargetAlignment.Rejected(it) }
 
-        return TargetAlignment.Aligned(targets.distinct())
+        return TargetAlignment.Aligned(targets.distinct(), addressed.distinct())
     }
 
     // ── 第二步：列出后果 ────────────────────────────────────────────────────────────
@@ -865,17 +893,29 @@ class Judge(
         appendLine("- **选多了就剔除**：跟这次动作无关的不要报。")
         appendLine("- **选错了就换成对的**。")
         appendLine("- **发起者本人也是对象。**「我理了理衣襟」「我环顾四周」「我打了个哈欠」——这类动作只有它一个人，那就报它自己，照常走完两步。")
-        appendLine("- 报的东西**也包括会被这次动作牵涉到的角色**（「我喊了一嗓子」——旁边那个人也算，虽然它没被指着）。")
-        // **说话要报的是"谁听得见"，不是"谁被指着"。**（§14.36）这一条在实现对话系统时才发现是必需的：
-        // 玩家没勾任何人时说一句话，判定若只报发起者自己，那句话就传不到任何人耳朵里——而"没人接话"
-        // 与"没人听见"是两件不同的事，混起来之后 NPC 会看起来像坏的。
+        appendLine("- 报的东西**也包括会被这次动作牵涉到的角色**（「我把酒泼在他身上」——那个人也算）。")
+        appendLine()
+        // **说话单独一栏，而且只有它一栏**（§14.37）。早先这里写的是"说话也是一次动作，要报出这一片
+        // 里听得见这句话的角色"——于是"指向"与"听见"混进了同一栏，而那是两件完全不同的事：
         //
-        // 它与上一条是同一件事的两半，但**必须分开写**：上一条说的是"动作牵涉到的人也要报"，
-        // 而说话这件事里，"牵涉"就等于"听得见"，没有别的判据。
-        appendLine(
-            "- **说话也是一次动作。**「我说了……」要报出**这一片里听得见这句话的角色**——" +
-                "听得见就报。不是只报被叫到名字的那一个，也不是只报发起者自己。",
-        )
+        //   「大吼一嗓子」 —— 是对周围人的**指向**，那些人该被唤醒
+        //   「跟同伴闲聊」 —— 指向的只有同伴，隔壁桌**听得见，但没被指向**
+        //
+        // 混着写的直接代价是每说一句话要**单独再跑一次第一步**去找听者（一次真金白银的调用）。分开
+        // 之后一次第一步同时给出两栏，而"谁收到了这件事"由代码按空间框投递，不占模型。
+        if (request.said.isNotEmpty()) {
+            appendLine("这一轮发起者还开口说了话，原话是：")
+            appendLine("「${request.said}」")
+            appendLine("用 ${JudgeTools.ADDRESS} 报出**这句话是说给谁听的**：")
+            appendLine("- 喊了一嗓子、当众宣布、话里点了名的——**在场听得见的角色都要报**。")
+            appendLine("- 只跟某一个人说话——**只报那一个人**。")
+            appendLine(
+                "- 旁边还有人听得到，但那不是对他们说的——**不要报他们**。" +
+                    "这一片里的人都收得到这一轮发生了什么，用不着你替他们记。",
+            )
+        } else {
+            appendLine("这一轮发起者没有说话，${JudgeTools.ADDRESS} 一次都不要调。")
+        }
         appendLine()
         // **优先级必须写出来，不能靠两句话的先后。** 早先这里只有一句"永远不要一个工具都不调"，
         // 外加上面那条"发起者本人也是对象"——两句都指向"报个什么"，于是模型遇到"三条街外那家店
