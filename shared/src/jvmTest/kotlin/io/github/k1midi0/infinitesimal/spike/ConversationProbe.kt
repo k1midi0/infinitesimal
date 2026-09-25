@@ -1,5 +1,6 @@
 package io.github.k1midi0.infinitesimal.spike
 
+import io.github.k1midi0.infinitesimal.config.ContextSettings
 import io.github.k1midi0.infinitesimal.session.GameSession
 import io.github.k1midi0.infinitesimal.npc.Npc
 import kotlinx.coroutines.runBlocking
@@ -96,6 +97,58 @@ class ConversationProbe {
             println("逐轮：调用数 ${perTurn.joinToString("、") { "${it.first}=${it.second}" }}")
             println("逐轮：prompt_tokens ${perTurn.joinToString("、") { "${it.first}=${it.third}" }}")
             println("世界里还有 ${session.world.all().size} 样东西｜记录层 ${session.world.log.size} 条")
+            println("═".repeat(100))
+        }
+    }
+
+    /**
+     * **把阈值调小，让压缩真的发生**（§6.1、§14.41）。
+     *
+     * 默认的 400K 离得很远——§14.40 量出来要约 232 轮才碰得到，所以"压一次、再压一次"这条路在联机里
+     * 根本跑不到。这一支探针要验的因此是那个设计决定本身：**阈值可配**，以及配小之后那一整套真的走通
+     * ——超阈→提示词里出现"该收一收了"→模型调 `compact`→历史变短→再超阈→出第 2 级。
+     */
+    @Test
+    fun aTightThresholdActuallyFires() {
+        val key = ProbeSupport.keyOrNull() ?: run {
+            println("（没有 key，跳过）")
+            return
+        }
+
+        runBlocking {
+            val config = ProbeSupport.configOf(key)
+            // 六千：按 §14.40 那条曲线，第三轮就该越过去。
+            val npc = Npc(config, settings = ContextSettings(compressAfterTokens = 6_000))
+            val session = GameSession(config, npc = npc)
+
+            println("═".repeat(100))
+            println("阈值调成 6000，看压缩会不会真的发生")
+            println("═".repeat(100))
+
+            // **八轮，不是四轮。** 第一次跑只跑了四轮，结果压缩一次都没发生——不是因为阈值没越过，而是
+            // 因为**建议范围还有个下限**（`MIN_RANGE_MESSAGES = 6`）：历史到第 4 轮才 11 段，刚够给出
+            // 建议。两个条件（超阈 ∧ 有可压的一段）**都**要成立才会提那件事，而它们不是同时到的。
+            script.forEachIndexed { i, said ->
+                    val before = session.requestCount
+                    val logged = session.log.size
+                    session.runTurn(said, "")
+
+                    val conv = npc.conversations.of("dwarf")
+                    println()
+                    println("── 第 ${i + 1} 轮 ── 调用 ${session.requestCount - before} 次｜" +
+                        "prompt_tokens ${npc.lastUsage?.promptTokens}｜" +
+                        "历史 ${conv.size} 段（原文 ${conv.rawCount}、摘要 ${conv.summaryCount}）")
+                    // **级别要印出来**：第 2 级出现过没有，是"摘要自己再超阈就再压"那句话唯一能验的地方。
+                    conv.summaries().forEach {
+                        println("     摘要 ${it.blockId}：第 ${it.tier} 级，盖 h${it.pos}–h${it.coveredThrough}（${it.covered} 条原文）")
+                    }
+                    session.log.drop(logged).forEach { println("  ${it.kind}｜${it.text}") }
+                }
+
+            val conv = npc.conversations.of("dwarf")
+            println()
+            println("═".repeat(100))
+            println("最后：历史 ${conv.size} 段｜原文 ${conv.rawCount}｜摘要 ${conv.summaryCount}")
             println("═".repeat(100))
         }
     }

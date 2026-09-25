@@ -230,8 +230,20 @@ class Npc(
         val problems = mutableListOf<String>()
 
         val system = ChatMessage.system(SYSTEM)
-        val fresh = listOf(ChatMessage.user(userPrompt(world, waking, listener)))
         val conversation = conversations.of(listener.id)
+
+        // **超阈才提压缩那件事，而且提在同一次请求里**（§6.1、§14.39）：不另开一次调用——这是"顺手做"
+        // 的全部意思。而"该不该收一收"由**代码**算出来告诉它：它看不到自己的上下文有多大，我们看到。
+        val body = userPrompt(world, waking, listener)
+        val plain = listOf(ChatMessage.user(body))
+        val suggested = conversation.suggestRange()?.takeIf {
+            conversation.overThreshold(settings, system, plain)
+        }
+        val fresh = if (suggested == null) {
+            plain
+        } else {
+            listOf(ChatMessage.user(body + "\n\n" + compactionSection(suggested)))
+        }
 
         // **这一次唤醒产生的全部消息**：请求过的、模型回的、工具答的。它们要一起接进历史，而且
         // **工具调用与结果必须成对**——只留台词会让消息数组悬空，端点直接 400（§14.31 踩过一次空
@@ -279,7 +291,7 @@ class Npc(
             if (turn.calls.isEmpty()) break
 
             for (call in turn.calls) {
-                val answer = answerFor(call, world, waking, listener, said, acted)
+                val answer = answerFor(call, world, waking, listener, conversation, said, acted)
                 if (answer.problem != null) problems += answer.problem
                 produced += ChatMessage.toolResult(call.id, answer.text)
             }
@@ -307,6 +319,7 @@ class Npc(
         world: World,
         waking: Waking,
         listener: Entity,
+        conversation: Conversation,
         said: MutableList<Spoken>,
         acted: MutableList<Judgment>,
     ): Answered = when (call.name) {
@@ -314,12 +327,59 @@ class Npc(
         NpcTools.ACT -> act(call, world, listener, acted)
         NpcTools.PLAN -> plan(call, world, listener)
         NpcTools.LOOK -> look(call, world, waking, listener)
+        NpcTools.COMPACT -> compact(call, conversation)
         else -> Answered(
             "没有叫「${call.name}」的工具。你现在能用的只有：" +
                 NpcTools.ALL.joinToString("、") { it.function.name } + "。",
             // **记成一条协议问题，不静默咽下去**（§1.3）。它是"模型调了一只不存在的工具"，而不是
             // "这个动作不成立"——两者要分开，后者是世界的裁定，前者是它自己出了问题。
             "模型调了一只不存在的工具：${call.name}",
+        )
+    }
+
+    /**
+     * **把最老的那一段压成一条摘要**（§6.1、§14.40）。
+     *
+     * 拒绝**不是失败**：那是"这一段现在不该压"的一个可执行的理由，它应该据此换个范围重试（§1.3）。
+     */
+    private fun compact(call: ToolCallRequest, conversation: Conversation): Answered {
+        val args = decodeCall(CompactArgs.serializer(), call)
+            ?: return Answered(
+                "参数读不出来——要 from、to、summary 三个。",
+                "compact 的参数不是合法 JSON",
+            )
+
+        return when (val refused = conversation.compact(args.from, args.to, args.topic, args.summary)) {
+            null -> Answered("压好了。那一段以后在你身上就是那一条摘要。")
+            is Conversation.Refused.Bad -> Answered(refused.why)
+        }
+    }
+
+    /**
+     * 超阈时加在提示词**末尾**的那一段。
+     *
+     * 它在末尾是有意的：**前面逐字不变**，于是那一段的前缀缓存不受影响。
+     *
+     * ## 措辞是实测改过的
+     *
+     * 第一版写的是「这一件事做完就收工，不用顺便再说一句或者再做个动作」——**联机一跑，角色从压缩那
+     * 一轮起就再也不回话**（§14.41）。它照做了，而它这一轮的本职是**回应玩家**：压缩是顺手的事，不是
+     * 这一轮的目的。所以现在开头就写「除了照常回应」，并把"两件事都要做"单独列一条。
+     *
+     * 这一条与 §14.34、§14.40 是同一个坑的第三次：**契约检查问的是"这一次唤醒当初要的是什么"**，
+     * 而不是"手里那几只手有没有用完"。写提示词时把手段说成了目的，模型就会只做那个手段。
+     */
+    private fun compactionSection(range: Conversation.Range): String = buildString {
+        appendLine("【另外：你的上下文该收一收了】")
+        appendLine(
+            "你带着的历史已经很长了。**除了照常回应眼前这件事，顺手把最老的那一段压成一条摘要**——" +
+                "用 `${NpcTools.COMPACT}` 那只手，建议的范围是 h${range.from}–h${range.to}（${range.messages} 条）。",
+        )
+        appendLine("- **两件事都要做**：该说的照说、该做的照做；压缩只是顺手，它不能代替回应。")
+        appendLine("- `summary` 写**那一段里发生过什么、结果如何**。它是给你自己以后看的，所以要写事实。")
+        appendLine(
+            "- 压完之后那一段的细节**不再逐字保留**（会变成第 ${range.tier} 级摘要）。" +
+                "所以要留在身上的事，就写进这条摘要里。",
         )
     }
 
@@ -624,11 +684,13 @@ class Npc(
         val SYSTEM = """
             你扮演这个世界里的一个人。你不是助手，不讲故事，不替别人做决定——你只做你自己那个人。
 
-            你能做三件事，都靠调工具：
+            你能做几件事，都靠调工具：
             - `say`：开口说一句话。
             - `act`：做一个动作。**它成不成立由另一个独立的判定系统裁决**——你说了要做什么，不等于
               你做成了。被驳回是常事，驳回理由会说清为什么，你可以换个做法再试一次。
             - `plan`：给自己安排一件将来要做的事。它不影响眼前这一刻。
+            - `look`：看这一回合附近某件事的细节（提示词里只给了它一行标题的那些）。
+            - `compact`：**只在你被告知「该收一收了」时**，把最老的那一段历史压成一条摘要。
 
             规矩：
 
@@ -673,3 +735,12 @@ private data class PlanArgs(
 /** `look` 的参数。同上。 */
 @Serializable
 private data class LookArgs(val id: String = "")
+
+/** `compact` 的参数。同上——**全带默认值**，解不开时由上面那几个判断统一报出来。 */
+@Serializable
+private data class CompactArgs(
+    val from: Long = -1,
+    val to: Long = -1,
+    val summary: String = "",
+    val topic: String = "",
+)
