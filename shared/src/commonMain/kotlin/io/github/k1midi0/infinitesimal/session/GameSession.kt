@@ -4,8 +4,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.k1midi0.infinitesimal.config.EndpointConfig
-import io.github.k1midi0.infinitesimal.director.Arrangement
+import io.github.k1midi0.infinitesimal.director.Awakening
 import io.github.k1midi0.infinitesimal.director.Director
+import io.github.k1midi0.infinitesimal.director.Wake
+import io.github.k1midi0.infinitesimal.director.Waking
 import io.github.k1midi0.infinitesimal.judge.Consequence
 import io.github.k1midi0.infinitesimal.judge.Judge
 import io.github.k1midi0.infinitesimal.judge.JudgeRequest
@@ -13,6 +15,9 @@ import io.github.k1midi0.infinitesimal.judge.Judgment
 import io.github.k1midi0.infinitesimal.judge.TargetAlignment
 import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.Renderer
+import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
+import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
+import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.Rulebook
@@ -93,9 +98,19 @@ class GameSession(
      * 导演（§8）。**它自己把请求落到 [SystemId.DIRECTOR] 那个缓存池**，所以传进去的还是原配置。
      *
      * 它与判定共用同一个客户端配置，但用户 id 不同——那是"同一个模型、两套提示词、两个缓存池"，
-     * 不是两个模型（§10.1）。
+     * 不是两个模型（§10.1）。预设库**必须递给它**：导演那只 `grow_terrain` 会走到生成器，而生成器
+     * 放东西时看的是同一份库（A.14）。
      */
-    private val director = Director(config)
+    private val director = Director(config, presets)
+
+    /**
+     * **区块坐标的显示原点**，整局固定（[ChunkOrigin]）。
+     *
+     * 它在会话里算一次、之后只读：玩家会走，而数轴上的数字一旦跟着走，之前给导演看过的坐标就全部
+     * 换了意思。开局玩家那一块减一，于是玩家开局显示在 (1,1)——这一条是用户定的（§14.33）。
+     */
+    private val origin: ChunkOrigin =
+        ChunkOrigin.atPlayerStart(world.chunkOfEntity(PLAYER) ?: ChunkKey(0, 0))
 
     /** 装配证据。**FIM 默认关闭**（§14.4：五次里只有两次可用），这里也用它。 */
     private val inserter = DetailInserters.of(config)
@@ -312,16 +327,17 @@ class GameSession(
 
     /** 挂起版：给 spike 直接 await 用。 */
     suspend fun arrangeNow() {
-        when (val result = director.arrange(world, PLAYER)) {
-            is Arrangement.Done -> {
-                timelineRevision++
-                say(LogLine.Kind.NOTE, "（导演排下了 ${result.entries.size} 件事）")
-                result.entries.sortedBy { it.dueAt.minutes }.forEach {
+        val result = director.wake(world, Waking(Wake.Arrange, PLAYER, origin))
+        timelineRevision++
+        when (result) {
+            is Awakening.Done -> {
+                say(LogLine.Kind.NOTE, "（导演排下了 ${result.scheduled.size} 件事）")
+                result.scheduled.sortedBy { it.dueAt.minutes }.forEach {
                     say(LogLine.Kind.NOTE, "· ${it.dueAt}　${it.what}")
                 }
             }
 
-            is Arrangement.FailedProtocol -> {
+            is Awakening.FailedProtocol -> {
                 // **协议内的失败就说自己是协议内的失败**（§1.5 第三条）：导演没排成不是"世界拒绝了"，
                 // 是这一层出了问题，两件事不能用同一句话呈现。
                 say(

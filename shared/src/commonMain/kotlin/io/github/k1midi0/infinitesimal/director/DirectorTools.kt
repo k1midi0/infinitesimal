@@ -4,19 +4,39 @@ import io.github.k1midi0.infinitesimal.llm.ToolDefinition
 import io.github.k1midi0.infinitesimal.llm.int
 import io.github.k1midi0.infinitesimal.llm.text
 import io.github.k1midi0.infinitesimal.llm.tool
-import kotlinx.serialization.Serializable
 
 /**
  * 导演交给模型的那几只"手"（§8）。
  *
- * 现在只有一只。这是有意的：§1.3 把导演的权限写得很死——**导演只能往时间轴和剧本里放意图，不能直接
- * 改数值**。所以这一层的手，每一只都必须落在"将来要发生什么"上，而不是"现在把它改成什么"。
- * 改世界是判定的活。
+ * ## 两档给的手不一样，这是设计里的一条硬边界
+ *
+ * §1.4：**便宜的档位没有写权限。** 在导演内部，这条落成——快速档只有一只手（唤醒思考档），它连
+ * `schedule` 都摸不到；改时间轴、长地形、放东西全在思考档手里。这不是省 token 的优化，而是
+ * 「谁有能力改世界」这件事本身的形状：快速档每回合都醒着，如果它也能写，那么每一回合都是一次
+ * 无人复核的写入。
+ *
+ * ## 为什么没有「切回快速档」那只手
+ *
+ * §8.5 说思考档觉得稳定了会调工具切回去。**这一刀不装它**：一次唤醒在模型沉默时就结束了，切回去
+ * 意味着"这一次工作剩下的一半用便宜档跑"，而那要等导演变成一个跨回合长活的东西才成立
+ * （§12 第 38 项）。提前装一只没人会正确使用的手，只会让它在历史里漂移。
  *
  * 参数刻意保持扁平（只有 string / integer），与判定那边同一个理由：移植过来的 `JsonSchema` 不支持
  * 嵌套对象与数组。
  */
 object DirectorTools {
+
+    // ── 快速档唯一的一只手 ──────────────────────────────────────────────────────────
+
+    /**
+     * 把思考档叫起来。
+     *
+     * 它是**换档**，不是"再叫一个人"——同一次工作里继续往下走，历史一段不重建（§8.5）。所以它最重要
+     * 的部分是 `why`：那句话会留在上下文里，而思考档接手时要靠它知道自己为什么在这儿。
+     */
+    const val WAKE_THINKING = "wake_thinking"
+
+    // ── 思考档的三只手 ─────────────────────────────────────────────────────────────
 
     /**
      * 往时间轴里放一件事。
@@ -36,6 +56,31 @@ object DirectorTools {
      */
     const val SCHEDULE = "schedule"
 
+    /**
+     * 长出一片地形，顺带放下点名的东西。
+     *
+     * 名字是 `grow` 而不是 `fill`：它是**生成**，与判定那三只直接改已有地形的 `fill_terrain` /
+     * `dig_terrain` / `replace_terrain` 是两件事。判定改的是已经长好的地，导演长的是还没有的地
+     * （§14.30）。
+     */
+    const val GROW_TERRAIN = "grow_terrain"
+
+    const val LOOK_MAP = "look_map"
+
+    /** 快速档的手。**只有一只**，而且它不碰世界。 */
+    val FAST: List<ToolDefinition> = listOf(
+        tool(
+            WAKE_THINKING,
+            "把思考档叫起来动手。**你自己改不了任何东西**——要排事、要长地形、要放东西，都只能靠它。" +
+                "叫的时候把理由说清楚：那句话会留在历史里，思考档接手时靠它知道自己为什么在这儿。",
+            text(
+                "why",
+                "一句话：你看见了什么、为什么觉得现在该动手（例如「玩家正往东走进一片还没有地形的地方」）。",
+            ),
+        ),
+    )
+
+    /** 思考档的手。**一次给全**（§8.5）——分几次给会让它按"我现在能做什么"倒推"我该做什么"。 */
     val ALL: List<ToolDefinition> = listOf(
         tool(
             SCHEDULE,
@@ -52,15 +97,41 @@ object DirectorTools {
             int("minute", "几分，0 到 59"),
             text("what", "一句话：到点了要发生什么"),
         ),
+        tool(
+            GROW_TERRAIN,
+            "让一片**还没有地形**的地方长出来：先铺地面，顺带把该有的东西放上去。" +
+                "**能长的范围以地图上画出来的圆盘为准**，填到外面会被驳回。" +
+                "一块地一次调一只，长完再长下一块——每一块它会告诉你长好了没有。",
+            text(
+                "requirement",
+                "一句话：这一带该是什么样（例如「镇子北边的一片荒地，脚下是碎石和干草」）。" +
+                    "它决定铺什么材质、长什么东西。",
+            ),
+            text(
+                "chunks",
+                "要长哪几块，抄地图数轴上的坐标，一块一块写：(6,2) (7,2) (7,3)。",
+            ),
+            text(
+                "placements",
+                "点名要放的东西，一行一件，写成「放什么｜在哪一块｜默认描述」。" +
+                    "例如「老槐树｜(7,2)｜村口那棵，树干上钉着一块褪色的木牌」。" +
+                    "后两段可以省。**这里只放地标，不要逐棵树列出来**——那是它铺地时顺手做的事。",
+            ),
+        ),
+        tool(
+            LOOK_MAP,
+            "看地图上的一框，抄数轴上的坐标。默认那段地图画的是缓冲圈；要看细一点、或者确认某一块的" +
+                "状态时用它。**看得远不等于长得到**。",
+            int("x1", "框的一角，地图上的 x"),
+            int("y1", "框的一角，地图上的 y"),
+            int("x2", "对角，地图上的 x"),
+            int("y2", "对角，地图上的 y"),
+        ),
     )
-}
 
-/** [DirectorTools.SCHEDULE] 的参数。**全部有默认值**，所以缺字段只会退化成一次看得懂的失败。 */
-@Serializable
-internal data class ScheduleArgs(
-    val id: String = "",
-    val day: Int = 0,
-    val hour: Int = 0,
-    val minute: Int = 0,
-    val what: String = "",
-)
+    /** 某一档手里的手。 */
+    fun of(tier: Tier): List<ToolDefinition> = when (tier) {
+        Tier.FAST -> FAST
+        Tier.THINKING -> ALL
+    }
+}

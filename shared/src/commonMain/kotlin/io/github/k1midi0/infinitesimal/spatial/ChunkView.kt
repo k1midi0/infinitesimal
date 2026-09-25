@@ -149,29 +149,8 @@ object ChunkView {
         fun absX(i: Int) = player.x - radius + i
         fun absY(j: Int) = player.y - radius + j
 
-        val sb = StringBuilder()
-
-        // 十位尺：每十列写一次完整的 x。写出来的字符可能盖到右边几格，而刻度之间隔着十格，不会撞。
-        val ruler = CharArray(width) { ' ' }
-        for (i in 0 until width) {
-            val x = origin.display(ChunkKey(absX(i), 0)).x
-            if (x % 10 != 0) continue
-            val text = x.toString()
-            for ((k, ch) in text.withIndex()) {
-                val p = i + k
-                if (p in 0 until width) ruler[p] = ch
-            }
-        }
-
-        // 个位尺用**绝对值**的个位，不用取模——取模下 -11 的个位是 9，而人读「-11」时看的是那个 1。
-        // 符号由上面那行十位尺给（它写着 -10、0、+10），两行合起来才是一个完整的数轴刻度。
-        val units = CharArray(width) { i ->
-            val x = origin.display(ChunkKey(absX(i), 0)).x
-            '0' + (abs(x) % 10)
-        }
-
-        sb.append(" ".repeat(LABEL)).append(ruler.concatToString()).append('\n')
-        sb.append(" ".repeat(LABEL)).append(units.concatToString()).append('\n')
+        val xs = (0 until width).map { absX(it) }
+        val sb = StringBuilder().append(axes(origin, xs))
 
         for (j in 0 until width) {
             sb.append("y=").append(signed(origin.display(ChunkKey(0, absY(j))).y)).append(' ')
@@ -183,16 +162,76 @@ object ChunkView {
                 val d2 = dx * dx + dy * dy
                 val ch = when {
                     d2 > r2 -> ' '
-                    ax == player.x && ay == player.y -> PLAYER
-                    world.terrain.isGenerated(ChunkKey(ax, ay)) -> GENERATED
-                    d2 <= hard2 -> REQUIRED
-                    else -> OPTIONAL
+                    else -> cell(world, player, ax, ay, d2 <= hard2)
                 }
                 sb.append(ch)
             }
             sb.append('\n')
         }
         return sb.toString()
+    }
+
+    /**
+     * 看地图上的**一框**，坐标是绝对区块坐标（`look_map` 先把数轴上的数字过了 [ChunkOrigin.absolute]）。
+     *
+     * 与 [render] 的区别只有两处：不画圆盘（框本身就是范围），以及**不把框外的格子涂成空格**。
+     * 前者是因为它不是"以玩家为中心看一眼"，后者是因为那样会把请求的框缩回圆盘里去——而
+     * "看得远不等于长得到"这条边界由 `grow_terrain` 那边驳回，不该由这一只手悄悄掩掉。
+     */
+    fun renderBox(
+        world: World,
+        origin: ChunkOrigin,
+        player: ChunkKey,
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
+    ): String {
+        val hard2 = HARD_RADIUS_CHUNKS * HARD_RADIUS_CHUNKS
+        val xs = (x1..x2).toList()
+        val sb = StringBuilder().append(axes(origin, xs))
+
+        for (ay in y1..y2) {
+            sb.append("y=").append(signed(origin.display(ChunkKey(0, ay)).y)).append(' ')
+            for (ax in xs) {
+                val dx = ax - player.x
+                val dy = ay - player.y
+                sb.append(cell(world, player, ax, ay, dx * dx + dy * dy <= hard2))
+            }
+            sb.append('\n')
+        }
+        return sb.toString()
+    }
+
+    /** 一格画什么。四种字符的意思见这个对象的注释。 */
+    private fun cell(world: World, player: ChunkKey, ax: Int, ay: Int, withinHard: Boolean): Char = when {
+        ax == player.x && ay == player.y -> PLAYER
+        world.terrain.isGenerated(ChunkKey(ax, ay)) -> GENERATED
+        withinHard -> REQUIRED
+        else -> OPTIONAL
+    }
+
+    /**
+     * 两行刻度。十位尺每十列写一次完整的 x（写出来的字符可能盖到右边几格，而刻度之间隔着十格，不会
+     * 撞）；个位尺用**绝对值**的个位，不用取模——取模下 -11 的个位是 9，而人读「-11」时看的是那个 1。
+     * 符号由十位尺给（它写着 -10、0、+10），两行合起来才是一个完整的数轴刻度。
+     */
+    private fun axes(origin: ChunkOrigin, xs: List<Int>): String {
+        val width = xs.size
+        val ruler = CharArray(width) { ' ' }
+        for (i in 0 until width) {
+            val x = origin.display(ChunkKey(xs[i], 0)).x
+            if (x % 10 != 0) continue
+            for ((k, ch) in x.toString().withIndex()) {
+                val p = i + k
+                if (p in 0 until width) ruler[p] = ch
+            }
+        }
+        val units = CharArray(width) { i ->
+            '0' + (abs(origin.display(ChunkKey(xs[i], 0)).x) % 10)
+        }
+        return " ".repeat(LABEL) + ruler.concatToString() + "\n" +
+            " ".repeat(LABEL) + units.concatToString() + "\n"
     }
 
     /** 数轴上那种三字符的写法：`+32`、`-03`、`+00`。定宽是有意义的——行头对齐靠它。 */

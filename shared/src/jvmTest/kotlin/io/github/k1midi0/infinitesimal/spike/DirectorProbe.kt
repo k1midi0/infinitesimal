@@ -1,8 +1,13 @@
 package io.github.k1midi0.infinitesimal.spike
 
-import io.github.k1midi0.infinitesimal.director.Arrangement
+import io.github.k1midi0.infinitesimal.director.Awakening
 import io.github.k1midi0.infinitesimal.director.Director
+import io.github.k1midi0.infinitesimal.director.Wake
+import io.github.k1midi0.infinitesimal.director.Waking
 import io.github.k1midi0.infinitesimal.session.StartingWorld
+import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
+import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
+import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.TimelineEntry
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
@@ -13,7 +18,7 @@ import kotlinx.coroutines.runBlocking
 /**
  * 导演排时间轴的联机探针（§8）。
  *
- * 离线那 18 支测试验的是接线（参数写错能不能改回来、不设 `max_tokens`、assistant 带没带
+ * 离线那一批测试验的是接线（参数写错能不能改回来、不设 `max_tokens`、assistant 带没带
  * `reasoning_content`）。**它们一个字都不能证明排出来的东西合不合用**——那只能真跑。
  *
  * 这一支要回答的是四件事：
@@ -34,9 +39,15 @@ class DirectorProbe {
     private fun opening(): World =
         World.from(WorldSnapshot(StartingWorld.tavern(), StartingWorld.rules()))
 
+    private fun arranging(world: World) = Waking(
+        Wake.Arrange,
+        "player",
+        ChunkOrigin.atPlayerStart(world.chunkOfEntity("player") ?: ChunkKey(0, 0)),
+    )
+
     private class Run(
         val label: String,
-        val result: Arrangement,
+        val result: Awakening,
         val requests: Int,
         val elapsedMs: Long,
     )
@@ -56,7 +67,7 @@ class DirectorProbe {
             val world = opening()
             val director = Director(ProbeSupport.configOf(key))
             val mark = TimeSource.Monotonic.markNow()
-            val result = director.arrange(world, "player")
+            val result = director.wake(world, arranging(world))
             runs += Run("甲${i + 1} 开局", result, director.requestCount, mark.elapsedNow().inWholeMilliseconds)
         }
 
@@ -72,7 +83,7 @@ class DirectorProbe {
             val world = World.from(seeded.snapshot())
             val director = Director(ProbeSupport.configOf(key))
             val mark = TimeSource.Monotonic.markNow()
-            val result = director.arrange(world, "player")
+            val result = director.wake(world, arranging(world))
             runs += Run("乙${i + 1} 已排过两件", result, director.requestCount, mark.elapsedNow().inWholeMilliseconds)
         }
 
@@ -82,16 +93,17 @@ class DirectorProbe {
             println()
             println("── ${run.label}｜请求 ${run.requests} 次｜${run.elapsedMs} ms")
             when (val r = run.result) {
-                is Arrangement.Done -> {
-                    println("   排上 ${r.entries.size} 件（第 ${r.attempts} 次尝试）")
-                    r.entries.sortedBy { it.dueAt.minutes }.forEach {
+                is Awakening.Done -> {
+                    println("   排上 ${r.scheduled.size} 件（第 ${r.attempts} 次尝试）")
+                    r.scheduled.sortedBy { it.dueAt.minutes }.forEach {
                         println("   · ${it.dueAt}　${it.what}　[id=${it.id}]")
                     }
-                    val span = r.entries.maxOfOrNull { it.dueAt.minutes }?.minus(World.from(WorldSnapshot(StartingWorld.tavern())).clock.minutes)
+                    val now = opening().clock.minutes
+                    val span = r.scheduled.maxOfOrNull { it.dueAt.minutes }?.minus(now)
                     if (span != null) println("   最远一件在 ${span / 60} 小时之后")
                 }
 
-                is Arrangement.FailedProtocol -> {
+                is Awakening.FailedProtocol -> {
                     println("   没排成（试了 ${r.attempts} 次）")
                     r.problems.forEach { println("   ! $it") }
                 }
@@ -100,7 +112,7 @@ class DirectorProbe {
 
         println()
         println("── 合计")
-        val done = runs.count { it.result is Arrangement.Done }
+        val done = runs.count { it.result is Awakening.Done }
         println("   ${runs.size} 次里排成 $done 次")
         println("   请求数 ${runs.joinToString("、") { it.requests.toString() }}")
         println("   耗时 ${runs.joinToString("、") { it.elapsedMs.toString() }} ms（最慢 ${runs.maxOf { it.elapsedMs }} ms）")
