@@ -151,4 +151,10 @@ data class WorldSnapshot(
     val zoning: ZoningSnapshot = ZoningSnapshot(),
     /** 记录层（§1.5、§6.1）：发生过什么，append-only。 */
     val log: EventLogSnapshot = EventLogSnapshot(),
+    /**
+     * **发言的顺序**（`world/Talk.kt`）：同时被点到名的人按这张名单依次开口。
+     *
+     * 默认空表——没排过队的角色照样能说话（排在最后），所以**老快照装回来也能跑**。
+     */
+    val speakQueue: List<String> = emptyList(),
 )

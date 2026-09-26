@@ -36,6 +36,7 @@ import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import io.github.k1midi0.infinitesimal.world.ZoningSnapshot
 import io.github.k1midi0.infinitesimal.world.WorldTime
+import io.github.k1midi0.infinitesimal.world.speakersAmong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -999,7 +1000,17 @@ class GameSession(
         }
 
         val replies = mutableListOf<Spoken>()
-        for (id in addressed) {
+        // **按发言的顺序来**（`world/Talk.kt`）：同时被点到名的那些人依次开口，一个说完下一个。
+        //
+        // 顺序是一个**队列**，不是每人一个优先值：插队时后面的人自动顺延，所以"两个 NPC 优先值相同"
+        // 这件事在设计上就不存在。没排过队的人排在最后（按 id），于是世界不必先给人排座次才能跑。
+        val speakers = world.speakersAmong(addressed)
+        // **一次点到两个人以上时，把顺序写出来**（§5.4）。它不只是给人看的：顺序是代码排的，而排错了
+        // （插队那条路、或者名单被别处改了）症状是"某个人怎么老先说"——那种事没有一行日志就查不出。
+        if (speakers.size > 1) {
+            say(LogLine.Kind.NOTE, "（这一轮依次开口：${speakers.joinToString("、", transform = ::labelOf)}）")
+        }
+        for (id in speakers) {
             val task = startTask("${labelOf(id)}在回应…")
             val reaction = try {
                 writes.withLock {

@@ -165,6 +165,9 @@ object StartingWorld {
      * 逮到的——矮人眼里的整片地都写着"缺"）。**两次都不是逻辑错，是调用点少写了一行。** 所以这里把
      * 四样捆在一起，新写的调用点用这一份就不会漏。
      *
+     * 第五样是**发言的顺序**（2026-09-26 加的）：开局只有矮人一个会说话的角色，它排在队首。空名单
+     * 也能跑（没排过队的排在最后），但那样"谁先开口"就不可读了——开局这一份该把人排好。
+     *
      * [GameSession] 不用它，因为它那四个参数是分开的（测试要能把其中一样换掉）。
      */
     fun snapshot(): WorldSnapshot = WorldSnapshot(
@@ -172,7 +175,11 @@ object StartingWorld {
         rulebook = rules(),
         terrain = ground,
         zoning = zoning(),
+        speakQueue = listOf(DWARF_ID),
     )
+
+    /** 开局那个矮人的 id。它现在出现在几处（发言名单、探针、测试），所以给它一个名字。 */
+    const val DWARF_ID: String = "dwarf"
 
     /**
      * 开局那张酒馆。

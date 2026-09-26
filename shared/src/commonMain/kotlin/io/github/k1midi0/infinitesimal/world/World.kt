@@ -57,6 +57,15 @@ class World private constructor(
      * 不挂在实体上——角色死了，它收到过什么仍然是记录（§3.2.2）。
      */
     val log: EventLog = EventLog.empty(),
+    /**
+     * **发言的顺序**（`world/Talk.kt`）：同时被点到名的那些人按这张名单依次开口。
+     *
+     * 它是世界的事实（"谁先说话"不该随重启变），所以在这里、也进快照。它是个**队列**而不是"每人一个
+     * 整数"：插队时后面那些自动顺延，于是"两个 NPC 优先值相同"这件事在设计上就不存在。
+     *
+     * 默认空表——**没排过队的角色照样能说话**（排在最后），世界不必先有人给它排个座次才能跑起来。
+     */
+    var speakQueue: List<String> = emptyList(),
 ) {
 
     fun all(): List<Entity> = entities.values.toList()
@@ -109,6 +118,7 @@ class World private constructor(
         terrain = terrain.snapshot(),
         zoning = zoning.snapshot(),
         log = log.snapshot(),
+        speakQueue = speakQueue,
     )
 
     companion object {
@@ -132,6 +142,7 @@ class World private constructor(
             Terrain.from(snapshot.terrain),
             Zoning.from(snapshot.zoning),
             EventLog.from(snapshot.log),
+            snapshot.speakQueue,
         )
     }
 }
