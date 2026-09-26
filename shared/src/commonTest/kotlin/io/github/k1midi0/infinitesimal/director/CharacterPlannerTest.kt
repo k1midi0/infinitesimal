@@ -141,6 +141,30 @@ class CharacterPlannerTest {
         assertTrue(found.any { "出现了不止一次" in it }, "实得 $found")
     }
 
+    /**
+     * **拿这只手摆道具会被驳，而理由要指出该走哪条路**（§14.48）。
+     *
+     * 这一条是联机读数逼出来的：导演放了十五件"枯灌木 / 碎石堆 / 干草丛 / 枯树 / 风化石板"，每一件都带
+     * 卡（所以"一张卡都没有"那道门放它过去了）。坏法很实在——**一个死物落进角色表里**，之后每一个
+     * "这一片里有谁"的判据都会把一块石头当成一个人。
+     */
+    @Test
+    fun aThingThatBelongsToTheGroundIsNotAPerson() {
+        val world = world()
+        val found = problems(world, smith(id = "dead_bush_1", label = "枯灌木"))
+        assertTrue(found.any { "不是一个人" in it }, "实得 $found")
+        assertTrue(found.any { "grow_terrain" in it }, "理由要指出该走哪条路：$found")
+    }
+
+    /** 而这条判据要**窄**：一个真人的名字里带个"石"字不该被拦（「石匠」是差一点就咬到的那种）。 */
+    @Test
+    fun theDressingGateDoesNotBiteRealNames() {
+        val world = world()
+        assertTrue(problems(world, smith(id = "mason", label = "石匠老周")).isEmpty())
+        assertTrue(problems(world, smith(id = "keeper", label = "酒馆老板柯尔")).isEmpty())
+        assertTrue(problems(world, smith(id = "smith", label = "铁匠格里姆")).isEmpty())
+    }
+
     // ── 落库 ───────────────────────────────────────────────────────────────────────
 
     @Test

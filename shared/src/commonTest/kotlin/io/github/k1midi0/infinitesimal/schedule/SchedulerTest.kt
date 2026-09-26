@@ -58,8 +58,22 @@ class SchedulerTest {
     private fun beatAt(world: World, id: String, phase: Int): Beat =
         world.byId(id)!!.cycle.beatAt(phaseClock(world, id, phase))!!
 
-    /** 开局那份世界，人挪到别处、时钟拨到相位 600。 */
+    /**
+     * 开局那份世界，时钟拨到相位 600，而**人站在那一格旁边**（一百厘米）。
+     *
+     * 位置不能再写 (5000, 5000)：§14.47 之后，那一格离得太远、又不在那一片的凸包里时，代码**直接放行、
+     * 一次都不问**。要问出哨兵那一句，人必须在"就在它眼前"的范围里——而那正是这条判据真正管着的情形。
+     */
     private fun world(): World {
+        val w = World.from(StartingWorld.snapshot())
+        val target = beatAt(w, "dwarf", 600)
+        w.put(w.byId("dwarf")!!.copy(x = target.x + 100, y = target.y, z = target.z))
+        w.clock = phaseClock(w, "dwarf", 600)
+        return w
+    }
+
+    /** 人在五公里外的那一份：这是 §14.47 那道门槛说的"那一格不在它眼前"。 */
+    private fun worldFarAway(): World {
         val w = World.from(StartingWorld.snapshot())
         w.put(w.byId("dwarf")!!.copy(x = 5000, y = 5000))
         w.clock = phaseClock(w, "dwarf", 600)
@@ -84,7 +98,7 @@ class SchedulerTest {
         assertTrue(caught.stuck.isEmpty())
         assertEquals(1, caught.moved.size)
         assertEquals(target.x, caught.moved.first().beat.x)
-        assertEquals(5000, world.byId("dwarf")!!.x, "刷新只报不写")
+        assertEquals(target.x + 100, world.byId("dwarf")!!.x, "刷新只报不写")
         assertEquals(null, world.byId("dwarf")!!.active, "它还在走循环，没被拿下来")
     }
 
@@ -97,7 +111,7 @@ class SchedulerTest {
         val caught = schedulerOf(script).catchUp(world)
 
         val dwarf = world.byId("dwarf")!!
-        assertEquals(5000, dwarf.x, "**没去成就不挪**——放到那一格上是会话那一层的事")
+        assertEquals(target.x + 100, dwarf.x, "**没去成就不挪**——放到那一格上是会话那一层的事")
         assertEquals(1, caught.stuck.size)
         val reason = caught.stuck.first().reason.orEmpty()
         assertTrue("酒馆的大厅已经烧成一片焦黑" in reason, "那句理由要原样带着：$reason")
@@ -110,10 +124,11 @@ class SchedulerTest {
         // 一帧**没有工具调用**：模型只说了一句话。协议上它是空转，而这里没有重试。
         val script = Scripted(listOf(stop("我不知道。")))
         val world = world()
+        val before = world.byId("dwarf")!!.x
 
         val caught = schedulerOf(script).catchUp(world)
 
-        assertEquals(5000, world.byId("dwarf")!!.x)
+        assertEquals(before, world.byId("dwarf")!!.x, "空转之后它还在原地")
         assertEquals(1, caught.stuck.size)
         assertTrue("先按进不去算" in caught.stuck.first().reason.orEmpty())
     }
@@ -178,5 +193,45 @@ class SchedulerTest {
         assertEquals(1, caught.stuck.size, "它该被拦下来")
         assertEquals(0, script.bodies.size, "地形拦下了就不该再花一次调用")
         assertTrue("站不住" in caught.stuck.first().reason.orEmpty())
+    }
+
+    // ── 那一格不在它眼前（§14.47） ────────────────────────────────────────────────────
+
+    /**
+     * **那一格在远处时，代码直接放行、一次都不问。**
+     *
+     * 这是实测逮到的读错：人在酒馆里，而那一格在镇子另一头——哨兵答"这一格上立着酒馆的柜台，
+     * 摆不开一个鱼摊"，它拿**脚下那一格**去答了"那一格做得了吗"。提示词压不住它（它并不觉得自己
+     * 看不到：眼前明明有一片清单），所以那条规矩改由代码执行。
+     *
+     * 放行的正当性在于：**那一格本身站不住不归它管**——那是免费的那一半（`canStandAt`），跑在它之前。
+     * 它只管"那一格就在它眼前，而眼前看得出这件事做不了了"。
+     */
+    @Test
+    fun aBeatThatIsNowhereNearItsEyesIsClearedWithoutAskingAnyone() = runBlocking {
+        val script = Scripted(listOf(report(false, "这一帧永远不该被用到。")))
+        val world = worldFarAway()
+
+        val caught = schedulerOf(script).catchUp(world)
+
+        assertTrue(caught.stuck.isEmpty(), "看不到就不当它出事")
+        assertEquals(1, caught.moved.size, "该挪过去还是挪过去")
+        assertEquals(0, script.bodies.size, "**一次都没问**")
+    }
+
+    @Test
+    fun theBeatAndWhereItStandsAreBothNamedInThePrompt() = runBlocking {
+        val script = Scripted(listOf(report(true, "没什么不对的。")))
+        val world = world()
+        val target = beatAt(world, "dwarf", 600)
+        val dwarf = world.byId("dwarf")!!
+
+        schedulerOf(script).catchUp(world)
+
+        val body = script.bodies.first()
+        assertTrue("【先说清你在看哪一处】" in body, "两处要先分开写：\n$body")
+        assertTrue("(${target.x}, ${target.y}, ${target.z})" in body, "那一处要有坐标：\n$body")
+        assertTrue("(${dwarf.x}, ${dwarf.y}, ${dwarf.z})" in body, "它此刻在哪儿也要有：\n$body")
+        assertTrue("判的是那一处，不是它脚下那一格" in body, "规矩要写在它读得到的地方：\n$body")
     }
 }

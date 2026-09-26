@@ -13,6 +13,7 @@ import io.github.k1midi0.infinitesimal.llm.ToolDefinition
 import io.github.k1midi0.infinitesimal.llm.decodeCall
 import io.github.k1midi0.infinitesimal.llm.text
 import io.github.k1midi0.infinitesimal.llm.tool
+import io.github.k1midi0.infinitesimal.spatial.Region
 import io.github.k1midi0.infinitesimal.spatial.RegionBuilder
 import io.github.k1midi0.infinitesimal.spatial.RegionView
 import io.github.k1midi0.infinitesimal.world.Beat
@@ -21,6 +22,7 @@ import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.refreshCyclesToClock
 import io.github.k1midi0.infinitesimal.world.rendered
+import io.github.k1midi0.infinitesimal.world.terrainCellOf
 import io.github.k1midi0.infinitesimal.world.whyStuck
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.Serializable
@@ -123,13 +125,37 @@ class SentryJudge(
      *
      * [Verdict.reason] 在判"不行"时**就是要交给导演的那句话**（所以它得是一句这个世界在说的话）；
      * 判"行"时只进日志与读数，不喂给任何模型。
+     *
+     * ## 那一格不在它眼前时，**代码直接放行，一次都不问**（§14.47）
+     *
+     * 这是实测逼出来的：远得看不见的那一格（人在酒馆里，那一格在镇子另一头）会被读成"这一格上立着
+     * 酒馆的柜台，摆不开一个鱼摊"——它拿**发起者脚下那一格**去答了"那一格做得了吗"。提示词里
+     * "看不到就报做得了"那条压不住它，因为它并不觉得自己看不到：眼前明明有一片清单。
+     *
+     * 所以那条规矩**由代码执行**：
+     *
+     *  - 那一格落在**这一片之外**时——它此刻站在哪儿、周围长什么样，与那一格做得了吗无关；
+     *  - 而"那一格本身站不住"（塌了、填死了、淹了）**不归它管**，那是免费的那一半
+     *    （[io.github.k1midi0.infinitesimal.world.canStandAt]，跑在它之前）。
+     *
+     * 于是它只管一类事：**那一格就在它眼前，而眼前看得出这件事做不了了**。
      */
     suspend fun check(world: World, entity: Entity, beat: Beat): Verdict {
+        val region = RegionBuilder.of(world, listOf(entity.id))
+        val away = farFrom(entity, beat)
+        if (away > IN_SIGHT_CM && !region.contains(terrainCellOf(beat.x), terrainCellOf(beat.y))) {
+            return Verdict(
+                possible = true,
+                reason = "那一格在 (${beat.x}, ${beat.y}, ${beat.z})，离它现在的落脚处 $away 厘米，" +
+                    "不在这片看得见的地方——看不到就不当它出事（站不站得住由代码判）。",
+            )
+        }
+
         val turn = AssistantTurn.of(
             client.streamChat(
                 messages = listOf(
                     ChatMessage.system(SYSTEM),
-                    ChatMessage.user(prompt(world, entity, beat)),
+                    ChatMessage.user(prompt(world, entity, beat, region, away)),
                 ),
                 tools = listOf(REPORT),
                 thinking = ThinkingRequest.of(ThinkingMode.Never, effort),
@@ -148,7 +174,7 @@ class SentryJudge(
         return Verdict(possible = args.possible, reason = args.reason.trim().ifEmpty { "它没给理由" })
     }
 
-    private fun prompt(world: World, entity: Entity, beat: Beat): String = buildString {
+    private fun prompt(world: World, entity: Entity, beat: Beat, region: Region, away: Int): String = buildString {
         val persona = entity.cards.rendered()
         appendLine("【这个人是谁】")
         appendLine("${entity.label}（id 是「${entity.id}」）")
@@ -156,18 +182,41 @@ class SentryJudge(
             appendLine(persona)
             appendLine()
         }
+        // **先说清要看哪一处**，再说那一格是什么（§14.47）。反过来的话，它会拿脚底下这一片去答
+        // 「那一格做得了吗」——而这两处可以隔着半条街。
+        appendLine("【先说清你在看哪一处】")
+        appendLine("你要判的是**这个人这一刻该去的那一处**，不是它此刻落脚的地方。")
+        appendLine("① 那一处：(${beat.x}, ${beat.y}, ${beat.z}) 厘米——下面清单里指的是它。")
+        appendLine("② 它现在在：(${entity.x}, ${entity.y}, ${entity.z}) 厘米，离那一处 $away 厘米。")
+        if (away > 0) {
+            appendLine("两处**不是同一个地方**：它正在走过去的路上。清单是围着**它**画的，")
+            appendLine("所以清单里那些东西是它**此刻身边**的，不一定是那一处的。")
+        }
+        appendLine()
         appendLine("【它这一刻本来该去做的】")
         appendLine("「${beat.state}」")
-        appendLine(
-            "地点在 (${beat.x}, ${beat.y}, ${beat.z}) 厘米——" +
-                "它此刻在 (${entity.x}, ${entity.y}, ${entity.z})。",
-        )
         appendLine()
-        appendLine("【那地方现在是什么样】")
-        appendLine(RegionView.render(world, RegionBuilder.of(world, listOf(entity.id)), entity.id))
+        appendLine("【那一处现在是什么样】")
+        appendLine(
+            RegionView.render(world, region, entity.id),
+        )
     }
 
     private companion object {
+
+        /**
+         * 多近算"就在它眼前"：五米，与 [io.github.k1midi0.infinitesimal.world.nearEnough] 同一个数。
+         *
+         * 越过它、而且那一片的凸包也够不到那一格时，[check] 直接放行、一次调用都不花（§14.47）。
+         */
+        const val IN_SIGHT_CM = 500
+
+        /** 三轴里差得最远的那个数（厘米）。 */
+        fun farFrom(entity: Entity, beat: Beat): Int = maxOf(
+            kotlin.math.abs(entity.x - beat.x),
+            kotlin.math.abs(entity.y - beat.y),
+            kotlin.math.abs(entity.z - beat.z),
+        )
 
         const val REPORT_NAME = "report"
 
@@ -207,7 +256,7 @@ class SentryJudge(
 
             **这一格说的那件事，现在这个世界还做得了吗。**
 
-            你手上有三样东西：这个人的卡（它是谁）、这一格要做的那件事、以及**它眼前那一片清单**。
+            你手上有三样东西：这个人的卡（它是谁）、这一格要做的那件事、以及**那一处的那一片清单**。
             清单是发起的这一刻的。判的时候问自己三句：
 
             1. **那地方站得住吗**——它的落点是空的，还是已经被填死、埋了、塌了、被水淹了？
@@ -219,6 +268,10 @@ class SentryJudge(
             三句都过得去，就是做得了。**有哪一句过不去，就报做不了**，理由写成一句这个世界在说的话，
             并且**指着清单里那个东西说**（例如：柜台已经塌了一半，横着的木料把那一块堵死了）。
 
+            **判的是那一处，不是它脚下那一格。** 上面①②把两处分开写了：清单是围着**这个人**画的，
+            所以里面那些东西是它**此刻身边**的。两处离得远时，不要拿它脚下的东西去答那一处做得了吗
+            （"这一格上立着柜台，摆不开一个鱼摊"就是把两处读成了一处）。
+
             反过来，规矩也只有一条，而它同样要紧：
 
             **看不出来有什么不对，就是做得了。**
@@ -227,7 +280,7 @@ class SentryJudge(
             看着乱就报做不了。报了做不了，就会有一个人被从它的作息上拽下来，还会有人被叫来处理
             一件其实没发生的事。
 
-            清单里没有的东西就是此刻不在这里。**这一片看不到那个地点时（人在半路上、或者那地方太
+            清单里没有的东西就是此刻不在这里。**这一片看不到那一处时（人在半路上、或者那地方太
             远），报做得了**，不要拿没看见当那里出事了。
 
             每一次都调那只 report 手。做不了时理由不要写成系统提示。

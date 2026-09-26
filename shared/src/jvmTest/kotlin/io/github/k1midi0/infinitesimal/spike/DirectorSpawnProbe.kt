@@ -7,9 +7,11 @@ import io.github.k1midi0.infinitesimal.director.Waking
 import io.github.k1midi0.infinitesimal.session.StartingWorld
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
+import io.github.k1midi0.infinitesimal.world.CHARACTER_KIND
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
+import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import kotlin.test.Test
 import kotlin.time.TimeSource
 import kotlinx.coroutines.runBlocking
@@ -50,7 +52,17 @@ class DirectorSpawnProbe {
         fun newcomers(): List<Entity> = world.all().filter { it.id !in before }
     }
 
-    /** [crowded] ＝ 把"这一带该有人"写进世界里（赶集日那一档）。 */
+    /**
+     * ① 那一档用**酒馆里的开局世界**（`StartingWorld.snapshot()`），不是空的荒原。
+     *
+     * 第一版用的是 `ProbeSupport.tavernSeed()`（实体都在 (1200,300) 那一带）却把玩家放在 (1200, 300,
+     * GROUND)——而 `tavernSeed()` 是**另一份夹具**、坐标与 `StartingWorld` 对不上，于是玩家实际站在一片
+     * **没有地形、没有东西的空地**上。读数里那十五件"枯灌木 / 碎石堆 / 干草丛"就是这么来的：它站在一片
+     * 空地上，被要求"该有点东西了"，于是拿这只手去铺地。**探针的夹具错了，读数就整个没意义**（与
+     * §14.45 那条教训同一类）。
+     *
+     * [crowded] ＝ 把"这一带该有人"写进世界里（赶集日那一档）。
+     */
     private fun opening(crowded: Boolean): World {
         val snapshot = StartingWorld.snapshot()
         if (!crowded) return World.from(snapshot)
@@ -70,6 +82,23 @@ class DirectorSpawnProbe {
             ),
         )
     }
+
+    /**
+     * ④ 一档：**一片还没有长东西的空地**（"这一带该有点东西了"那一档）。
+     *
+     * 世界里的东西一件都不带上（`speakQueue` 也清掉），玩家站在空地上。这一档要读的是**它会不会拿这只
+     * 手去铺地**——铺地是 `grow_terrain` 的活，而这一支就是要逮那件事。
+     */
+    private fun barrenLand(): World = World.from(
+        WorldSnapshot(
+            entities = listOf(
+                Entity(
+                    id = "player", kind = CHARACTER_KIND, label = "你",
+                    x = 1200, y = 300, z = ProbeSupport.GROUND,
+                ),
+            ),
+        ),
+    )
 
     private fun origin(world: World) =
         ChunkOrigin.atPlayerStart(world.chunkOfEntity("player") ?: ChunkKey(0, 0))
@@ -106,8 +135,12 @@ class DirectorSpawnProbe {
             println("   **它一个人都没放。**")
             return
         }
+        val dressing = people.filter { it.label.isSceneDressing() }
         for (who in people) {
-            println("   · 放了一个：${who.label}（id=${who.id}）站在 (${who.x}, ${who.y}, ${who.z})")
+            println(
+                "   · ${if (who in dressing) "**放的是一件地上的东西**" else "放了一个人"}：" +
+                    "${who.label}（id=${who.id}）站在 (${who.x}, ${who.y}, ${who.z})",
+            )
             who.cards.forEach { println("       卡「${it.title}」：${it.content}") }
             if (who.cycle.isEmpty) {
                 println("       没有作息（剧情角色：待在原地，被叫到才动）")
@@ -119,7 +152,24 @@ class DirectorSpawnProbe {
             }
             println("       背景（代码推的）：${who.background?.replace("\n", " / ")}")
         }
+        if (dressing.isNotEmpty()) {
+            println("   **这一遍里 ${dressing.size}/${people.size} 件是地上的东西**——这只手被当成了摆道具。")
+        }
     }
+
+    /**
+     * 看着像"这一片地上的东西"吗。
+     *
+     * **判据刻意与产品里那道门（`CharacterPlanner`）用同一批词**，但这里是**读数用的**：探针要是靠
+     * "产品拦住了没有"才知道自己看到了什么，那它就把被测的那一层当成了眼睛。
+     */
+    private fun String.isSceneDressing(): Boolean = listOf(
+        "灌木", "草丛", "杂草", "苔藓", "藤蔓",
+        "碎石", "石块", "石板", "岩体", "砾石", "砂砾",
+        "枯树", "树桩", "树皮", "树根",
+        "泥坑", "水洼", "积水", "土堆", "沙丘", "积雪",
+        "残骸", "废墟", "断墙", "瓦砾", "栅栏", "篱笆",
+    ).any { it in this }
 
     /**
      * 三档一起跑（每档 [timesOf] 遍），印成一张表。
@@ -171,10 +221,11 @@ class DirectorSpawnProbe {
         val label = when (scenario) {
             PLAIN -> "① 平常的傍晚"
             CROWDED -> "② 赶集日的傍晚"
+            EMPTY -> "④ 一片空地"
             else -> "③ 玩家点名要一个还没有的人"
         }
         return (1..times).map { i ->
-            val world = opening(crowded = scenario == CROWDED)
+            val world = if (scenario == EMPTY) barrenLand() else opening(crowded = scenario == CROWDED)
             run("$label 第${i}遍", world, waking(world), Director(ProbeSupport.configOf(key)))
         }
     }
@@ -195,6 +246,17 @@ class DirectorSpawnProbe {
         reportAll("③ 玩家点名要一个还没有的人", runCase(POINTED, timesOf()) { world -> calledUp(world) })
     }
 
+    /**
+     * ④ **一片还没有东西的空地**：这一档读的是"它会不会拿这只手去铺地"。
+     *
+     * 它正是第一版读数里那十五件灌木的来源——不过那一版是**夹具错了**（玩家被放在一片空地上，而探针
+     * 以为它在酒馆里）。这一档是**故意的**：空地是真的，要看它在"该有点东西了"的时候会不会用错手。
+     */
+    @Test
+    fun aBarePatchOfLandDoesNotGetDressedWithPeople() = runBlocking {
+        reportAll("④ 一片空地", runCase(EMPTY, timesOf()) { world -> arranging(world) })
+    }
+
     private fun timesOf() =
         System.getProperty("infinitesimal.spawnRuns")?.trim()?.toIntOrNull()?.coerceIn(1, 5) ?: 3
 
@@ -208,7 +270,9 @@ class DirectorSpawnProbe {
         println("═".repeat(100))
         runs.forEach(::report)
         println()
-        println("── 合计：放了 ${runs.sumOf { it.newcomers().size }} 个人（${runs.size} 遍）")
+        val dressing = runs.sumOf { run -> run.newcomers().count { it.label.isSceneDressing() } }
+        val people = runs.sumOf { it.newcomers().size } - dressing
+        println("── 合计：放了 $people 个人、$dressing 件地上的东西（${runs.size} 遍）")
         println("   耗时 ${runs.joinToString("、") { it.elapsedMs.toString() }} ms")
     }
 
@@ -216,5 +280,6 @@ class DirectorSpawnProbe {
         const val PLAIN = "plain"
         const val CROWDED = "crowded"
         const val POINTED = "pointed"
+        const val EMPTY = "empty"
     }
 }

@@ -1,6 +1,7 @@
 package io.github.k1midi0.infinitesimal.spike
 
 import io.github.k1midi0.infinitesimal.schedule.SentryJudge
+import io.github.k1midi0.infinitesimal.spatial.RegionBuilder
 import io.github.k1midi0.infinitesimal.world.Beat
 import io.github.k1midi0.infinitesimal.world.CHARACTER_KIND
 import io.github.k1midi0.infinitesimal.world.CharacterCard
@@ -10,6 +11,7 @@ import io.github.k1midi0.infinitesimal.world.TerrainBox
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import io.github.k1midi0.infinitesimal.world.WorldTime
+import io.github.k1midi0.infinitesimal.world.terrainCellOf
 import kotlin.test.Test
 import kotlin.time.TimeSource
 import kotlinx.coroutines.runBlocking
@@ -40,6 +42,48 @@ import kotlinx.coroutines.runBlocking
  * ```
  */
 class SentryProbe {
+
+    /**
+     * 一个对照：**世界 + 那一格在哪儿 + 那一格这件事是什么**。
+     *
+     * 三者放在一起是刻意的。第一版把它们分开写（世界由 `world(...)` 造，那一格由测试循环拿"人站的地方"
+     * 造），于是**那一格永远等于人站的地方**——差恒为 0、五米门槛永远显得是过的，而读数是假的。
+     * 这正是 §14.45 那条教训的第三次：**探针自己写错，与它要量的东西无关。**
+     */
+    private class Scene(val world: World, val destination: Triple<Int, Int, Int>, val state: String) {
+
+        fun beat(at: Entity): Beat = Beat(18 * 60, state, destination.first, destination.second, destination.third)
+
+        fun awayFrom(at: Entity): Int = maxOf(
+            kotlin.math.abs(at.x - destination.first),
+            kotlin.math.abs(at.y - destination.second),
+            kotlin.math.abs(at.z - destination.third),
+        )
+
+        /** 那一格在不在这一片的凸包里——门槛的第二条（§14.47）。 */
+        fun inHull(world: World, at: Entity): Boolean =
+            RegionBuilder.of(world, listOf(at.id)).contains(
+                terrainCellOf(destination.first),
+                terrainCellOf(destination.second),
+            )
+    }
+
+    /** 没事：柜台完好，人离那一格零厘米。 */
+    private fun scene(kind: String): Scene {
+        val world = world(counterRuined = kind == RUINED, buried = kind == BURIED, farAway = kind == FAR_AWAY)
+        val dwarf = world.byId("dwarf")!!
+        val where = if (kind == FAR_AWAY) {
+            Triple(900_000, 500, ProbeSupport.GROUND)
+        } else {
+            Triple(dwarf.x, dwarf.y, dwarf.z)
+        }
+        val state = if (kind == FAR_AWAY) {
+            "在镇子另一头摆摊卖鱼。"
+        } else {
+            "站在柜台后面招呼客人，手里那块布一直没停过。"
+        }
+        return Scene(world, where, state)
+    }
 
     /**
      * [counterRuined] ＝ 柜台塌成一堆烧黑的木料；[buried] ＝ 那个落点被石头填死。
@@ -151,26 +195,43 @@ class SentryProbe {
         } else {
             val sentry = SentryJudge(ProbeSupport.configOf(key))
 
+            // **一处来源，两处用**：自查与真跑都必须拿同一个"那一格在哪儿"，否则它们会各说各话——
+            // 这件事我犯了两次（主循环拿"人站的地方"当那一格，于是差恒为 0、门槛永远显得是过的）。
             val cases = listOf(
-                Triple("① 没事（该说做得了）", world(counterRuined = false), "站在柜台后面招呼客人，手里那块布一直没停过。"),
-                Triple("② 柜台塌了（该说做不了）", world(counterRuined = true), "站在柜台后面招呼客人，手里那块布一直没停过。"),
-                Triple("③ 落点被填死（该说做不了）", world(counterRuined = false, buried = true), "站在柜台后面招呼客人，手里那块布一直没停过。"),
-                Triple("④ 远得看不见（该说做得了）", world(counterRuined = false, farAway = true), "在镇子另一头摆摊卖鱼。"),
+                "① 没事（该说做得了）" to scene(SIMPLE),
+                "② 柜台塌了（该说做不了）" to scene(RUINED),
+                "③ 落点被填死（该说做不了）" to scene(BURIED),
+                "④ 远得看不见（该说做得了）" to scene(FAR_AWAY),
             )
 
+            println("═".repeat(100))
+            println("⑤⑤ 门槛自查：那一次调用到底会不会发出去（§14.47）")
+            println("═".repeat(100))
+            for ((label, one) in cases) {
+                val who = one.world.byId("dwarf")!!
+                val away = one.awayFrom(who)
+                println(
+                    "   $label 人在 (${who.x}, ${who.y}, ${who.z})｜那一格在 " +
+                        "(${one.destination.first}, ${one.destination.second}, ${one.destination.third})" +
+                        "｜差 $away 厘米｜那一格在凸包里=${one.inHull(one.world, who)}" +
+                        "｜会去问模型=${away <= 500 || one.inHull(one.world, who)}",
+                )
+            }
+
+            println()
             println("═".repeat(100))
             println("哨兵：这一格现在做得了吗（每格问三次）")
             println("═".repeat(100))
 
-            for ((label, world, state) in cases) {
-                val dwarf = world.byId("dwarf")!!
-                val beat = Beat(18 * 60, state, dwarf.x, dwarf.y, dwarf.z)
+            for ((label, one) in cases) {
+                val dwarf = one.world.byId("dwarf")!!
+                val beat = one.beat(dwarf)
                 println()
                 println("── $label ──")
-                println("   那一格：「$state」在 (${beat.x}, ${beat.y}, ${beat.z})")
+                println("   那一格：「${beat.state}」在 (${beat.x}, ${beat.y}, ${beat.z})")
                 repeat(3) { i ->
                     val mark = TimeSource.Monotonic.markNow()
-                    val verdict = sentry.check(world, dwarf, beat)
+                    val verdict = sentry.check(one.world, dwarf, beat)
                     val ms = mark.elapsedNow().inWholeMilliseconds
                     println("   ${i + 1}/3 做得了=${verdict.possible}（${ms} ms）｜${verdict.reason}")
                 }
@@ -193,5 +254,12 @@ class SentryProbe {
                 )
             }
         }
+    }
+
+    private companion object {
+        const val SIMPLE = "simple"
+        const val RUINED = "ruined"
+        const val BURIED = "buried"
+        const val FAR_AWAY = "farAway"
     }
 }

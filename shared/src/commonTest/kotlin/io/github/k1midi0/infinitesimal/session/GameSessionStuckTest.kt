@@ -12,10 +12,11 @@ import io.github.k1midi0.infinitesimal.judge.stop
 import io.github.k1midi0.infinitesimal.judge.turn
 import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.npc.Npc
-import io.github.k1midi0.infinitesimal.schedule.Scheduler
-import io.github.k1midi0.infinitesimal.schedule.SentryJudge
+import io.github.k1midi0.infinitesimal.schedule.Scheduling
 import io.github.k1midi0.infinitesimal.world.Beat
+import io.github.k1midi0.infinitesimal.world.CycleCatchUp
 import io.github.k1midi0.infinitesimal.world.WorldTime
+import io.github.k1midi0.infinitesimal.world.refreshCyclesToClock
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -48,8 +49,36 @@ class GameSessionStuckTest {
         judge = Judge(LlmClient(config, script.client)),
         npc = Npc(LlmClient(config, script.client), Judge(LlmClient(config, script.client))),
         director = Director(LlmClient(config, script.client), TerrainGenerator(LlmClient(config, script.client))),
-        scheduler = Scheduler(SentryJudge(LlmClient(config, script.client))),
+        scheduler = schedulerOf(this::whoIsStuck),
     )
+
+    /**
+     * **谁在这一轮进不去**，由每一支测试自己点名（默认没人）。
+     *
+     * 这样"放行"与"卡住"两条路都能在**不联网**的前提下走通：哨兵那一层说不说"进不去"是
+     * [io.github.k1midi0.infinitesimal.schedule.SchedulerTest] 的活，而这一支验的是**会话拿到那句
+     * "进不去"之后做的那三件事**（就位、变活跃、同步叫导演）。
+     *
+     * **不能用 `Scheduler(SentryJudge(假客户端))`**：那会拿一个假 key 去碰端点，而失败按"进不去"算
+     * ——于是这一支会因为一次网络失败而"碰巧"通过，把它真正要验的那条线盖住。
+     */
+    private var whoIsStuck: Set<String> = emptySet()
+
+    private fun schedulerOf(stuck: () -> Set<String>) = Scheduling { world ->
+        val broken = stuck()
+        CycleCatchUp(
+            world.refreshCyclesToClock().map { placement ->
+                if (placement.id !in broken) {
+                    placement
+                } else {
+                    placement.copy(
+                        reason = "酒馆的大厅已经烧成一片焦黑，屋梁塌在门口。",
+                        moved = false,
+                    )
+                }
+            },
+        )
+    }
 
     /** 它到点该去的那一格：开局那份作息的某一格（相位算出来的那一格）。 */
     private fun wantedBeat(session: GameSession, phase: Long): Beat {
@@ -82,6 +111,7 @@ class GameSessionStuckTest {
         // 导演写的新作息里**留着那一格的时刻**（它只是把地点换到了门房那边）——于是"它想去哪一格"那条
         // 归因还作数，而它照样是活跃的。
         val script = stuckScript("420｜1300,100,12800｜在门房那边守着。\n900｜1100,260,12800｜扫地。")
+        whoIsStuck = setOf("dwarf")
         val session = sessionOf(script)
         val dwarf = session.world.byId("dwarf")!!
         val clock = phase600(session)
@@ -125,6 +155,7 @@ class GameSessionStuckTest {
         // 导演写的新作息里**没有那一格的时刻**了：那个"想去哪一格"就永远等不到，必须清掉——否则它会
         // 一直指着一个不存在的时刻，而"回到循环上"那条路就永远等不到那一刻。
         val script = stuckScript("60｜1000,200,12800｜在柜台后面擦杯子。\n600｜1100,260,12800｜扫地。")
+        whoIsStuck = setOf("dwarf")
         val session = sessionOf(script)
         val dwarf = session.world.byId("dwarf")!!
         val clock = phase600(session)
@@ -151,6 +182,7 @@ class GameSessionStuckTest {
                 stop(),
             ),
         )
+        whoIsStuck = setOf("dwarf")
         val session = sessionOf(script)
         val dwarf = session.world.byId("dwarf")!!
         val phase600 = dwarf.cycle.bornAt + 600L % dwarf.cycle.periodMinutes

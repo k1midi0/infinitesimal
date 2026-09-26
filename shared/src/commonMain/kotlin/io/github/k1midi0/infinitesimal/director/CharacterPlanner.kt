@@ -132,6 +132,19 @@ object CharacterPlanner {
             if (write.cards.isEmpty()) {
                 add("「$who」一张卡都没有。没有卡的角色在判定那边不是人——至少写一张身份卡。")
             }
+            // **"这片地上该长点东西"不是这只手的活**（§14.48）。实测跑出来的：导演把枯灌木、碎石堆、
+            // 干草丛、枯树、风化石板一个一个放进世界，每个都带 `kind="地形"` 或者一个植物的名字——它把
+            // 这只手当成了摆道具的工具。那不是"一个人写错了参数"，而是**用错了地方**，所以这里要拦的
+            // 是那件事本身，而理由必须指出该走哪条路。
+            val landmark = sceneDressing(write.label)
+            if (write.cards.isNotEmpty() && landmark != null) {
+                add(
+                    "「${write.label}」看着是**这一片地上的东西**，不是一个人（$landmark）。" +
+                        "这只手只放**有名字的人**——一片荒地上的碎石、枯草、枯树该由 `grow_terrain` 铺地时" +
+                        "顺手长出来（它的 `placements` 就是点名放地标的）；" +
+                        "要摆一件死物，走那条路。",
+                )
+            }
             if (!world.covered(write.at, visible)) {
                 add(
                     "「${write.label}」要站的地方 (${write.at.x}, ${write.at.y}, ${write.at.z}) " +
@@ -228,6 +241,39 @@ object CharacterPlanner {
     )
 
     private fun far(a: Beat, b: CharacterPoint): Int = maxOf(abs(a.x - b.x), abs(a.y - b.y), abs(a.z - b.z))
+
+    /**
+     * 这个名字看着是**这一片地上的东西**吗——是的话，说出是哪一类（不是的话返回 null）。
+     *
+     * ## 为什么这条判据存在，而它不是"代码去判内容合不合理"
+     *
+     * §14.46 说过这里一条都不判"这个人合不合常理"。这一条不同的地方在于**它判的不是内容，是用法**：
+     * 实测（§14.48）里导演拿这只手放了"枯灌木 / 碎石堆 / 干草丛 / 枯树 / 风化石板"——十五件全是死物，
+     * 而每一件都带着卡（所以"一张卡都没有"那道门放它过去了）。那不是参数写错，是把手用错了地方，而它
+     * 的坏法很实在：**一个死物落进角色表里**，之后每一个"这一片里有谁"的判据都会把一块石头当成一个人
+     * （判定按"有没有卡"取人，§3.5）。
+     *
+     * 判据刻意做**窄**：只看那些**成片出现的自然物**的词，不做"像不像人名"那种判断——后者会开始猜，
+     * 而「张石头」是一个人的名字。
+     */
+    private fun sceneDressing(label: String): String? {
+        for (pattern in DRESSING) {
+            if (pattern.containsMatchIn(label)) return "它说的是「${pattern.pattern}」这一类东西"
+        }
+        return null
+    }
+
+    /**
+     * 那些词：成片的自然物、地表的一部分。**每一类都短**，因为长一点就会开始咬到人名
+     * （「石头」是名字里常见的字，所以只认「碎石堆」「风化石板」这种成片的说法，不认单个「石」）。
+     */
+    private val DRESSING = listOf(
+        Regex("灌木|草丛|杂草|苔藓|藤蔓"),
+        Regex("碎石|石块|石板|岩体|砾石|砂砾"),
+        Regex("枯树|树桩|树皮|树根"),
+        Regex("泥坑|水洼|积水|土堆|沙丘|积雪"),
+        Regex("残骸|废墟|断墙|瓦砾|栅栏|篱笆"),
+    )
 
     /** 多近算"就在它旁边"：见文件末尾 [NEAR_CM] 那段注释。 */
     private const val NEARBY_CM = NEAR_CM
