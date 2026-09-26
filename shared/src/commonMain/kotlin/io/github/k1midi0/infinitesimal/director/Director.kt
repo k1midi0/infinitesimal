@@ -358,6 +358,7 @@ class Director(
         DirectorTools.GROW_TERRAIN -> growTerrain(call, world, waking, grew)
         DirectorTools.LOOK_MAP -> lookMap(call, world, waking)
         DirectorTools.WRITE_CYCLE -> writeCycle(call, world, waking)
+        DirectorTools.SPAWN_CHARACTER -> spawnCharacter(call, world, waking)
         else -> "没有叫「${call.name}」的工具。你现在能用的只有：" +
             DirectorTools.of(waking.why.tier).joinToString("、") { it.function.name } + "。"
     }
@@ -415,6 +416,70 @@ class Director(
             append("它现在按这一圈站在 (${world.byId(id)?.x}, ${world.byId(id)?.y}, ${world.byId(id)?.z})。")
             append("\n你写进去的是：")
             parsed.sortedBy { it.atMinute }.forEach { append("\n- ").append(CycleText.render(it)) }
+        }
+    }
+
+    // ── 放一个人出来（§14.46） ──────────────────────────────────────────────────────
+
+    /**
+     * 导演手上那只"叫一个人来"的手。
+     *
+     * 与 [writeCycle] 同一个形状：当场校验、当场落库，驳回的理由不撒谎（§1.5 第三条）。六条门写在
+     * [CharacterPlanner.problems] 里，这里只负责把它们**在落库之前**读出来，于是答复里那句"放好了"
+     * 只在世界真的多了一个人之后才出现。
+     *
+     * ## 为什么是一次一个人
+     *
+     * 与作息同一条理由（§14.44）：一个人只属于它自己，人与人之间没有那种先后关系，所以各放各的、
+     * 放错了当场退回，正是它该有的形状。而"一条街上该有三五个人"是长地形顺手放的，不是这里数的。
+     */
+    private fun spawnCharacter(call: ToolCallRequest, world: World, waking: Waking): String {
+        val args = decodeCall(SpawnCharacterArgs.serializer(), call)
+            ?: return "${call.name} 的参数不是合法 JSON：${call.arguments.take(160)}"
+
+        val id = args.id.trim()
+        if (id.isEmpty()) return "没说要放谁。id 是你以后叫得出它的那个名字。"
+
+        val at = CharacterText.parsePoint(args.at)
+            ?: return "站的地方读不出来：「${args.at.trim()}」。写成 x,y,z 三个整数（厘米），" +
+                "照抄你眼前那段清单里的坐标。"
+
+        val cards = CharacterText.parseCards(args.cards)
+        val beats = when (val p = CycleText.parse(args.beats)) {
+            is CycleParse.Parsed -> p.beats
+            // 空着是允许的（＝剧情角色）。只有它写了、却读不懂时才退回去。
+            is CycleParse.Failed -> if (args.beats.isBlank()) {
+                emptyList()
+            } else {
+                return "它的作息读不懂：${p.why}"
+            }
+        }
+
+        val write = CharacterWrite(
+            id = id,
+            label = args.label.trim(),
+            cards = cards,
+            at = CharacterPoint(x = at.first, y = at.second, z = at.third),
+            beats = beats,
+        )
+
+        val visible = visibleTo(world, waking.focusId)
+        val problems = CharacterPlanner.problems(world, listOf(write), visible)
+        if (problems.isNotEmpty()) return "这个人没放下去：\n" + problems.joinToString("\n")
+
+        CharacterPlanner.apply(world, listOf(write))
+        val placed = world.byId(id)!!
+        return buildString {
+            append("放好了：「${placed.label}」（id 是「$id」），站在 ")
+            append("(${placed.x}, ${placed.y}, ${placed.z})。")
+            if (beats.isEmpty()) {
+                append("它**没有作息**——平时它就在那儿待着，只有被点到名的时候才动。")
+            } else {
+                append("它有自己的作息（${beats.size} 格，一圈 ${beats.maxOf { it.atMinute }} 分钟），")
+                append("到点代码会把它挪过去，平时不用你管。")
+            }
+            append("\n你写进去的卡是：")
+            cards.forEach { append("\n- ").append(it.title).append("：").append(it.content) }
         }
     }
 
@@ -745,18 +810,24 @@ class Director(
         val people = visibleTo(world, waking.focusId).mapNotNull { world.byId(it) }
             .filter { it.kind == CHARACTER_KIND }
             .sortedBy { it.id }
-        appendLine("【你这一轮看得见、因而能写作息的角色】")
+        appendLine("【你这一轮看得见的角色（能写作息的，也就是这些人）】")
         appendLine(
             if (people.isEmpty()) {
                 "（一个都看不见）"
             } else {
-                people.joinToString("\n") { "- ${it.id}｜${it.label}" }
+                people.joinToString("\n") {
+                    val cycling = if (it.cycle.isEmpty) "没有作息" else "有作息（${it.cycle.beats.size} 格）"
+                    "- ${it.id}｜${it.label}　$cycling"
+                }
             },
         )
         appendLine()
 
         appendLine("【你要做的】")
-        appendLine("看这一片该不该长、将来该发生什么、谁的日子还没有形状。**没有非做不可的事时，什么都不做是允许的。**")
+        appendLine(
+            "看这一片该不该长、将来该发生什么、谁的日子还没有形状、这一带是不是还缺一个**该有名字的人**。" +
+                "**没有非做不可的事时，什么都不做是允许的。**",
+        )
 
         // **这一次非做不可的那件事**（§14.45）。放在最后，因为它压过上面那句——那个人正卡在门口，
         // 而它此刻的一切都要等这一份新作息。
@@ -846,7 +917,8 @@ class Director(
             你有两档，同一次工作里可能会换档：
             · **快速档**看着。玩家每做完一个动作，你被叫起来一次，判断该不该动手。你**只有一只手**：
               唤醒思考档。你自己不能改任何东西。
-            · **思考档**干活。你也只有四只手：排时间轴、长地形与放东西、看地图、给一个角色写它的作息。
+            · **思考档**干活。你只有五只手：排时间轴、长地形与放东西、看地图、给一个角色写它的作息、
+              放一个有名字的人出来。
 
             **换档不是换人。** 同一次工作里你从头到尾是同一个你，只是快的那一档不该做慢的那一档的判断。
 
@@ -877,6 +949,12 @@ class Director(
                 这种时候**你有非做不可的事**：用 `write_cycle` 给名单上那几个人**各写一份新的作息**，
                 把那一格换成做得了的地方或者做得了的时候——那件事为什么进不去，写在【为什么把你叫起来】
                 那一段里。**别去碰名单以外的人**。
+            13. 这一带缺一个**该有名字的人**时，用 `spawn_character` 把它叫出来：id、名字、它的卡
+                （一行一张「标题｜内容」，第一张通常是身份）、它站在哪儿（厘米，抄你眼前那段清单里的
+                坐标）。**要不要给它作息由你定**：想让它在没人理的时候也自己过日子，就写 `beats`
+                （至少两格，第一格必须就是它站的那个位置）；不写，它就待在原地，只有被叫到的时候才动。
+                **别拿它凑人数**——一条街上该有三五个人是长地形时顺手放的，按名字叫出来的该是这一个
+                故事用得着的那一个。**已经有的 id 会被驳回**：改它现在的日子是 `write_cycle` 的事。
         """.trimIndent()
     }
 }
@@ -916,5 +994,20 @@ internal data class ScheduleArgs(
 @Serializable
 internal data class WriteCycleArgs(
     val id: String = "",
+    val beats: String = "",
+)
+
+/**
+ * [DirectorTools.SPAWN_CHARACTER] 的参数。
+ *
+ * `beats` 空着是**合法**的（剧情角色），所以它没有 "必填" 这一说；其余四个字段缺了都会退化成一次
+ * 看得懂的失败（一律有默认值，与 [ScheduleArgs] 同一条纪律）。
+ */
+@Serializable
+internal data class SpawnCharacterArgs(
+    val id: String = "",
+    val label: String = "",
+    val cards: String = "",
+    val at: String = "",
     val beats: String = "",
 )

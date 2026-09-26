@@ -303,7 +303,7 @@ class DirectorCycleTest {
         director(script).wake(world, arranging(world))
 
         val body = script.bodies.first()
-        assertTrue("【你这一轮看得见、因而能写作息的角色】" in body, "要给它能写的人：\n$body")
+        assertTrue("【你这一轮看得见的角色" in body, "要给它能写的人：\n$body")
         assertTrue("酒馆里的矮人" in body, "矮人就在玩家身边，该在名单里：\n$body")
     }
 

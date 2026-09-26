@@ -6,6 +6,7 @@ import io.github.k1midi0.infinitesimal.world.CHARACTER_KIND
 import io.github.k1midi0.infinitesimal.world.CharacterCard
 import io.github.k1midi0.infinitesimal.world.Cycle
 import io.github.k1midi0.infinitesimal.world.Entity
+import io.github.k1midi0.infinitesimal.world.TerrainBox
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import io.github.k1midi0.infinitesimal.world.WorldTime
@@ -25,12 +26,13 @@ import kotlinx.coroutines.runBlocking
  *
  *  1. **没事的那一格**（在柜台后面擦杯子，周围一切正常）→ 它该说"做得了"。这一条是**成本的那一半**：
  *     一个动不动就说"做不了"的哨兵会把导演每一轮都叫起来。
- *  2. **烧起来的那一格**（那一格上摆着一堆烧焦的东西、浓烟、塌下来的屋梁）→ 该说"做不了"，
- *     而且理由里要说得出"火 / 烧 / 塌"。
- *  3. **看不出什么不对但人不在那儿**（地点离得很远、那一片看不见）→ 该说"做得了"（规矩：
- *     看不到就报做得了，不能拿"我没看见"当"那里出事了"）。
+ *  2. **柜台塌了**（要站的那个位置还在，但"站在柜台后面招呼客人"要用的柜台已经塌成一堆烧黑的
+ *     木料）→ 该说"做不了"，而且理由里要指着柜台说。**这一条是第二遍读数改出来的**（§14.45）：
+ *     第一版把烧起来的东西摆在**别处**，而那是一个正确读法——远处一根烧断的屋梁不妨碍它在柜台后
+ *     照常招呼客人。判据必须落在**这件事自己身上**。
+ *  3. **落点被填死了**（原地埋了一块石头，那一格站不住）→ 也该说"做不了"，理由指那块石头。
  *
- * 次数小（三次）。它要的不是统计，而是"这条路真的通"——模型在这件事上会不会答非所问。
+ * 次数小（三格各三次）。它要的不是统计，而是"这条路真的通"——模型在这件事上会不会答非所问。
  *
  * ```
  * .\gradlew.bat :shared:jvmTest --tests "*SentryProbe*" --rerun `
@@ -39,54 +41,106 @@ import kotlinx.coroutines.runBlocking
  */
 class SentryProbe {
 
-    private fun world(burned: Boolean, farAway: Boolean = false): World {
+    /**
+     * [counterRuined] ＝ 柜台塌成一堆烧黑的木料；[buried] ＝ 那个落点被石头填死。
+     *
+     * 两者都**只改这一件事自己的证据**：一个是它要用的那件东西，一个是它的落点。
+     */
+    private fun world(counterRuined: Boolean, buried: Boolean = false, farAway: Boolean = false): World {
         val base = if (farAway) 900_000 else 1200
         val hall = Entity(
             id = "tavern_hall", kind = "地点", label = "酒馆大厅",
             x = base, y = 400, z = ProbeSupport.GROUND,
             attributes = mapOf("地面" to "夯土", "光照" to "几盏油灯"),
-            background = if (burned) {
-                "「醉猫」酒馆的大厅。昨夜一场打斗点着了屋梁，火已经烧了小半个钟头——" +
-                    "柜台塌了一半，地上横着烧断的木料，浓烟压在天花板下面。"
+            background = if (counterRuined) {
+                "「醉猫」酒馆的大厅。方才一场打斗掀翻了柜台，火就是从柜台那儿烧起来的——柜台塌成" +
+                    "一堆烧黑的木料，浓烟压在天花板下面，压得人睁不开眼。"
             } else {
                 "「醉猫」酒馆，边境小镇灰渡唯一还在营业的酒馆。眼下是深秋傍晚，屋里点了四盏油灯。"
             },
         )
-        val things = listOf(
-            hall,
+        // 柜台：这一格说的那件事（站在柜台后面招呼客人）**要用的就是它**。
+        val counter = if (counterRuined) {
             Entity(
-                id = "charred_beam", kind = "器具", label = "烧断的屋梁",
-                x = base + 20, y = 400, z = ProbeSupport.GROUND,
-                attributes = mapOf("状态" to if (burned) "烧得只剩一层黑壳" else "完好"),
-                sentences = listOf(
-                    if (burned) "半截横梁斜插在地上，表面全是焦黑的炭，还在冒烟。" else "一根结实的屋梁。",
-                ),
-            ),
-            Entity(
-                id = "smoke", kind = "现象", label = "浓烟",
-                x = base, y = 400, z = ProbeSupport.GROUND + 200,
-                sentences = listOf("灰黑色的烟压在屋梁下面，几乎看不清两米以外的东西。"),
-            ),
-            Entity(
-                id = "dwarf", kind = CHARACTER_KIND, label = "酒馆里的矮人",
+                id = "counter", kind = "器具", label = "塌成一堆的柜台",
                 x = 1000, y = 200, z = ProbeSupport.GROUND,
-                cards = listOf(
-                    CharacterCard(
-                        "身份",
-                        "你是「醉猫」酒馆的老板杜林，矮人，五十来岁，话不多，把这家酒馆看得比自己重。",
+                attributes = mapOf("状态" to "塌了，烧剩半截"),
+                sentences = listOf("柜台已经塌成一堆烧黑的木料，台面整块倒在地上，没有一处还立着。"),
+            )
+        } else {
+            Entity(
+                id = "counter", kind = "器具", label = "柜台",
+                x = 1000, y = 200, z = ProbeSupport.GROUND,
+                attributes = mapOf("状态" to "完好，台面擦得发亮"),
+                sentences = listOf("一张厚实的橡木柜台，台面被擦得发亮。"),
+            )
+        }
+        val things = buildList {
+            add(hall)
+            add(counter)
+            add(
+                Entity(
+                    id = "lamp", kind = "器具", label = "油灯",
+                    x = 1200, y = 500, z = ProbeSupport.GROUND + 150,
+                    sentences = listOf("一盏铜座油灯，火苗安安静静地立着。"),
+                ),
+            )
+            if (counterRuined) {
+                add(
+                    Entity(
+                        id = "charred_beam", kind = "器具", label = "烧断的屋梁",
+                        x = base + 20, y = 400, z = ProbeSupport.GROUND,
+                        attributes = mapOf("状态" to "烧得只剩一层黑壳"),
+                        sentences = listOf("半截横梁斜插在地上，表面全是焦黑的炭，还在冒烟。"),
+                    ),
+                )
+                add(
+                    Entity(
+                        id = "smoke", kind = "现象", label = "浓烟",
+                        x = base, y = 400, z = ProbeSupport.GROUND + 200,
+                        sentences = listOf("灰黑色的烟压在屋梁下面，几乎看不清两米以外的东西。"),
+                    ),
+                )
+            }
+            add(
+                Entity(
+                    id = "dwarf", kind = CHARACTER_KIND, label = "酒馆里的矮人",
+                    x = 1000, y = 200, z = ProbeSupport.GROUND,
+                    cards = listOf(
+                        CharacterCard(
+                            "身份",
+                            "你是「醉猫」酒馆的老板杜林，矮人，五十来岁，话不多，把这家酒馆看得比自己重。",
+                        ),
+                    ),
+                    cycle = Cycle(
+                        listOf(
+                            Beat(7 * 60, "在后厨生火、把杯子一只只擦干净，等第一个客人进门。", 1000, 200, ProbeSupport.GROUND),
+                            Beat(18 * 60, "站在柜台后面招呼客人，手里那块布一直没停过。", 1000, 200, ProbeSupport.GROUND),
+                        ),
+                        bornAt = WorldTime(0),
                     ),
                 ),
-                cycle = Cycle(
-                    listOf(
-                        Beat(7 * 60, "在后厨生火、把杯子一只只擦干净，等第一个客人进门。", 1000, 200, ProbeSupport.GROUND),
-                        Beat(18 * 60, "站在柜台后面招呼客人，手里那块布一直没停过。", 1000, 200, ProbeSupport.GROUND),
-                    ),
-                    bornAt = WorldTime(0),
+            )
+            add(Entity(id = "player", kind = CHARACTER_KIND, label = "你", x = 1000, y = 200, z = ProbeSupport.GROUND))
+        }
+        val world = World.from(WorldSnapshot(things))
+        if (buried) {
+            // 那个落点（脚底到头上两层）被一块岩体填死。哨兵要读的是「落点站不住」，而清单里会看到
+            // 这一块实体；材质用表里第一种，它是哪块石头不重要。
+            world.terrain.fill(
+                TerrainBox(20, 4, 256, 21, 5, 258),
+                world.materials.all.first().id,
+                world.materials,
+            )
+            world.put(
+                Entity(
+                    id = "rockfall", kind = "地形", label = "堵住那一处的岩体",
+                    x = 1000, y = 200, z = ProbeSupport.GROUND,
+                    sentences = listOf("一块新塌下来的岩体把那处空间从地到顶填满了。"),
                 ),
-            ),
-            Entity(id = "player", kind = CHARACTER_KIND, label = "你", x = 1000, y = 200, z = ProbeSupport.GROUND),
-        )
-        return World.from(WorldSnapshot(things))
+            )
+        }
+        return world
     }
 
     @Test
@@ -98,9 +152,10 @@ class SentryProbe {
             val sentry = SentryJudge(ProbeSupport.configOf(key))
 
             val cases = listOf(
-                Triple("① 没事（该说做得了）", world(burned = false), "站在柜台后面招呼客人，手里那块布一直没停过。"),
-                Triple("② 烧起来了（该说做不了）", world(burned = true), "站在柜台后面招呼客人，手里那块布一直没停过。"),
-                Triple("③ 远得看不见（该说做得了）", world(burned = false, farAway = true), "在镇子另一头摆摊卖鱼。"),
+                Triple("① 没事（该说做得了）", world(counterRuined = false), "站在柜台后面招呼客人，手里那块布一直没停过。"),
+                Triple("② 柜台塌了（该说做不了）", world(counterRuined = true), "站在柜台后面招呼客人，手里那块布一直没停过。"),
+                Triple("③ 落点被填死（该说做不了）", world(counterRuined = false, buried = true), "站在柜台后面招呼客人，手里那块布一直没停过。"),
+                Triple("④ 远得看不见（该说做得了）", world(counterRuined = false, farAway = true), "在镇子另一头摆摊卖鱼。"),
             )
 
             println("═".repeat(100))
@@ -121,7 +176,22 @@ class SentryProbe {
                 }
             }
             println()
-            println("读数只有人能读：①② 的差别就是「它认不认得火海」这件事本身。")
+            println("读数只有人能读：① 该说做得了，②③ 该说做不了——而 ②③ 各自要用清单里那件东西说话。")
+
+            // **哨兵眼前那一片**（dry run）：读数不好看时，第一件要问的事是"那些证据到底进没进它
+            // 眼前那一段"。看不到就不是它的判断力问题，而是这一片的范围（第二遍读数就是这么读的）。
+            for ((label, w) in listOf("柜台塌了" to world(counterRuined = true), "落点埋了" to world(counterRuined = false, buried = true))) {
+                val dwarf = w.byId("dwarf")!!
+                println()
+                println("【哨兵眼前那一片（$label，dry run）】")
+                println(
+                    io.github.k1midi0.infinitesimal.spatial.RegionView.render(
+                        w,
+                        io.github.k1midi0.infinitesimal.spatial.RegionBuilder.of(w, listOf(dwarf.id)),
+                        dwarf.id,
+                    ),
+                )
+            }
         }
     }
 }
