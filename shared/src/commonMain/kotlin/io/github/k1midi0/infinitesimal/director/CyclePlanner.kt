@@ -1,11 +1,13 @@
 package io.github.k1midi0.infinitesimal.director
 
+import io.github.k1midi0.infinitesimal.world.Active
 import io.github.k1midi0.infinitesimal.world.Beat
 import io.github.k1midi0.infinitesimal.world.CHARACTER_KIND
 import io.github.k1midi0.infinitesimal.world.Cycle
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldTime
+import io.github.k1midi0.infinitesimal.world.refreshCyclesToClock
 
 /**
  * 导演想写的一份作息：**给谁写、写成什么样**（§8.3、§14.44）。
@@ -182,17 +184,48 @@ object CyclePlanner {
      * 落进世界。**每个目标整张替换**（§14.44）：写来的是完整答案，旧的一格不留。
      *
      * `bornAt` 取**提交那一刻的世界时钟**——那是"这一份作息从这一刻开始跑"的字面意思。
+     *
+     * ## 写完立刻按当前相位就位（§14.44）
+     *
+     * 否则一个刚被写好的作息要等到下一个节点才生效，而"刚写好却不动"看着像没写进去。
+     *
+     * 这里**只挪位置、不判"那一格现在做得了吗"**（§14.45）：判据属于"到点"那条路（[Scheduler]），
+     * 而这是"刚写下一份作息"——此刻**没有谁卡住**，只是相位落在了某一格上。刷新自己只报不写
+     * （见 `Placement` 的注释），所以这一下由这里落。活跃期的人照旧跳过（刷新自己跳）。
      */
     fun apply(world: World, writes: List<CycleWrite>, bornAt: WorldTime) {
         for (write in writes) {
             val target = world.byId(write.targetId)
                 ?: error("CyclePlanner.apply 收到了世界上没有的目标 ${write.targetId}")
-            world.put(target.copy(cycle = Cycle(beats = write.beats, bornAt = bornAt)))
+            val fresh = Cycle(beats = write.beats, bornAt = bornAt)
+            world.put(
+                target.copy(
+                    cycle = fresh,
+                    active = target.active?.let { it.copy(target = liveTargetOf(it, fresh)) },
+                ),
+            )
         }
-        // **写完立刻按当前相位就位**（§14.44）：否则一个刚被写好的作息要等到下一个节点才生效，
-        // 而"刚写好却不动"看着像没写进去。刷新自己会跳过活跃期的人。
-        world.refreshCyclesToClock()
+
+        for (placement in world.refreshCyclesToClock()) {
+            if (!placement.moved) continue
+            val who = world.byId(placement.id) ?: continue
+            world.put(who.copy(x = placement.beat.x, y = placement.beat.y, z = placement.beat.z))
+        }
     }
+
+    /**
+     * **旧的那个目标还作不作数**（§14.45）。
+     *
+     * [Active.target] 存的是"它脱轨时正要去的那一格"。整张换掉之后，那一格可能已经不在新的作息里
+     * 了（导演正是为了这个才改的：那一格进不去）。这时**留着它是错的**——它会一直指向一个不存在的
+     * 时刻，而"回到循环上"那条路永远等不到那个时刻。所以按 [Beat.atMinute] 对一下：新表里还有这一格
+     * 就留着，没有就清零，让它在新的那一格上重新宣告一次回归。
+     *
+     * 比的是 [Beat.atMinute]，与 [io.github.k1midi0.infinitesimal.world.canArrive] 同一条理由
+     * ——时刻是唯一不会撞的东西（两句不同的状态指向同一件事是常事）。
+     */
+    private fun liveTargetOf(active: Active, fresh: Cycle) =
+        active.target?.takeIf { want -> fresh.beats.any { it.atMinute == want.atMinute } }
 }
 
 /**

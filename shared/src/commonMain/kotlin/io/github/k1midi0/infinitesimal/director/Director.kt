@@ -64,6 +64,35 @@ sealed interface Wake {
 
     /** 快速档把思考档叫起来了。这一带还不用长的话，**什么都不做是合法的结果**。 */
     data class Called(val why: String) : Wake
+
+    /**
+     * **有人到了点却没进那一格**（§14.45）：代码判过一次（地形站不住、或者哨兵说这一格现在做不了），
+     * 于是那个人被从它的作息上拿了下来，而**它的作息要由导演重新写**。
+     *
+     * ## 为什么这是一条自己的唤醒，而不是并进 [Called]
+     *
+     * 因为它的契约不一样：这一次唤醒**有非做不可的事**——[required] 里那几个人必须各拿到一份新作息，
+     * 而"什么都没做"在这里不是"我看过了不用动"（那是 [Called] 的合法结果）。空缺的那一格把它送进了
+     * 活跃期，而活跃的人只会等着一件永远不会来的事。
+     *
+     * ## 为什么只有那几个人
+     *
+     * 它此时处理的**就是玩家身边那一片**（到点就位只处理看得见的那些节点，§14.45），所以那一带别的人
+     * 通常也看得见；但这一次要改的是**被卡住的那些人**，别的角色一个字都不该动。
+     *
+     * [was] 是判"它改没改"的那把尺子：那几个人卡住时，循环的 `bornAt` 就是这里的值；导演写一份新的，
+     * `bornAt` 会变成**写下去那一刻**（[CyclePlanner.apply]）。所以 `bornAt` 还等于 [was] 里的值，就是
+     * "这一次它什么都没做"。
+     *
+     * **它是写下去那一刻的时钟，而不是"卡住那一刻"的时钟**——两者通常相等（卡住与唤醒同在一轮），但
+     * 判据必须是前者：万一那一份作息本来就是这一刻写下的，拿后者比就会把一次**真写成了**的改写判成
+     * 没写（这个坑第一版就踩了，`GameSessionStuckTest` 逮住）。
+     */
+    data class Stuck(
+        val required: List<String>,
+        val why: List<String>,
+        val was: Map<String, WorldTime>,
+    ) : Wake
 }
 
 /** 导演的两档。**同一个模型的两套参数**，不是两个模型（§8.5）。 */
@@ -557,6 +586,22 @@ class Director(
 
         is Wake.Called -> emptyList()
 
+        is Wake.Stuck -> {
+            // **判据是"出生时刻变了没有"，不是它说了什么。** 一个人卡住时它的循环是那一份；导演给它
+            // 写一份新的，`bornAt` 会变成写下去那一刻（`CyclePlanner.apply`，取的正是"当下"）——所以
+            // "还是原来那一份"就等于"这一次唤醒它什么都没做"（§1.5 第三条：理由不撒谎）。
+            val still = why.required.filter { id -> world.byId(id)?.cycle?.bornAt == why.was[id] }
+            if (still.isEmpty()) {
+                emptyList()
+            } else {
+                listOf(
+                    "这几个人还是原来那一份作息，所以到了点照样进不去：" +
+                        still.joinToString("、") { world.byId(it)?.label ?: it } +
+                        "。用 `write_cycle` 给他们各写一份新的——旧的那一份整张换掉。",
+                )
+            }
+        }
+
         is Wake.Arrange ->
             if (taken.scheduled.isEmpty()) {
                 listOf("一件都没排。至少排一件——一件都没排等于什么都没安排。")
@@ -646,6 +691,19 @@ class Director(
                 appendLine()
                 append(thinkingBriefing(world, waking, focus, emptyList()))
             }
+
+            is Wake.Stuck -> {
+                appendLine("【为什么把你叫起来】")
+                appendLine("有人到了它作息上的那一格，却没进得去——所以它被从自己的日子上拿了下来，")
+                appendLine("此刻正停在那一格的门口。**它的作息得由你重新写一份**：")
+                why.why.forEach { appendLine("- $it") }
+                appendLine()
+                append("它此刻**是活跃的**（不再走循环），所以它会等在那里，直到有人把它放回去。")
+                appendLine("**你要做的只有一件事：给这些人各写一份新的作息**，让那一格换个做得了的地方、")
+                appendLine("或者换个做得了的时候。旧的那一份会被整张换掉。")
+                appendLine()
+                append(thinkingBriefing(world, waking, focus, emptyList()))
+            }
         }
 
         if (notes.isNotEmpty()) {
@@ -699,6 +757,20 @@ class Director(
 
         appendLine("【你要做的】")
         appendLine("看这一片该不该长、将来该发生什么、谁的日子还没有形状。**没有非做不可的事时，什么都不做是允许的。**")
+
+        // **这一次非做不可的那件事**（§14.45）。放在最后，因为它压过上面那句——那个人正卡在门口，
+        // 而它此刻的一切都要等这一份新作息。
+        val stuck = (waking.why as? Wake.Stuck)?.required.orEmpty()
+        if (stuck.isNotEmpty()) {
+            appendLine()
+            appendLine("【这一次必须处理的人】")
+            stuck.forEach { id ->
+                val who = world.byId(id)
+                appendLine("- ${who?.label ?: id}（id 是「$id」）此刻在 (${who?.x}, ${who?.y}, ${who?.z})")
+            }
+            appendLine("**他们各要一份新的 `write_cycle`。** 别的地方照旧：这一带该怎么长、将来该发生")
+            appendLine("什么，仍然由你看。")
+        }
     }
 
     /**
@@ -800,6 +872,11 @@ class Director(
                 那一刻。**一次写完整圈**：旧的那一圈会被整张换掉，只写一半等于给它一个错的答案。只能写给你
                 **这一轮看得见的人**。
             11. 干完了就停手：**不要再调用任何工具**。你的沉默就是你「干完了」。
+            12. 有一种时候你被叫起来，是因为**有人到了它作息上的那一格却没进得去**（那一格现在站不住、
+                或者那个地方已经不成样子了）。那个人会被从它的日子里拿下来，停在那一格的门口等着。
+                这种时候**你有非做不可的事**：用 `write_cycle` 给名单上那几个人**各写一份新的作息**，
+                把那一格换成做得了的地方或者做得了的时候——那件事为什么进不去，写在【为什么把你叫起来】
+                那一段里。**别去碰名单以外的人**。
         """.trimIndent()
     }
 }

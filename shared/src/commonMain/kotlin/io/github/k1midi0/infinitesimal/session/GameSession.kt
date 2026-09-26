@@ -21,10 +21,13 @@ import io.github.k1midi0.infinitesimal.npc.Spoken
 import io.github.k1midi0.infinitesimal.npc.Waking as NpcWaking
 import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.Renderer
+import io.github.k1midi0.infinitesimal.schedule.Scheduler
+import io.github.k1midi0.infinitesimal.schedule.Scheduling
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.audience
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
 import io.github.k1midi0.infinitesimal.spatial.requiredChunks
+import io.github.k1midi0.infinitesimal.world.Active
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.EventKind
@@ -151,6 +154,11 @@ class GameSession(
      * ——它是这一层第三个会碰端点的人，不注入就只能拿真 key 跑（§14.35 踩过一次）。
      */
     private val npc: Npc = Npc(config, presets),
+    /**
+     * **到点就位**（§14.45）。默认按 [config] 现造一个（它的请求落在 `SystemId.SENTRY` 那个池）；
+     * **测试可以塞一个假的进来**——它是第四个会碰端点的人，而"一轮问几次"正是要与不要量的那一个数。
+     */
+    private val scheduler: Scheduling = Scheduler(config),
 ) {
     val world: World = World.from(
         WorldSnapshot(seed, rules, terrain = ground, zoning = zoning),
@@ -405,8 +413,8 @@ class GameSession(
 
         // **到点了：还在走循环的人挪到它此刻该在的那一格上**（§14.44）。放在这里——这一回合读世界的
         // 每一处（判定、渲染、唤醒）之前——而不是"到点那一瞬间"：快进会跳过时刻，没有任何代码在那一瞬
-        // 看着，所以正确的做法是每轮开头对一遍。
-        world.refreshCyclesToClock()
+        // 看着，所以正确的做法是每轮开头对一遍。§14.45 起它还要处理"到点却进不去"的人。
+        catchUpCycles()
 
         if (spoken.isNotEmpty()) {
             say(LogLine.Kind.SAY, "你说：「$spoken」")
@@ -480,9 +488,9 @@ class GameSession(
         clock = world.clock
         timelineRevision++
 
-        // **时钟往前推过了，所以对一遍循环**（§14.44）。它与 `runTurn` 开头那一处是同一个动作，两处都
-        // 要有：一处在"时间自己走了"之后，一处在"玩家动了"之前。
-        world.refreshCyclesToClock()
+        // **时钟往前推过了，所以对一遍循环**（§14.44、§14.45）。它与 `runTurn` 开头那一处是同一个
+        // 动作，两处都要有：一处在"时间自己走了"之后，一处在"玩家动了"之前。
+        catchUpCycles()
 
         if (stop == null) {
             say(LogLine.Kind.NOTE, "（时间轴上没有将来要发生的事，等不到什么）")
@@ -603,6 +611,95 @@ class GameSession(
     private fun phase(text: String) {
         status = text
         foreground?.text = text
+    }
+
+    // ── 到点就位（§14.45） ──────────────────────────────────────────────────────────
+
+    /**
+     * **到点了，对一遍循环上的人**：能进的进，进不去的变活跃、并且惊动导演。
+     *
+     * ## 顺序，以及每一步为什么要在这儿
+     *
+     *  1. [Scheduler.catchUp] 先跑（**不拿锁**）：它自己会先做那半个免费的判据（地形），再对有变化的
+     *     那些人各问一句哨兵。这一段可能跑几秒，而它一个字都还没写进世界——所以不该占着写锁。
+     *  2. 拿到结果之后**在一把锁里**做两件事：把"进不去"的人放下来（变活跃），再叫导演。合成一次
+     *     临界区，是因为"它已经脱轨、而导演还没看见它"这个中间态不该被另一个写入者插进来（§14.33 的
+     *     保守版：会写世界的工作一次只跑一个）。
+     *  3. 导演那一次是**同步**的（与 `closeGap` 那条硬圈缺口同一种做法）：玩家这一回合接下来要读世界，
+     *     而一个刚刚卡住的人必须已经有一份能走的作息，否则这一回合读到的就是一个正在脱轨的人。
+     *
+     * ## "变活跃"是谁的事
+     *
+     * 不是 [Scheduler] 的：哨兵只回答"这一格现在做得了吗"，而"做不了"之后**把它从循环上拿下来、放到
+     * 那一格的坐标上、再把这件事写进日志并告诉导演**——这一串是会话的活（它才知道玩家看得见什么、
+     * 导演在哪儿、日志写哪一行）。
+     *
+     * ## 它落在实体上的四个字段
+     *
+     * `active = Active(since = 现在, target = 那一格)`。那个 `target` **只作归因**（§14.45 改了回归
+     * 的判据，见 `Active.canGo`），而它此前在生产代码里从来没有被设过——于是"回到循环上"那条路在真
+     * 游戏里一直是死的。这一句就是那条路活过来的地方。
+     */
+    private suspend fun catchUpCycles() {
+        val caught = scheduler.catchUp(world)
+
+        // **一遍进得去的人先就位**（§14.45）。刷新自己只报不写（理由见 `Placement` 的注释），所以
+        // 真正落坐标的是这里。放在临界区之外也可以：那时候还没有任何人被判"卡住"，而这一步只是把
+        // 基线铺到事实上——但它与下面那段必须**共用同一个判断结果**，所以一起写在这儿。
+        for (placement in caught.moved) {
+            val who = world.byId(placement.id) ?: continue
+            world.put(who.copy(x = placement.beat.x, y = placement.beat.y, z = placement.beat.z))
+        }
+
+        if (caught.stuck.isEmpty()) return
+
+        val task = startTask("有人到点了却进不去，导演正在改这一片…")
+        try {
+            writes.withLock {
+                val stuck = caught.stuck.mapNotNull { placement ->
+                    val who = world.byId(placement.id) ?: return@mapNotNull null
+                    val now = Active(since = world.clock, target = placement.beat)
+                    // **放到那一格的坐标上再变活跃**（§14.45）：它这一趟真的走到了门口。
+                    world.put(who.copy(x = placement.beat.x, y = placement.beat.y, z = placement.beat.z, active = now))
+                    placement
+                }
+                if (stuck.isEmpty()) return@withLock
+
+                stuck.forEach { placement ->
+                    val name = world.byId(placement.id)?.label ?: placement.id
+                    say(LogLine.Kind.NOTE, "（$name 到了「${placement.beat.state}」该在的地方，却没能进去）")
+                }
+
+                val why = stuck.map { it.reason ?: "" }
+                // **它此刻那一份作息的出生时刻**：这是"它改没改"唯一读得出来的东西（理由见 `Wake.Stuck`）。
+                val was = buildMap {
+                    for (placement in stuck) {
+                        val born = world.byId(placement.id)?.cycle?.bornAt ?: continue
+                        put(placement.id, born)
+                    }
+                }
+                val awakening = director.wake(
+                    world,
+                    Waking(
+                        Wake.Stuck(required = stuck.map { it.id }, why = why, was = was),
+                        PLAYER,
+                        origin,
+                    ),
+                )
+                // **失败要说出来**（§1.5 第三条：理由不撒谎）。导演沉默两次也一样是失败——那个人还
+                // 卡在那儿，而"日志里什么都没写"会让它看着像被处理过了。
+                if (awakening is Awakening.FailedProtocol) {
+                    say(
+                        LogLine.Kind.PROBLEM,
+                        "这一次没改成他们的作息：" + awakening.problems.joinToString("；"),
+                    )
+                }
+            }
+        } catch (t: Throwable) {
+            say(LogLine.Kind.ERROR, "改作息没跑起来：${t.message}")
+        } finally {
+            endTask(task)
+        }
     }
 
     // ── 一轮的内部 ──────────────────────────────────────────────────────────────────

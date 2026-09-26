@@ -8,10 +8,13 @@ import io.github.k1midi0.infinitesimal.judge.stop
 import io.github.k1midi0.infinitesimal.judge.turn
 import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.npc.Npc
+import io.github.k1midi0.infinitesimal.schedule.Scheduling
 import io.github.k1midi0.infinitesimal.world.Beat
 import io.github.k1midi0.infinitesimal.world.Cycle
+import io.github.k1midi0.infinitesimal.world.CycleCatchUp
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.WorldTime
+import io.github.k1midi0.infinitesimal.world.refreshCyclesToClock
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.runBlocking
@@ -67,6 +70,10 @@ class GameSessionCycleTest {
         seed = seedWithRoutine(),
         judge = Judge(LlmClient(config, script.client)),
         npc = Npc(LlmClient(config, script.client), Judge(LlmClient(config, script.client))),
+        // **"所有人都进得去"**（§14.45）：这一支钉的是"到点就位"那半个地形判据，而不是哨兵那半个。
+        // 不塞这个，默认那个 [Scheduler] 会真的去碰端点（测试里 key 是假的），于是每个要挪的人都被判成
+        // "进不去"——症状是矮人一动不动，而看着像刷新坏了。
+        scheduler = Scheduling { world -> CycleCatchUp(world.refreshCyclesToClock()) },
     )
 
     /** 两个回合各要一次对齐与一次答话；`stop()` 收尾之后，多出来的请求都拿到同一帧。 */

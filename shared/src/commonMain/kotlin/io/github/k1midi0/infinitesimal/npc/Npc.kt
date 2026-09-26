@@ -33,7 +33,7 @@ import io.github.k1midi0.infinitesimal.world.Spot
 import io.github.k1midi0.infinitesimal.world.Todo
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldTime
-import io.github.k1midi0.infinitesimal.world.canArrive
+import io.github.k1midi0.infinitesimal.world.canGo
 import io.github.k1midi0.infinitesimal.world.due
 import io.github.k1midi0.infinitesimal.world.live
 import io.github.k1midi0.infinitesimal.world.nextId
@@ -695,35 +695,37 @@ class Npc(
                 "你本来就走在自己的循环上——没有要回的地方。这一只只在有人把你叫脱轨之后才作数。",
             )
 
-        val here = now.cycle.beatAt(world.clock)
-        if (here == null || !active.canArrive(now.cycle, world.clock, now)) {
-            // 两条拒绝各自给一条可执行的理由：**时刻不对**就说清该等到什么时候，**人没到**就说清该往哪
-            // 儿走。合成一句话是因为它们常常同时不对（它既没走回去、时候也还没到），而分开说会让它只
-            // 修一半。
-            val where = here?.let { "那一格说的是「${it.state}」，在 (${it.x}, ${it.y}, ${it.z}) 附近" }
-            val timeOk = here != null && here.atMinute == active.target?.atMinute
+        val arriving = active.canGo(now.cycle, world.clock, now, args.state)
+        val here = arriving.beat
+        if (!arriving.can) {
             return Answered(
                 buildString {
-                    if (timeOk) {
-                        append("时候对了，但你人还不在那儿。")
-                    } else {
-                        append("还不到那一格。你此刻按循环应该在做的，是「")
-                        append(here?.state ?: "（你的循环是空的）")
-                        append("」——等它转到你要回的那一格，你再说一次。")
+                    when {
+                        here == null -> append("你的循环是空的——没有哪一格可以回。")
+                        !arriving.atThePlace -> append("那一格是对的，但你人还不在那儿。")
+                        else -> append("你报的这句话不是那一格的原文。")
                     }
                     append("\n你写下的是「${args.state.trim()}」")
-                    if (here != null) append("；此刻该在的那一格是「${here.state}」（相对时间 ${here.atMinute}）")
+                    if (here != null) {
+                        append("；此刻该在的那一格是「${here.state}」（相对时间 ${here.atMinute}）")
+                    }
                     append("。\n")
                     append("你现在在 (${now.x}, ${now.y}, ${now.z})，")
-                    if (where != null) append("$where，") else append("而你的循环是空的，")
-                    append("差着 ${farFrom(now, here)} 厘米。")
+                    if (here != null) {
+                        append("那一格在 (${here.x}, ${here.y}, ${here.z})，差着 ${farFrom(now, here)} 厘米。")
+                    } else {
+                        append("而你的循环是空的。")
+                    }
+                    if (!arriving.saidTheSame && here != null) {
+                        append("\n要回去就把那一格的原文照抄进 state——原样抄，别用自己的话改写。")
+                    }
                 },
             )
         }
 
         world.put(now.copy(active = null))
         arrived()
-        return Answered("你回到了循环上（此刻本该做的：「${active.target?.state}」）。这一趟就到这儿。")
+        return Answered("你回到了循环上（此刻本该做的：「${here?.state}」）。这一趟就到这儿。")
     }
 
     /**
@@ -983,8 +985,10 @@ class Npc(
         listener.active?.let {
             appendLine("【你现在没有在走你平常的那个循环】")
             appendLine("有人把你叫住了，所以你此刻在做的是这一趟的事。做完了就用 `${NpcTools.ARRIVE}` 回去。")
-            val back = it.target?.state ?: listener.cycle.beatAt(world.clock)?.state
-            if (back != null) appendLine("你要回的那一格是：「$back」。")
+            val back = listener.cycle.beatAt(world.clock)
+            if (back != null) {
+                appendLine("你要回的那一格是：「${back.state}」——回去的时候把这一行**原样抄**进那只手的 state。")
+            }
             appendLine()
         }
 

@@ -179,9 +179,10 @@ class NpcActiveTest {
         assertTrue(reaction.problems.isEmpty(), "它说错了时刻不是协议问题")
         assertFalse(reaction.arrived, "没回去——那一格还没到")
         val back = bodiesIn(script).last()
-        // **理由要可执行**（§1.3）：它得知道现在该在哪一格、要等什么。
-        assertTrue("还不到那一格" in back)
+        // **理由要可执行**（§1.3）：它得知道现在该在哪一格、那一格在哪儿、以及它报的那句话对不对。
+        assertTrue("不是那一格的原文" in back, "它报的是中午那一格的原文，而此刻不是那一刻")
         assertTrue("站在柜台后面招呼客人" in back, "要把它此刻该在的那一格原文给它")
+        assertTrue("在 (1000, 200, 12800)" in back, "还要说清那一格在哪儿")
     }
 
     @Test
