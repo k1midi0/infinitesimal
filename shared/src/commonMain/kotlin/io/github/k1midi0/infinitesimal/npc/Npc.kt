@@ -23,6 +23,7 @@ import io.github.k1midi0.infinitesimal.spatial.ChunkView
 import io.github.k1midi0.infinitesimal.spatial.bus
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
 import io.github.k1midi0.infinitesimal.spatial.audience
+import io.github.k1midi0.infinitesimal.world.Beat
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.EventKind
 import io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CHUNKS
@@ -665,22 +666,24 @@ class Npc(
     /**
      * **回到自己的循环上**（§3.2.1、§12 第 46 项）。
      *
-     * 分工是这一刀的全部形状：**模型提出，代码确认它有没有资格说这句话。** 循环那一格只有一句状态、
-     * 没有位置（§12 第 23 项），所以"到没到"只有它自己知道；而"此刻那一格是不是它说要回的那一格"
-     * 是代码知道的事（`Active.canArrive`，比的是 [io.github.k1midi0.infinitesimal.world.Beat.atMinute]
-     * ——两句不同的状态指向同一件事是常事，而同一句话出现在两格里也是常事，只有时刻不会撞）。
+     * 分工是这一刀的全部形状：**模型提出，代码确认它有没有资格说这句话。** 资格是两条（§14.44）：
+     * **此刻那一格是不是它说要回的那一格**（比的是
+     * [io.github.k1midi0.infinitesimal.world.Beat.atMinute]——两句不同的状态指向同一件事是常事，而同一
+     * 句话出现在两格里也是常事，只有时刻不会撞），以及**它人是不是真的在那一格的地点附近**
+     * （[io.github.k1midi0.infinitesimal.world.ARRIVE_TOLERANCE_CM] 那条容差）。
      *
      * ## 它不记任何东西
      *
      * 这一趟的经历留在两处本来就在的地方：**对话历史**（累积的多轮上下文，压过也在）与**它自己写的
      * 那些笔记**。为回归再写一份摘要是第二种记法，而两种记法迟早会不一致。
      *
-     * ## 两道拒绝
+     * ## 三道拒绝
      *
      *  - **它本来就在循环里**——"我回到我本来就在的地方"不是一次回归，而放过它会让"活跃"这个状态
      *    由一次误调用决定。
      *  - **此刻那一格不是它要回的那一格**——那一刻它还没到。理由会把它现在该在的那一格原文写出来，
-     *    于是它知道该等到什么时候（或者该去做什么）。
+     *    于是它知道该等到什么时候。
+     *  - **它离那一格的地点还远**——理由把它现在在哪儿、那一格在哪儿都写出来，于是它知道该往哪儿走。
      */
     private fun arrive(call: ToolCallRequest, world: World, listener: Entity, arrived: () -> Unit): Answered {
         val args = decodeCall(ArriveArgs.serializer(), call)
@@ -692,18 +695,52 @@ class Npc(
                 "你本来就走在自己的循环上——没有要回的地方。这一只只在有人把你叫脱轨之后才作数。",
             )
 
-        if (!active.canArrive(now.cycle, world.clock)) {
-            val here = now.cycle.beatAt(world.clock)?.state
+        val here = now.cycle.beatAt(world.clock)
+        if (here == null || !active.canArrive(now.cycle, world.clock, now)) {
+            // 两条拒绝各自给一条可执行的理由：**时刻不对**就说清该等到什么时候，**人没到**就说清该往哪
+            // 儿走。合成一句话是因为它们常常同时不对（它既没走回去、时候也还没到），而分开说会让它只
+            // 修一半。
+            val where = here?.let { "那一格说的是「${it.state}」，在 (${it.x}, ${it.y}, ${it.z}) 附近" }
+            val timeOk = here != null && here.atMinute == active.target?.atMinute
             return Answered(
-                "还不到那一格。你此刻按循环应该在做的，是「" + (here ?: "（你的循环是空的）") + "」" +
-                    "——等它转到你要回的那一格，你再说一次。" +
-                    "（你写下的是「${args.state.trim()}」；那一格不是它。）",
+                buildString {
+                    if (timeOk) {
+                        append("时候对了，但你人还不在那儿。")
+                    } else {
+                        append("还不到那一格。你此刻按循环应该在做的，是「")
+                        append(here?.state ?: "（你的循环是空的）")
+                        append("」——等它转到你要回的那一格，你再说一次。")
+                    }
+                    append("\n你写下的是「${args.state.trim()}」")
+                    if (here != null) append("；此刻该在的那一格是「${here.state}」（相对时间 ${here.atMinute}）")
+                    append("。\n")
+                    append("你现在在 (${now.x}, ${now.y}, ${now.z})，")
+                    if (where != null) append("$where，") else append("而你的循环是空的，")
+                    append("差着 ${farFrom(now, here)} 厘米。")
+                },
             )
         }
 
         world.put(now.copy(active = null))
         arrived()
         return Answered("你回到了循环上（此刻本该做的：「${active.target?.state}」）。这一趟就到这儿。")
+    }
+
+    /**
+     * 它离那一格的地点还差多少（同一把尺子：[io.github.k1midi0.infinitesimal.world.ARRIVE_TOLERANCE_CM]
+     * 比的就是这个数）。
+     *
+     * 三个方向里**取最大的那一个**，不是直线距离：容差本身就是"每个方向都在两米以内"，而拿欧氏距离去
+     * 说会给它一个与判据不一致的数——它会照着理由挪到一个"直线看着更近、但一个方向还是差三米"的地方，
+     * 然后继续被驳回。
+     */
+    private fun farFrom(entity: Entity, beat: Beat?): Int {
+        if (beat == null) return 0
+        return maxOf(
+            kotlin.math.abs(entity.x - beat.x),
+            kotlin.math.abs(entity.y - beat.y),
+            kotlin.math.abs(entity.z - beat.z),
+        )
     }
 
     /**

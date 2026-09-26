@@ -30,6 +30,7 @@ class World private constructor(
      * 拥有它。
      */
     var clock: WorldTime = StartingClock,
+
     /**
      * 时间轴：未来的事（§8.1）。导演写它，快进读它。
      */
@@ -107,6 +108,34 @@ class World private constructor(
     /** 物体被摧毁：从世界态里消失。记录不在这里删（§1.5 记录永不改写）。 */
     fun remove(id: String) {
         entities.remove(id)
+    }
+
+    /**
+     * **到点了：把还在走循环的人挪到它此刻该在的那一格上。**
+     *
+     * 循环里的坐标是**基线**（[Beat.x]），而"此刻真正在哪儿"是实体上那个值。这一下做的事就是把
+     * 基线铺到事实上去——但不是无条件的，三条不算：
+     *
+     *  - **`active != null` 的人跳过。** 他此刻没在走循环（§3.2.1），正被别的什么牵着；把他拉回作息
+     *    上等于让一个被揍了的人下一刻又站在柜台后面。
+     *  - **没有循环的人跳过。** `stateAt == null` 是"没有答案"，不是"该在 (0,0,0)"。
+     *  - **不是角色的东西跳过。** [Entity.cycle] 的注释写着只有角色会写它，而桌上的杯子恰好也可以挂着
+     *    一张循环表（字段对所有实体开放）；把它按作息挪走是"字段开放"的代价里最难看的一种。
+     *
+     * 调用点是"每轮开始"与"时钟往前推之后"（`GameSession`）——**不是"到点那一瞬间"**：快进会跳过
+     * 时刻，没有任何代码在那一瞬看着，所以正确的做法是每次推进之后对一遍。
+     *
+     * **它不写记录**（§14.44 定）：挪过去只是一次位置写入，与判定改位置时留下的东西不是一回事。
+     * 要让玩家"看见它走过来"，那是把移动事件化，另一件活。
+     */
+    fun refreshCyclesToClock() {
+        for (entity in entities.values.toList()) {
+            if (entity.active != null) continue
+            if (entity.kind != CHARACTER_KIND) continue
+            val beat = entity.cycle.beatAt(clock) ?: continue
+            if (entity.x == beat.x && entity.y == beat.y && entity.z == beat.z) continue
+            entities[entity.id] = entity.copy(x = beat.x, y = beat.y, z = beat.z)
+        }
     }
 
     fun snapshot(): WorldSnapshot = WorldSnapshot(

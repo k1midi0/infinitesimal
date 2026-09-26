@@ -101,9 +101,19 @@ data class Entity(
      */
     val active: Active? = null,
 ) {
+
     /** 展示用的整段文字。句子里带着各自的句末标点，直接相连即可。 */
     fun text(): String = sentences.joinToString("")
 }
+
+/**
+ * **角色的 `kind` 就是这一个字。**
+ *
+ * 判据本身全文只有两处使用（导演写作息那只手、以及到点刷新 `World.refreshCyclesToClock`），两处都在
+ * `world/` 能看见的地方，所以它定义在这里，不在某一层里。**判定不按它取**——判定按"有没有卡"
+ * （[CharacterCard]）取，那是 [Entity.cards] 的注释里写着的（§3.5）。
+ */
+const val CHARACTER_KIND: String = "角色"
 
 /**
  * 判定系统对「这个物体变了没有」的判定（§7.1）。

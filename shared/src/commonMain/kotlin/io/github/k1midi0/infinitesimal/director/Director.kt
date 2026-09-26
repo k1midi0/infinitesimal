@@ -23,6 +23,7 @@ import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
 import io.github.k1midi0.infinitesimal.spatial.nearestMissing
 import io.github.k1midi0.infinitesimal.spatial.requiredChunks
 import io.github.k1midi0.infinitesimal.world.BUFFER_RADIUS_CHUNKS
+import io.github.k1midi0.infinitesimal.world.CHARACTER_KIND
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.TimelineEntry
@@ -327,8 +328,65 @@ class Director(
         DirectorTools.SCHEDULE -> schedule(call, world.clock, into)
         DirectorTools.GROW_TERRAIN -> growTerrain(call, world, waking, grew)
         DirectorTools.LOOK_MAP -> lookMap(call, world, waking)
+        DirectorTools.WRITE_CYCLE -> writeCycle(call, world, waking)
         else -> "没有叫「${call.name}」的工具。你现在能用的只有：" +
             DirectorTools.of(waking.why.tier).joinToString("、") { it.function.name } + "。"
+    }
+
+    // ── 写作息（§14.44） ────────────────────────────────────────────────────────────
+
+    /**
+     * 导演手上那只写作息的手。
+     *
+     * ## 为什么它当场就写，而排时间轴要等整批
+     *
+     * 时间轴那一批是**一次计划**（"先起火、后被人发现"），所以整批校验、整批提交（[TimelinePlanner]）。
+     * 作息不一样：**一份作息只属于一个人，而一次调用正好写一个人**——人与人之间没有那种先后关系，所以
+     * 各写各的、写错了当场退回，正是它该有的形状。同一批里给同一个人写两份仍然被拦（那几乎一定是笔误）。
+     *
+     * ## 驳回的理由都不撒谎（§1.5 第三条）
+     *
+     * 五条：没见过的人、世界没有的 id、不是角色、格式读不懂、作息立不住。每一条都把可执行的部分写出来
+     * ——读不懂给原文，立不住给那一条，看不见的人告诉它"先让人进到你眼前"。
+     */
+    private fun writeCycle(call: ToolCallRequest, world: World, waking: Waking): String {
+        val args = decodeCall(WriteCycleArgs.serializer(), call)
+            ?: return "${call.name} 的参数不是合法 JSON：${call.arguments.take(160)}"
+
+        val id = args.id.trim()
+        if (id.isEmpty()) return "没说要写给谁。id 填你眼前看得见的那个角色。"
+
+        val target = world.byId(id)
+            ?: return "世界里没有 id 是「$id」的东西。你眼前那段清单里的 id 才是能写的那些。"
+
+        if (target.kind != CHARACTER_KIND) {
+            return "「${target.label}」不是角色（它是个${target.kind}），没有作息可写。"
+        }
+
+        val visible = visibleTo(world, waking.focusId)
+        if (id !in visible) {
+            return "「${target.label}」不在你这一轮看得见的范围里——你眼前那段清单与那张地图上都没有它。" +
+                "你看不见它此刻在哪儿，写出来的坐标只能靠猜。先让它进到你能看见的地方，再排它。"
+        }
+
+        val parsed = when (val p = CycleText.parse(args.beats)) {
+            is CycleParse.Parsed -> p.beats
+            is CycleParse.Failed -> return p.why
+        }
+
+        val problems = CyclePlanner.problems(world, listOf(CycleWrite(id, parsed)), visible)
+        if (problems.isNotEmpty()) return "这份作息没写进去：\n" + problems.joinToString("\n")
+
+        // **没写进去的绝不报告成写进去了**（§1.5 第三条：理由不撒谎）。上面每一条驳回都在这个世界
+        // 一个字没动的时候返回，所以答复里"写好了"这句话只在真的落库之后出现。
+        CyclePlanner.apply(world, listOf(CycleWrite(id, parsed)), world.clock)
+        return buildString {
+            append("写好了：「${target.label}」从现在（${world.clock}）起跑这一圈，")
+            append("${parsed.size} 格，一圈 ${parsed.maxOf { it.atMinute }} 分钟。")
+            append("它现在按这一圈站在 (${world.byId(id)?.x}, ${world.byId(id)?.y}, ${world.byId(id)?.z})。")
+            append("\n你写进去的是：")
+            parsed.sortedBy { it.atMinute }.forEach { append("\n- ").append(CycleText.render(it)) }
+        }
     }
 
     // ── 排时间轴 ───────────────────────────────────────────────────────────────────
@@ -626,8 +684,21 @@ class Director(
         appendLine(timelineListing(world, scheduled))
         appendLine()
 
+        val people = visibleTo(world, waking.focusId).mapNotNull { world.byId(it) }
+            .filter { it.kind == CHARACTER_KIND }
+            .sortedBy { it.id }
+        appendLine("【你这一轮看得见、因而能写作息的角色】")
+        appendLine(
+            if (people.isEmpty()) {
+                "（一个都看不见）"
+            } else {
+                people.joinToString("\n") { "- ${it.id}｜${it.label}" }
+            },
+        )
+        appendLine()
+
         appendLine("【你要做的】")
-        appendLine("看这一片该不该长、将来该发生什么。**没有非做不可的事时，什么都不做是允许的。**")
+        appendLine("看这一片该不该长、将来该发生什么、谁的日子还没有形状。**没有非做不可的事时，什么都不做是允许的。**")
     }
 
     /**
@@ -703,7 +774,7 @@ class Director(
             你有两档，同一次工作里可能会换档：
             · **快速档**看着。玩家每做完一个动作，你被叫起来一次，判断该不该动手。你**只有一只手**：
               唤醒思考档。你自己不能改任何东西。
-            · **思考档**干活。你也只有三只手：排时间轴、长地形与放东西、看地图。
+            · **思考档**干活。你也只有四只手：排时间轴、长地形与放东西、看地图、给一个角色写它的作息。
 
             **换档不是换人。** 同一次工作里你从头到尾是同一个你，只是快的那一档不该做慢的那一档的判断。
 
@@ -722,7 +793,13 @@ class Director(
             8. 点名要放的东西是**地标，不是清单**：一片森林里的每一棵树由生成器顺手放，你只需要点出
                村口那棵老槐树。
             9. 你排的是将来，里面出现的人或东西**现在可以还不存在**——那是等它到点的时候再补的。
-            10. 干完了就停手：**不要再调用任何工具**。你的沉默就是你「干完了」。
+            10. 写作息（`write_cycle`）写的是**没人理那个角色的时候，它在干什么、在哪儿**。时间填**从循环
+                开始那一刻数起的分钟**（0 就是第一瞬间），坐标填**厘米**、拄着你眼前那段清单里的数，第三段
+                一句话写它在做什么。**至少两格、时刻一格比一格晚、两份不能落在同一分钟**——一圈的长度由
+                **最后一格**定（它那一刻起再过一分钟就是下一圈），所以要把一整圈写满，最后一格落在它收工
+                那一刻。**一次写完整圈**：旧的那一圈会被整张换掉，只写一半等于给它一个错的答案。只能写给你
+                **这一轮看得见的人**。
+            11. 干完了就停手：**不要再调用任何工具**。你的沉默就是你「干完了」。
         """.trimIndent()
     }
 }
@@ -756,4 +833,11 @@ internal data class ScheduleArgs(
     val hour: Int = 0,
     val minute: Int = 0,
     val what: String = "",
+)
+
+/** [DirectorTools.WRITE_CYCLE] 的参数。 */
+@Serializable
+internal data class WriteCycleArgs(
+    val id: String = "",
+    val beats: String = "",
 )

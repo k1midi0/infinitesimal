@@ -403,6 +403,11 @@ class GameSession(
         // §5.3：气泡只存在当前回合。**在动作之前清**，于是这一轮说的话不会混着上一轮的。
         speech = emptyList()
 
+        // **到点了：还在走循环的人挪到它此刻该在的那一格上**（§14.44）。放在这里——这一回合读世界的
+        // 每一处（判定、渲染、唤醒）之前——而不是"到点那一瞬间"：快进会跳过时刻，没有任何代码在那一瞬
+        // 看着，所以正确的做法是每轮开头对一遍。
+        world.refreshCyclesToClock()
+
         if (spoken.isNotEmpty()) {
             say(LogLine.Kind.SAY, "你说：「$spoken」")
             speech = listOf(Spoken(PLAYER, spoken))
@@ -474,6 +479,10 @@ class GameSession(
         val stop = FastForward.runToNext(world)
         clock = world.clock
         timelineRevision++
+
+        // **时钟往前推过了，所以对一遍循环**（§14.44）。它与 `runTurn` 开头那一处是同一个动作，两处都
+        // 要有：一处在"时间自己走了"之后，一处在"玩家动了"之前。
+        world.refreshCyclesToClock()
 
         if (stop == null) {
             say(LogLine.Kind.NOTE, "（时间轴上没有将来要发生的事，等不到什么）")

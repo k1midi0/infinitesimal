@@ -85,7 +85,19 @@ class NpcActiveTest {
     private fun note(id: String, text: String) =
         Note(id = id, text = text, at = WorldTime.of(1, 17))
 
-    private val nowBeat = Beat(18 * 60, "站在柜台后面招呼客人，手里那块布一直没停过。")
+    /**
+     * 开局那一刻那一格（18:00 的"招呼客人"）。
+     *
+     * **坐标要与矮人真正站的地方一致**（§14.44）：`canArrive` 现在查两件事——时刻对不对、**人是不是
+     * 真的在那一格的地点附近**。少了坐标（默认 0,0,0），一个站在酒馆里的矮人会被判成"还没到"。
+     */
+    private val nowBeat = Beat(
+        atMinute = 18 * 60,
+        state = "站在柜台后面招呼客人，手里那块布一直没停过。",
+        x = 1000,
+        y = 200,
+        z = 12800,
+    )
 
     // ── 在循环里：笔记保留但不注入 ──────────────────────────────────────────────────
 
@@ -155,7 +167,10 @@ class NpcActiveTest {
         val script = Scripted(listOf(turn("c1", "arrive", """{"state":"招呼客人"}"""), stop()))
         val world = worldOf(
             // 目标是**中午那一格**（12:00 吃午饭），而现在是 18:00——它还没到那一刻。
-            active = Active(since = WorldTime.of(1, 18), target = Beat(12 * 60, "坐在柜台后面吃自己那份午饭，谁也不理。")),
+            active = Active(
+                since = WorldTime.of(1, 18),
+                target = Beat(12 * 60, "坐在柜台后面吃自己那份午饭，谁也不理。", 1150, 120, 12800),
+            ),
         )
 
         val reaction = npcOf(script).wake(world, Waking("dwarf", greeted("没事了。"), originOf(world)))

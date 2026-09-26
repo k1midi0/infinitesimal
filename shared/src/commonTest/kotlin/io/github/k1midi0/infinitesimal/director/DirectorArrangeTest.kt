@@ -207,6 +207,7 @@ class DirectorArrangeTest {
         // 断言整段里有没有这个词会在这里假报一次。
         assertTrue("\"name\":\"${DirectorTools.SCHEDULE}\"" !in body, "快速档没有写权限：\n$body")
         assertTrue("\"name\":\"${DirectorTools.GROW_TERRAIN}\"" !in body, "快速档不能生成：\n$body")
+        assertTrue("\"name\":\"${DirectorTools.WRITE_CYCLE}\"" !in body, "快速档不能写作息：\n$body")
     }
 
     /** 快速档什么都不做**是合法结果**——这正是它存在的样子，不该被判成失败。 */
@@ -258,7 +259,8 @@ class DirectorArrangeTest {
         val second = script.bodies[1]
         assertTrue("\"thinking\":{\"type\":\"enabled\"}" in second, "换档之后要思考：\n$second")
         assertTrue("reasoning_effort" in second, "思考档要带档位：\n$second")
-        assertTrue(DirectorTools.GROW_TERRAIN in second, "思考档三只手一次给全：\n$second")
+        assertTrue(DirectorTools.GROW_TERRAIN in second, "思考档那几只一次给全：\n$second")
+        assertTrue(DirectorTools.WRITE_CYCLE in second, "写作息那只手也在里面：\n$second")
         // 快速档那一段原样还在（同一段历史），而思考档该看的东西补在了末尾。
         assertTrue("我往东走了几步" in second, "快速档那一段不能被丢掉：\n$second")
         assertTrue("【地图】" in second, "换档要补上地图：\n$second")

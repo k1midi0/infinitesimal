@@ -3,21 +3,40 @@ package io.github.k1midi0.infinitesimal.world
 import kotlinx.serialization.Serializable
 
 /**
- * 状态循环上的一格：**从这一天里的第几分钟起，我在做什么**（§3.2、§3.2.5）。
+ * 状态循环上的一格：**从循环开始那一刻起的第几分钟，我在哪、在做什么**（§3.2、§3.2.5）。
  *
- * @property atMinute 一天里的第几分钟，`0..1439`。用「一天里的第几分钟」而不是「第几天几点」，是因为
- *   循环是**周期**的——"23:00 打烊、次日 07:00 又开门"是同一格与下一格的关系，不是两条要各写一遍的
- *   记录。
+ * @property atMinute **相对时间**：从循环开始那一刻（[Cycle.bornAt]）数起的分钟数，不是"一天里的第几分钟"。
+ *   所以 `1500` 是一个合法值——那是"一天零一个钟头之后"（§14.44 定：一个循环可以长过一天）。
+ * @property x 这一格上它待的横坐标（厘米）。**这是基线，不是事实**：它平时这个点该在哪；"此刻真正在哪"
+ *   仍然是实体上那个值，判定随时可以改它（§3.2.5）。
+ * @property state 一句话：这个点在做什么。渲染与判断都读它。
  */
 @Serializable
-data class Beat(val atMinute: Int, val state: String)
+data class Beat(
+    val atMinute: Int,
+    val state: String,
+    val x: Int = 0,
+    val y: Int = 0,
+    val z: Int = 0,
+)
 
 /**
- * **状态循环**：一张周期表（时刻 → 状态）。
+ * **状态循环**：一张周期表（相对时间 → 地点 + 在做什么）。
  *
  * ## 它回答什么
  *
- * 「**没人理它的时候，它此刻在干什么**」。这一句话是它的全部职责。
+ * 「**没人理它的时候，它此刻在干什么、在哪儿**」。这一句话是它的全部职责。
+ *
+ * ## 它是一只定时器，不是一张一天的钟点表（2026-10-01 定，§14.44）
+ *
+ * 以前它读作「一天里的第几分钟」（`0..1439`），`stateAt` 取「不晚于此刻的最后一格」并拿 `minuteOfDay`
+ * 做跨夜环绕。现在读法变了：**循环从 [bornAt] 那一刻开始跑**，[atMinute] 是"跑了多久之后"，而一圈多长
+ * 由内容说定（[periodMinutes]、[periodOverride]）。于是：
+ *
+ *  - 一个循环可以**长过一天**（一圈三十个钟头是合法的）；
+ *  - 循环自己**转圈**：到点看的是 `(现在 - bornAt) mod 周期` 落在哪一格（[phaseAt]）；
+ *  - 开局那份手写的作息**原文没改**，只是它的起点是**世界起点**（`bornAt = WorldTime(0)`），于是
+ *    07:00 那一格的含义从"早上七点"变成"世界开始七个钟头之后"——两者在一天以内是同一个数。
  *
  * ## 它给谁读——这一条决定了整个世界能装多少个氛围 NPC
  *
@@ -30,62 +49,149 @@ data class Beat(val atMinute: Int, val state: String)
  *
  * ## 两条它**不包括**的东西
  *
- *  - **位置不在循环里**（2026-09-26 定）。它**待在被放下、或被挪到的地方**——那是一个存下来的值。
- *    原设计那句"位置由时间轴上的日程算出"因此作废，理由是硬碰硬的一条：它要求循环知道地点，而
- *    "在哪儿"是判定随时会改的事实，两者迟早会打架（§3.2.5）。
- *  - **一件打算做的事也不在循环里**，那是 [Todo]。分界线是**消费者不同**：循环由代码查，待办要进
+ *  - **一件打算做的事不在循环里**，那是 [Todo]。分界线是**消费者不同**：循环由代码查，待办要进
  *    提示词。所以循环可以有成千条，待办只能属于少数几个角色。
+ *  - **[atMinute] 上的坐标不是"位置的事实"**（2026-09-26 定的那条现在收窄成这一条）：它只是**它平时
+ *    这个点该在哪儿**，代码拿它**到点把角色挪过去**（`World.refreshCyclesToClock`）、也拿它当回归时
+ *    "到没到"的判据。而"此刻真正在哪儿"照旧是实体上那个值，判定随时能改——循环因此**不与判定打架**。
  *
  * ## 谁写它
  *
  * 生成时由**导演**写（§8.3）。**角色自己改不了它**——「明天去修铠甲」是它自己的一件打算（那是一条
  * [Todo]），而把循环交到它手里，等于让它改自己的作息。
+ *
+ * @property bornAt 循环从哪一个世界时刻开始跑。**它是锚点**：同一个 `atMinute` 在 `bornAt` 不同的两张
+ *   表里落在不同时刻。默认 [WorldTime] 的零（世界起点）——老快照里的循环没有这一项，而"从世界起点跑"
+ *   正是它们在旧语义下的读法。
  */
 @Serializable
-data class Cycle(val beats: List<Beat> = emptyList()) {
+data class Cycle(
+    val beats: List<Beat> = emptyList(),
+    val bornAt: WorldTime = WorldTime(0),
+    /**
+     * 一圈多长。`null` = 按"最后一格的时刻 + 1"算（[periodMinutes]）。
+     *
+     * 显式给它的场合是**一天的作息**：第一格 07:00、最后一格 23:00 时默认的一圈是 23 小时零 1 分，
+     * 而"23:00 到次日 07:00"那 8 个钟头该归"打烊"那一格——这一圈就给成 1440。给了它就必须**大于
+     * 最后一格的时刻**（[problems] 会驳回）。
+     */
+    val periodOverride: Int? = null,
+) {
 
     val isEmpty: Boolean get() = beats.isEmpty()
 
     /**
+     * 一圈多长（§14.44）。
+     *
+     * ## 默认：最后一格的时刻 **+ 1**
+     *
+     * 相位是整数分钟，而 [beatAt] 取「相位不晚于它的最后一格」——所以**每一格覆盖
+     * `[它的时刻, 下一格的时刻)`**，最后一格覆盖 `[它的时刻, 周期)` 再绕回 `[0, 第一格的时刻)`。
+     * 那 `+1` 不是四舍五入：**它把最后一刻收进周期里**，于是最后一格至少有一分钟是它自己的
+     * （`[last, last+1)`）。少了它，最后一格的窗口就是 `[周期, 周期)`——**宽度为零、永远轮不到**，
+     * 而症状只是某一格静默地死掉。
+     *
+     * 这不是纸上的顾虑：§14.44 的联机探针里，导演**三次都把最后一格写成"一圈之后的第一瞬间"**
+     * （`1｜…` 配上 `1441｜…`，即 24 小时 + 1 分钟）。它写的是"这一圈到这里闭环"的意思，而按
+     * `周期 = 最后一格` 的读法那一格永远读不到——读出来的只是少了一格，不报任何错。
+     *
+     * ## 显式指定（[periodOverride]）
+     *
+     * 一天的作息就是那种场合：07:00 起、23:00 收，而"23:00 到次日 07:00"那 8 个钟头要归最后一格
+     * ——这一圈就该显式给成 24 小时。给了它就必须**大于最后一格的时刻**（[problems] 会驳回）。
+     *
+     * 空表没有周期——`0`。
+     */
+    val periodMinutes: Int
+        get() {
+            if (beats.isEmpty()) return 0
+            periodOverride?.let { return it }
+            return beats.last().atMinute + 1
+        }
+
+    /**
+     * 此刻跑到了这一圈的哪一分钟：`(现在 - bornAt) mod 周期`。
+     *
+     * 周期为零（空表、或者坏到最后一格 `<= 0`）时**没有相位可言**，返回 `0`——那是一种坏表，由
+     * [problems] 拦在写入那一头。
+     */
+    fun phaseAt(now: WorldTime): Int {
+        val period = periodMinutes
+        if (period <= 0) return 0
+        return ((((now - bornAt) % period) + period) % period).toInt()
+    }
+
+    /**
      * 此刻落在哪一格。**没有循环就是没有答案**（`null`），不是"空闲"——那是两件事。
      *
-     * 取「不晚于此刻的最后一格」。**此刻早于当天第一格时取当天最后一格**：那是跨夜那一格的正确读法
-     * （23:00 打烊之后到次日 07:00 开门之前，人还在"打烊"那一格里），而不是"今天还没开始"。
+     * ## 每一格管到下一格开始之前
+     *
+     * 取「相位不晚于它的最后一格」，于是每一格覆盖 `[它的时刻, 下一格的时刻)`；**最后一格覆盖
+     * `[它的时刻, 周期)` 再绕回 `[0, 第一格的时刻)`**——那一段读作"上一圈还没走完"，也就是跨夜那一格
+     * 的正确读法。相位落在第一格之前时走的就是这条绕回来的路。
+     *
+     * 周期取首尾之间的距离（[periodMinutes]），所以这一圈里**每一格都有一段非空窗口**——包括最后
+     * 一格。这一条以前是坏的：周期取"最后一格的时刻"时，最后一格的窗口恒为空，它永远轮不到。
      */
     fun beatAt(now: WorldTime): Beat? {
         if (beats.isEmpty()) return null
-        val minute = now.minuteOfDay
-        return beats.lastOrNull { it.atMinute <= minute } ?: beats.last()
+        val phase = phaseAt(now)
+        return beats.lastOrNull { it.atMinute <= phase } ?: beats.last()
     }
 
     /**
      * 此刻按循环本该在做什么。
      *
      * 它与 [beatAt] 是同一件事的两种给法：**只读那句话的人用这个**（提示词里注入的那一行），
-     * **要拿整格的人用那个**（活跃化的回归判据要读 [Beat.atMinute]，读不到它就分不出"这一格"与
-     * "另一格恰好写着同一句话"）。
+     * **要拿整格的人用那个**（活跃化的回归判据要读 [Beat.atMinute] 与坐标）。
      */
     fun stateAt(now: WorldTime): String? = beatAt(now)?.state
 
     /** 按时刻排好。**存进去时不必有序**——模型写出来大概率是无序的，排序是代码的事。 */
-    fun sorted(): Cycle = Cycle(beats.sortedBy { it.atMinute })
+    fun sorted(): Cycle = copy(beats = beats.sortedBy { it.atMinute })
 
     /**
      * 这份循环自己立不立得住。
      *
      * 与 `Terrain.problems`、`ShapeLimits.problems` 同类：**这是代码该守的那条线**（结构合法），而
      * "这个角色该不该这个点吃饭"是内容，代码不管（A.6）。一条坏循环不该被静默接受——它会让
-     * [stateAt] 给出一个看起来正常、其实是错的答案。
+     * [beatAt] 给出一个看起来正常、其实是错的答案。
+     *
+     * ## 四条判据（§14.44 定的新口径）
+     *
+     *  1. **至少两格**。一格循环等于"它一辈子只做一件事"，而那不是作息。
+     *  2. **最后一格必须大于第一格**，而且**显式给的周期要比最后一格更晚**。[periodMinutes] 的默认值
+     *     已经保证后者；显式给的时候由这一条拦。
+     *  3. **时刻不重复**——同一分钟两格，那一刻它到底在做什么没有答案。
+     *  4. **每一格的说明都不许空**（坐标是数字，坏值由调用方那一头拦）。
+     *
+     * 以前那条「相对时间不在一天之内」**已经作废**：长过一天的循环是合法的（"完整循环是一天半"），
+     * 所以 `1500` 不再是坏值。
      */
     fun problems(): List<String> = buildList {
         beats.forEachIndexed { i, beat ->
-            if (beat.atMinute !in 0 until WorldTime.MINUTES_PER_DAY) {
-                add("第 ${i + 1} 格的时刻 ${beat.atMinute} 不在一天之内（0..${WorldTime.MINUTES_PER_DAY - 1}）")
-            }
             if (beat.state.isBlank()) add("第 ${i + 1} 格的状态是空的")
+            if (beat.atMinute < 0) add("第 ${i + 1} 格的相对时间 ${beat.atMinute} 是负的")
         }
         beats.groupBy { it.atMinute }.filterValues { it.size > 1 }.keys.sorted().forEach {
             add("有不止一格落在同一分钟（$it）——那一刻它到底在做什么没有答案")
+        }
+        if (beats.size < 2) {
+            add("只有 ${beats.size} 格。一个作息至少两格——一格等于它一辈子只做一件事。")
+        }
+        if (beats.size >= 2 && beats.last().atMinute <= beats.first().atMinute) {
+            add(
+                "最后一格（第 ${beats.last().atMinute} 分钟）不在第一格（第 ${beats.first().atMinute} 分钟）之后" +
+                    "——一圈的长度是这两者之差，它必须为正。",
+            )
+        }
+        periodOverride?.let { period ->
+            if (beats.isNotEmpty() && period <= beats.last().atMinute) {
+                add(
+                    "指定的一圈长度（$period 分钟）不超过最后一格的时刻（${beats.last().atMinute}）" +
+                        "——那样最后一格永远轮不到。它要比最后一格更晚。",
+                )
+            }
         }
     }
 }

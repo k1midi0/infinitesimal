@@ -35,7 +35,19 @@ internal class Scripted(private val frames: List<String>) {
     }
 }
 
-internal fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
+/**
+ * 把一个字符串塞进 JSON 字面量里。
+ *
+ * **换行也必须转义**（2026-10-01 修的）：以前只处理 `\` 与 `"`，而 JSON 的字符串里**不许出现真的换行**
+ * ——`DirectorTools.WRITE_CYCLE` 是第一个收多行文本的工具，`\n` 没转义时那条假端点吐出来的分片整个
+ * 解不开（`LlmError.Parse`），症状是"这一支莫名其妙地炸在流解析上"，而不是任何一条断言。
+ */
+internal fun esc(s: String) = s
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+    .replace("\n", "\\n")
+    .replace("\r", "\\r")
+    .replace("\t", "\\t")
 
 internal fun sse(vararg frames: String) = frames.joinToString("") { "data: $it\n\n" } + "data: [DONE]\n\n"
 
