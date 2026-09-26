@@ -121,6 +121,13 @@ data class Reaction(
      * 而探针与测试要读的正是它。
      */
     val arrived: Boolean = false,
+    /**
+     * **它挪了位置没有**（§4.3：一回合三样输入之一）。
+     *
+     * 与 [arrived] 同一个理由：位置变了这件事在世界上只是一条 `Consequence.Move`，而"这一回合它走了
+     * 一次"是**这一侧**的事实——会话要据此说一句、测试要据此断言。
+     */
+    val moved: Boolean = false,
 ) {
     /**
      * 它什么也没做。
@@ -250,6 +257,14 @@ class Npc(
         // **它这一趟回家了吗**（§14.43）：`arrive` 不是世界事件，所以这个事实只能从它这一侧的记录读出来。
         var wentHome = false
 
+        // ── 一回合里说、做、移动**各一次** ────────────────────────────────────────────
+        //
+        // 与玩家那一轮对齐（§4.3：一次提交装"说的话 + 做的事 + 移动"）。封的是**被记下的那几件事**，
+        // 不是"它想了几回"：**被驳回不算**——驳回是一次"不成，因为…"，它读完理由可以换个做法再调一次
+        // （判定那边本来就写着"动作点的东西不在这片里就该在这一步驳回，不要推给下一步"，§1.3 那条
+        // 回路就是靠这个活的）。所以这三个开关只在**落定**的时候翻，而拦在手上的那几处读的就是它们。
+        val caps = Caps()
+
         val system = ChatMessage.system(SYSTEM)
         val conversation = conversations.of(listener.id)
 
@@ -317,7 +332,7 @@ class Npc(
 
             for (call in turn.calls) {
                 val answer = answerFor(
-                    call, world, waking, listener, conversation, said, acted, wroteNote, noteGate,
+                    call, world, waking, listener, conversation, said, acted, wroteNote, noteGate, caps,
                 ) { wentHome = true }
                 if (answer.problem != null) problems += answer.problem
                 produced += ChatMessage.toolResult(call.id, answer.text)
@@ -328,11 +343,45 @@ class Npc(
         // （§6.1、§14.39）。压到阈值之后该发生的事（压成一条摘要、摘要再超阈就再压）是下一刀。
         conversation.commit(produced)
 
-        return Reaction(said, acted, round, problems, arrived = wentHome)
+        return Reaction(said, acted, round, problems, arrived = wentHome, moved = caps.moved)
     }
 
     /** 一只手的答复。解开的东西与解不开的东西走同一条路回去。 */
     private class Answered(val text: String, val problem: String? = null)
+
+    /**
+     * **这一回合它已经落定的那几件事**（§4.3、§5.4）。
+     *
+     * 三个开关彼此独立：可以只说、只做、只走，也可以三样都有。每个开关**被驳回时不翻**——理由是
+     * 那条"不成，因为…"回去之后它可以换个做法再试，而那是判定那条回路（§1.3）活的全部来源。
+     */
+    private class Caps {
+        var spoke: Boolean = false
+        var acted: Boolean = false
+        var moved: Boolean = false
+    }
+
+    /**
+     * 手上那道闸：这一件事这一回合是不是已经落定过了。
+     *
+     * 话术与别处一样**可执行**（§1.3）：它得知道接下来还能做什么——三样都做完了就是"这一回合到这儿"，
+     * 还没做的那些直接点名出来，它下一轮就照着去做，而不是原地重试同一只手。
+     */
+    private fun cap(moment: String, caps: Caps): Answered {
+        val rest = buildList {
+            if (!caps.spoke) add("说一句（`${NpcTools.SAY}`）")
+            if (!caps.acted) add("做一个动作（`${NpcTools.ACT}`）")
+            if (!caps.moved) add("走一步（`${NpcTools.MOVE}`）")
+        }
+        return Answered(
+            "这一回合你${moment}了。**一回合只说一句、做一件、走一次**——想再来一次是下一回合的事。" +
+                if (rest.isEmpty()) {
+                    "三样你都做过了：这一回合就到这里，不用再调工具了。"
+                } else {
+                    "还没做的还有：${rest.joinToString("、")}。"
+                },
+        )
+    }
 
     /**
      * 一只手的答复。**解不开的参数与不合法的值都变成文字退回去**，不抛异常（§1.3）。
@@ -351,10 +400,12 @@ class Npc(
         acted: MutableList<Judgment>,
         wroteNote: Boolean,
         noteWritten: () -> Unit,
+        caps: Caps,
         wentHome: () -> Unit,
     ): Answered = when (call.name) {
-        NpcTools.SAY -> say(call, world, listener, said)
-        NpcTools.ACT -> act(call, world, listener, acted)
+        NpcTools.SAY -> say(call, world, listener, said, caps)
+        NpcTools.ACT -> act(call, world, listener, acted, caps)
+        NpcTools.MOVE -> move(call, world, listener, acted, caps)
         NpcTools.PLAN -> plan(call, world, listener)
         NpcTools.LOOK -> look(call, world, waking, listener)
         NpcTools.COMPACT -> compact(call, conversation)
@@ -450,12 +501,17 @@ class Npc(
         world: World,
         listener: Entity,
         into: MutableList<Spoken>,
+        caps: Caps,
     ): Answered {
+        // **一回合一句。** 这道闸读的是"已经说出口了没有"，而不是"调了几次 `say`"——所以它排在
+        // 参数解析之前与之后都行，但排在**说出口之前**是必须的：说出去就收不回来了。
+        if (caps.spoke) return cap("已经说过一句", caps)
         val text = decodeCall(SayArgs.serializer(), call)?.text?.trim()
         if (text.isNullOrEmpty()) {
             return Answered("「text」是空的——你要说的那句话得写进去。", "say 的 text 是空的")
         }
         into += Spoken(listener.id, text)
+        caps.spoke = true
 
         // **进记录层**（§6.1）。角色说的话与玩家说的话是同一类事实，所以走同一个形状：原话原样、
         // 投递给这一片里的人。
@@ -661,7 +717,12 @@ class Npc(
         world: World,
         listener: Entity,
         into: MutableList<Judgment>,
+        caps: Caps,
     ): Answered {
+        // **已经做成一件了就关上**（一回合最多一件）。而**被驳回不算**——所以这道闸读的是"落定了没有"，
+        // 而它翻的时刻在 `land()` 里，也就是判定回来的那一步，不是调用这一步。
+        if (caps.acted) return cap("已经做过一件事", caps)
+
         val args = decodeCall(ActArgs.serializer(), call)
         val intention = args?.intention?.trim()
         if (intention.isNullOrEmpty()) {
@@ -676,6 +737,55 @@ class Npc(
         val known = named.filter { world.byId(it) != null }
         val unknown = named - known.toSet()
 
+        val told = actOut(world, listener, intention, known, into) { caps.acted = true }
+        return if (unknown.isEmpty()) {
+            Answered(told)
+        } else {
+            Answered("$told\n（另外：${unknown.joinToString("、")} 这几个 id 在这一片里找不到，没算进去。）")
+        }
+    }
+
+    /**
+     * **走到别处去**（§4.3：玩家那一轮的三样输入之一）。
+     *
+     * 它与 [act] 之间**只差一个 `targets` 参数**，其余（意图走判定、落定之后写记录、驳回的理由原样
+     * 带回去）是同一条路——所以两处共用 [actOut]。**坐标不由角色写**：位置是判定随时会改的事实
+     * （§3.2.5、§12 第 23 项），所以这只手给的是意图，判成之后它是一条 `Consequence.Move`。
+     */
+    private suspend fun move(
+        call: ToolCallRequest,
+        world: World,
+        listener: Entity,
+        into: MutableList<Judgment>,
+        caps: Caps,
+    ): Answered {
+        if (caps.moved) return cap("已经走动过一次", caps)
+
+        val intention = decodeCall(MoveArgs.serializer(), call)?.intention?.trim()
+        if (intention.isNullOrEmpty()) {
+            return Answered("「intention」是空的——你要去哪儿，用一句话写清楚。", "move 的 intention 是空的")
+        }
+
+        // **不给 `selected` / `centers`**：走一段路不是"作用在那些东西上"，而终点由判定自己算。
+        // 这条与 §4.6 那条「一次动作一定要有指向的对象」不冲突——那条管的是"作用于谁"，而移动的落点
+        // 是坐标，判定那边本来就管着它。
+        return Answered(actOut(world, listener, intention, emptyList(), into) { caps.moved = true })
+    }
+
+    /**
+     * `act` 与 `move` 共用的那条路：**意图 → 判定 → 落库 → 写记录**。
+     *
+     * 它顺手做两件各自都要做的事：**落定之后把开关翻上**（[Caps]），以及**驳回时不翻**。记录只在
+     * 落定时写——与玩家那一轮同一条判据：驳回的、协议失败的不是世界里发生过的事。
+     */
+    private suspend fun actOut(
+        world: World,
+        listener: Entity,
+        intention: String,
+        known: List<String>,
+        into: MutableList<Judgment>,
+        landed: () -> Unit,
+    ): String {
         // **标签要先抓下来。** 判定落库之后被 Destroy 的东西就不在世界里了，那时候再查名字只能拿到
         // id。与玩家那一轮同一条理由。
         val labels = world.all().associate { it.id to it.label }
@@ -692,40 +802,42 @@ class Npc(
         )
         into += judgment
 
-        // **落地了才写记录**——与玩家那一轮同一条判据：驳回的、协议失败的不是世界里发生过的事。
         fun name(id: String) = labels[id] ?: world.byId(id)?.label ?: id
         when (judgment) {
-            is Judgment.Applied -> world.log.append(
-                at = world.clock,
-                kind = EventKind.ACT,
-                actorId = listener.id,
-                actorLabel = listener.label,
-                text = intention,
-                effects = judgment.consequences.map { describeConsequence(it, ::name, world.materials) },
-                addressedTo = judgment.affected.toList(),
-                spot = Spot(listener.x, listener.y, listener.z),
-                to = world.audience(listener.id, affected = judgment.affected),
-            )
+            // **落定** = 判成立（世界变了，或者它明确说"没有改变世界"）。这两种都不是驳回，所以它们
+            // 占掉那一件名额；而驳回与协议失败不占——那正是"换个做法再来一次"要走的路。
+            is Judgment.Applied -> {
+                landed()
+                world.log.append(
+                    at = world.clock,
+                    kind = EventKind.ACT,
+                    actorId = listener.id,
+                    actorLabel = listener.label,
+                    text = intention,
+                    effects = judgment.consequences.map { describeConsequence(it, ::name, world.materials) },
+                    addressedTo = judgment.affected.toList(),
+                    spot = Spot(listener.x, listener.y, listener.z),
+                    to = world.audience(listener.id, affected = judgment.affected),
+                )
+            }
 
-            is Judgment.Unchanged -> world.log.append(
-                at = world.clock,
-                kind = EventKind.ACT,
-                actorId = listener.id,
-                actorLabel = listener.label,
-                text = intention,
-                spot = Spot(listener.x, listener.y, listener.z),
-                to = world.audience(listener.id),
-            )
+            is Judgment.Unchanged -> {
+                landed()
+                world.log.append(
+                    at = world.clock,
+                    kind = EventKind.ACT,
+                    actorId = listener.id,
+                    actorLabel = listener.label,
+                    text = intention,
+                    spot = Spot(listener.x, listener.y, listener.z),
+                    to = world.audience(listener.id),
+                )
+            }
 
             else -> Unit
         }
 
-        val told = describe(judgment)
-        return if (unknown.isEmpty()) {
-            Answered(told)
-        } else {
-            Answered("$told\n（另外：${unknown.joinToString("、")} 这几个 id 在这一片里找不到，没算进去。）")
-        }
+        return describe(judgment)
     }
 
     /** 把判定结果说成一句模型读得懂的话。**驳回的理由原样带着**——它就是模型下一轮的依据。 */
@@ -1002,6 +1114,9 @@ class Npc(
             10. **记得回去。** 提示词里有【你现在没有在走你平常的那个循环】那一节时，说明你已经被
                叫脱轨了、不在过你平常的日子。那一趟的事做完了，就用 `arrive` 回到循环上——把那一格
                的状态原文填进去。**别一直待在外面**：你的日子有自己的钟点。
+            11. **一回合里：说一句、做一件、走一次。** 这三样各自独立——可以只说、只做、只走，
+                也可以三样都有，那正好是一回合的全貌。做完了就停手，把这一回合交回去。
+                **被驳回不算做过了**：驳回是"不成，因为…"，你读完那个理由可以换个做法再调一次同一只手。
         """.trimIndent()
     }
 }
@@ -1047,3 +1162,7 @@ private data class NoteArgs(
 /** `arrive` 的参数。同上。 */
 @Serializable
 private data class ArriveArgs(val state: String = "")
+
+/** `move` 的参数。同上。 */
+@Serializable
+private data class MoveArgs(val intention: String = "")
