@@ -3,6 +3,7 @@ package io.github.k1midi0.infinitesimal.npc
 import io.github.k1midi0.infinitesimal.config.ContextSettings
 import io.github.k1midi0.infinitesimal.llm.ChatMessage
 import io.github.k1midi0.infinitesimal.llm.estimateTokens
+import kotlinx.serialization.Serializable
 
 /**
  * 历史里的一段。
@@ -12,12 +13,21 @@ import io.github.k1midi0.infinitesimal.llm.estimateTokens
  *
  * 每一段有一个**永不变的位置号** [pos]（`h1`、`h2`……）。**位置号不复用、不重排**：压缩之后原来那些
  * 位置就没了，而模型看到的编号与它上一轮看到的对得上——换了编号，它就会指着一段不存在的东西说话。
+ *
+ * ## 它自己也要 `@Serializable`（§14.49）
+ *
+ * 只标在 [RawPiece] / [SummaryPiece] 上是不够的：存档里那个字段的类型是 **`Piece`**，而
+ * `kotlinx.serialization` 只有在**父类型自己**标了 `@Serializable` 时才知道去它的子类里找序列化器。
+ * 症状是一句 `Serializer for subclass 'RawPiece' is not found in the polymorphic scope of 'Piece'`
+ * ——它只在真的存/读一次的时候才会出现。
  */
+@Serializable
 sealed interface Piece {
     val pos: Long
 }
 
 /** 原文：一条真的发出去过的消息。 */
+@Serializable
 data class RawPiece(override val pos: Long, val message: ChatMessage) : Piece
 
 /**
@@ -30,6 +40,7 @@ data class RawPiece(override val pos: Long, val message: ChatMessage) : Piece
  * @property coveredThrough 它遮到哪个位置号（含）。与 [pos] 合起来就是它覆盖的范围——tier 2 压的时
  *   候，这个范围里装的是别的一些摘要，而不是原文。
  */
+@Serializable
 data class SummaryPiece(
     override val pos: Long,
     val coveredThrough: Long,
@@ -66,10 +77,14 @@ data class SummaryPiece(
  * 所以不拿估算去猜绝对量（那会差一两成，而在 400K 上就是几万）。这也是 dsh 自己的做法——它的原话是
  * 「**Provider usage anchors a measurement**」。
  *
- * ## 它现在住在内存里
+ * ## 它现在会跟着存档走（§14.49）
  *
- * `world/` 做持久化，而**存档本身还没做**（§12 第 33 项）。所以这一层先跟着进程活着，等存档落地时再
- * 决定它进哪一份快照。**别以为它已经存下来了。**
+ * 从前它只跟着进程活着。现在 [snapshot] 与 [restore] 把它整份交出去、整份收回来——**包括那三个内部
+ * 计数**（下一段的位置号、下一个块号、锚的两格）。三个都要带：只带 [pieces] 的话，读回来的历史会
+ * 从 `h1` 重新编号，而模型上一轮看到的是 `h37`——它就会指着一个不存在的位置号说话。
+ *
+ * **摘要不能重算**，所以它必须原样带走：压掉的那些原话只剩[底部记录][io.github.k1midi0.infinitesimal.world.EventLog]
+ * 里那一层，而摘要是当初模型给的一句话。丢掉它，读回来的角色就失忆了。
  */
 class Conversation(val ownerId: String) {
 
@@ -86,6 +101,36 @@ class Conversation(val ownerId: String) {
 
     /** 锚覆盖到历史里的第几条**消息**（不含）。它之后的那些才算"自锚点以来的增量"。 */
     private var anchoredThrough = 0
+
+    /**
+     * 照着快照重建一份。
+     *
+     * **它不能是私有的**：`@Serializable` 生成的那个序列化器要与它共存，而私有次构造会让生成的那份代码
+     * 也够不着它（编译器报的是 `Cannot access 'constructor(...)': it is private`，位置指在生成代码里）。
+     * 所以走 `internal` + 一个公开的工厂函数：模块外拿不到这个构造器，而读档那一侧拿得到。
+     */
+    internal constructor(snapshot: ConversationSnapshot) : this(snapshot.ownerId) {
+        pieces += snapshot.pieces
+        nextPos = snapshot.nextPos
+        nextBlock = snapshot.nextBlock
+        anchorTokens = snapshot.anchorTokens
+        anchoredThrough = snapshot.anchoredThrough
+    }
+
+    /**
+     * 整份交出去，给存档用。
+     *
+     * 它**故意是公开的**，而不是让存档那一层反射进来掏私有字段：那三个计数与 [pieces] 的关系（谁该与谁
+     * 一致、哪些不能重排）是这个类自己的事，掏出去之后每个调用点都要自己守一遍。
+     */
+    fun snapshot(): ConversationSnapshot = ConversationSnapshot(
+        ownerId = ownerId,
+        pieces = pieces.toList(),
+        nextPos = nextPos,
+        nextBlock = nextBlock,
+        anchorTokens = anchorTokens,
+        anchoredThrough = anchoredThrough,
+    )
 
     val size: Int get() = pieces.size
 
@@ -276,6 +321,9 @@ class Conversation(val ownerId: String) {
          * 下限）。低于它，一条摘要反而比原文更长，压了是净亏。
          */
         const val MIN_RANGE_MESSAGES = 6
+
+        /** 照着一份快照重建（读档那条路，§14.49）。**它的位置号、块号、锚都跟着走。** */
+        fun from(snapshot: ConversationSnapshot): Conversation = Conversation(snapshot)
     }
 
     /**
@@ -326,6 +374,23 @@ private fun Piece.isToolResult(): Boolean =
     this is RawPiece && message.role == "tool"
 
 /**
+ * 一个角色的对话历史，摊平成一份可序列化的东西（§14.49）。
+ *
+ * 三个计数必须一起走：[nextPos] 是下一段的位置号（读回来不复用旧号），[nextBlock] 是下一个块号
+ * （`b1`、`b2`……），[anchorTokens] 与 [anchoredThrough] 是"上次请求到底多大"那个锚——丢了它，
+ * 读回来的第一轮会把上下文估小，200 轮之内就该压的一次都不压。
+ */
+@Serializable
+data class ConversationSnapshot(
+    val ownerId: String,
+    val pieces: List<Piece> = emptyList(),
+    val nextPos: Long = 1L,
+    val nextBlock: Long = 1L,
+    val anchorTokens: Int = -1,
+    val anchoredThrough: Int = 0,
+)
+
+/**
  * 每个角色一份对话历史（§6.1）。
  *
  * 按 `ownerId` 取，取不到就现开一份——于是"这个角色有没有历史"不是一件要维护的状态，而是**第一次唤醒
@@ -339,6 +404,28 @@ class Conversations {
 
     /** 现在有几位在册（探针与测试用；它是**曾经醒过**的角色数，不是世界里的角色数）。 */
     val size: Int get() = byOwner.size
+
+    /**
+     * **在册的那些角色 id，按 id 排。**
+     *
+     * 存档要用它——而 `byOwner` 是私有的，在这之前**没有任何办法问出"都有谁"**（§14.49）。排序是为了
+     * 让同一份世界每次存出来的文件逐字节一样，于是两份存档能不能对得上变成一件可以比的事。
+     */
+    fun ownerIds(): List<String> = byOwner.keys.sorted()
+
+    /** 整份交出去，给存档用（按 [ownerIds] 的顺序，于是同一份历史每次存出来一样）。 */
+    fun snapshot(): List<ConversationSnapshot> = ownerIds().map { byOwner.getValue(it).snapshot() }
+
+    /**
+     * 整份收回来。**先清空**：读档不是"把新历史混进旧的"。
+     *
+     * 收回来的是**现成的 [Conversation]**，而不是"照着快照重建"——那三个私有计数只有它自己装得对
+     * （[Conversation.snapshot] 那边有同一条理由）。
+     */
+    fun restore(snapshots: List<ConversationSnapshot>) {
+        byOwner.clear()
+        snapshots.forEach { byOwner[it.ownerId] = Conversation.from(it) }
+    }
 
     fun clear() = byOwner.clear()
 }

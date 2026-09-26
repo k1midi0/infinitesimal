@@ -14,11 +14,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,11 +32,21 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import io.github.k1midi0.infinitesimal.config.EndpointConfig
 import io.github.k1midi0.infinitesimal.config.ThinkingMode
+import io.github.k1midi0.infinitesimal.save.LastSave
+import io.github.k1midi0.infinitesimal.save.SaveFile
+import io.github.k1midi0.infinitesimal.save.SaveLoad
 import io.github.k1midi0.infinitesimal.session.GameSession
 import io.github.k1midi0.infinitesimal.ui.GameScreen
 import io.github.k1midi0.infinitesimal.world.BuiltinPresets
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import java.io.File
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.swing.Swing
+import kotlinx.coroutines.withContext
 
 /**
  * 桌面端的入口。
@@ -43,6 +56,11 @@ import java.io.File
  * 不落盘、不写日志。
  *
  * 密钥没配好时不该让玩家对着一个按不动的按钮发呆，所以缺密钥就先给一个要密钥的界面。
+ *
+ * ## 三层：密钥 → 出厂预设包 → **主界面**
+ *
+ * §14.49 之前这里是"读到预设包就进酒馆"。现在中间多一个主界面（新游戏 / 继续 / 读取存档）——因为一局
+ * 游戏现在可以从一个文件回来，而"从哪个文件回来"是玩家要在进游戏之前回答的问题。
  */
 fun main() = application {
     Window(
@@ -72,17 +90,172 @@ fun main() = application {
                         "跑一次 spike/PresetSweep 就能重新生成。",
                 )
 
-                // **按密钥 remember**：换了密钥就是一个新的世界，不能把上一个会话接着用。
                 is PresetState.Ready -> {
-                    val session = remember(key, current.library) {
-                        GameSession(configOf(key), presets = current.library)
+                    /*
+                     * **换了密钥就是一个新的世界**：整棵界面树跟着 key 重建，上一局那个会话（以及它记着的
+                     * 存档路径）一律不作数。
+                     */
+                    key(key) {
+                        AppRoot(config = configOf(key), library = current.library)
                     }
-                    GameScreen(session)
                 }
             }
         }
     }
 }
+
+/**
+ * 一个进程里的两层界面：**主界面**与**游戏**（§14.49）。
+ *
+ * ## 会话是可空的一个"当前那一局"
+ *
+ * 用户定的形状是"读档 = 重建一个会话"（`world` 是 `val`，就地换世界要重置十几处派生状态）。所以这里
+ * 持有一个 `GameSession?`：为 null 就是主界面，不为 null 就是游戏。
+ *
+ * ## 挑文件那两个函数从哪儿来
+ *
+ * 从这一层（桌面端）来——`shared` 那一侧不知道 `java.awt.FileDialog` 存在。传下去的是两个返回路径的
+ * 挂起函数，`GameScreen` 只负责在按钮被按下时调用它们。
+ */
+@Composable
+private fun AppRoot(config: EndpointConfig, library: PresetLibrary) {
+    var session by remember { mutableStateOf<GameSession?>(null) }
+    var menuNotice by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    // **每次回到主界面都要重新读一遍"上次那一份"**：游戏里刚存过，那一条就变了。
+    var lastPath by remember(session) { mutableStateOf(LastSave.path()) }
+    var lastHeader by remember(session) { mutableStateOf(lastPath?.let { SaveFile.peek(it) }) }
+
+    /** 开一局新的：**先问存到哪**，选定之后每一回合都会自动存向它。 */
+    fun startNewGame() {
+        scope.launch {
+            val path = pickSavePath() ?: return@launch
+            val fresh = GameSession(config, presets = library)
+            runCatching { fresh.saveTo(path) }
+                .onFailure {
+                    menuNotice = "这一局开起来了，但第一份存档没写成：${it.message ?: it::class.simpleName}"
+                }
+            session = fresh
+        }
+    }
+
+    /** 从一份存档开一局。读不了就留在主界面上，把那句理由说出来。 */
+    fun continueFrom(path: String) {
+        scope.launch {
+            when (val loaded = withContext(Dispatchers.IO) { SaveFile.load(path) }) {
+                is SaveLoad.Failed -> menuNotice = loaded.why
+                is SaveLoad.Loaded -> {
+                    val restored = GameSession.restore(config, loaded.game, presets = library)
+                    restored.autoSaveTo(path)
+                    menuNotice = null
+                    session = restored
+                }
+            }
+        }
+    }
+
+    val current = session
+    if (current == null) {
+        MainMenu(
+            notice = menuNotice,
+            onDismissNotice = { menuNotice = null },
+            lastPath = lastPath,
+            lastWhen = lastHeader?.savedAt?.let(::stampOf),
+            onNewGame = ::startNewGame,
+            onContinue = { lastPath?.let(::continueFrom) },
+            onOpen = {
+                scope.launch {
+                    val path = pickOpenPath()
+                    if (path != null) continueFrom(path)
+                }
+            },
+        )
+    } else {
+        GameScreen(
+            session = current,
+            onPickSavePath = { pickSavePath() },
+        )
+    }
+}
+
+/**
+ * **主界面**（§14.49）：三个按钮。
+ *
+ * 「继续」与「读取存档」的差别只有一处：前一个用的是上次那一份（记在
+ * [LastSave] 里），后一个每次问玩家。那一份已经被删掉/搬走时，前一个按钮**是禁的**——让玩家点下去
+ * 才发现读不到，不如一开始就说"还没有上次那一份"。
+ */
+@Composable
+private fun MainMenu(
+    notice: String?,
+    onDismissNotice: () -> Unit,
+    lastPath: String?,
+    lastWhen: String?,
+    onNewGame: () -> Unit,
+    onContinue: () -> Unit,
+    onOpen: () -> Unit,
+) {
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Card {
+                Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("无限小", style = MaterialTheme.typography.headlineMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "一个以文字为无限精度的世界。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(20.dp))
+
+                    Button(onClick = onNewGame, modifier = Modifier.width(220.dp)) {
+                        Text("新游戏")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = onContinue, enabled = lastPath != null) {
+                        Text("继续")
+                    }
+                    Text(
+                        if (lastPath == null) {
+                            "还没有上次那一份——开一局新的，或者自己挑一个存档文件。"
+                        } else {
+                            "上次那一份：${shortName(lastPath)}${lastWhen?.let { "（$it）" } ?: ""}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = onOpen) {
+                        Text("读取存档")
+                    }
+
+                    notice?.let {
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        TextButton(onClick = onDismissNotice) { Text("知道了") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun shortName(path: String): String = path.substringAfterLast('/').substringAfterLast('\\')
+
+private val STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+
+/** 一个毫秒时间戳，给"上次那一份是什么时候存的"用。 */
+private fun stampOf(millis: Long): String =
+    Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).format(STAMP)
 
 /**
  * 进游戏之前那个很短的状态。
@@ -186,4 +359,47 @@ private fun KeyScreen(onReady: (String) -> Unit) {
             }
         }
     }
+}
+
+// ── 挑文件（只在桌面端） ──────────────────────────────────────────────────────────
+
+/** 存档的默认扩展名。它只是一个建议——对话框里玩家想写什么都行。 */
+private const val SAVE_SUFFIX = ".infsave.json"
+
+/**
+ * 问玩家"存到哪"。
+ *
+ * ## 为什么要在 `Dispatchers.Swing` 上做
+ *
+ * `java.awt.FileDialog` 与 Swing 一样**只能在事件分发线程上碰**，而 Compose Desktop 的事件线程就是
+ * 那一条。在协程里（可能是别的线程）直接 new 一个 `FileDialog` 会得到一个行为未定义的窗口。所以这一
+ * 步切到 [Dispatchers.Swing] 上，而它是一个**模态**对话框——切过去之后那一整个事件循环都在等玩家，
+ * 这正是模态的意思。
+ */
+private suspend fun pickSavePath(): String? = withContext(Dispatchers.Swing) {
+    java.awt.FileDialog(null as java.awt.Dialog?, "存到哪", java.awt.FileDialog.SAVE).use {
+        it.file = "world$SAVE_SUFFIX"
+        it.isVisible = true
+        it.file?.let { chosen -> "${it.directory}$chosen" }
+    }
+}
+
+/** 问玩家"读哪一份"。同一个对话框，换成打开模式。 */
+private suspend fun pickOpenPath(): String? = withContext(Dispatchers.Swing) {
+    java.awt.FileDialog(null as java.awt.Dialog?, "读哪一份", java.awt.FileDialog.LOAD).use {
+        it.file = "*.json"
+        it.isVisible = true
+        it.file?.let { chosen -> "${it.directory}$chosen" }
+    }
+}
+
+/**
+ * `FileDialog` 没有实现 `AutoCloseable`；这一个扩展只是让上面那两处能写成 `use { }`。
+ *
+ * 关掉它的理由是**模态对话框会占着事件线程**：一次都不关，连开几次之后那个窗口就堆在那儿。
+ */
+private inline fun <T> java.awt.FileDialog.use(block: (java.awt.FileDialog) -> T): T = try {
+    block(this)
+} finally {
+    dispose()
 }

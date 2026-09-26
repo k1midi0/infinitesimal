@@ -14,6 +14,7 @@ import io.github.k1midi0.infinitesimal.judge.JudgeRequest
 import io.github.k1midi0.infinitesimal.judge.Judgment
 import io.github.k1midi0.infinitesimal.judge.TargetAlignment
 import io.github.k1midi0.infinitesimal.judge.describeConsequence
+import io.github.k1midi0.infinitesimal.npc.Conversations
 import io.github.k1midi0.infinitesimal.npc.Heard
 import io.github.k1midi0.infinitesimal.npc.Npc
 import io.github.k1midi0.infinitesimal.npc.Reaction
@@ -21,6 +22,9 @@ import io.github.k1midi0.infinitesimal.npc.Spoken
 import io.github.k1midi0.infinitesimal.npc.Waking as NpcWaking
 import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.Renderer
+import io.github.k1midi0.infinitesimal.save.LastSave
+import io.github.k1midi0.infinitesimal.save.SaveFile
+import io.github.k1midi0.infinitesimal.save.SaveGame
 import io.github.k1midi0.infinitesimal.schedule.Scheduler
 import io.github.k1midi0.infinitesimal.schedule.Scheduling
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
@@ -41,6 +45,8 @@ import io.github.k1midi0.infinitesimal.world.ZoningSnapshot
 import io.github.k1midi0.infinitesimal.world.WorldTime
 import io.github.k1midi0.infinitesimal.world.speakersAmong
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -159,8 +165,20 @@ class GameSession(
      * **测试可以塞一个假的进来**——它是第四个会碰端点的人，而"一轮问几次"正是要与不要量的那一个数。
      */
     private val scheduler: Scheduling = Scheduler(config),
+    /**
+     * **整个世界**（§14.49）。给读档用：那是一份已经长好、走过一段的世界，而不是 [seed] / [rules] /
+     * [ground] / [zoning] 那四样开局内容。
+     *
+     * 它默认 null，于是老的那条路（"用开局内容现造一个世界"）一个字都不用改。给了它就**以它为准**，
+     * 那四个参数一律不看——两条路各造一个世界再挑一个，会让"我看的这一份"与"它实际在写的那一份"
+     * 有机会不是同一个。
+     *
+     * 名字刻意不叫 `world`：那样它会遮住下面那个属性，而这个类里几十处 `world.xxx` 会全部指向那一个
+     * 可空参数（编译期就能看出来，但看出来的方式是三十处 `Only safe calls are allowed`）。
+     */
+    startingWorld: World? = null,
 ) {
-    val world: World = World.from(
+    val world: World = startingWorld ?: World.from(
         WorldSnapshot(seed, rules, terrain = ground, zoning = zoning),
     )
     private val renderer = Renderer(config, world)
@@ -193,8 +211,13 @@ class GameSession(
      * 事件总线的起点。
      *
      * 见 [runTurn] 里那段注释：它是字段而不是参数，是因为**纠正预览会把一回合从中间切开**。
+     *
+     * ## 它从**上一次提交之后**起算（§14.49）
+     *
+     * 初值不是 0 而是 `world.log.latestSeq`：读档回来的世界里装着过去几百条事件，而 `0` 的意思是
+     * "上回合从第 0 条算起"——那会让每一个角色的记忆窗口一次塞进**整局的历史**。
      */
-    private var turnStartSeq = 0L
+    private var turnStartSeq = world.log.latestSeq
 
     /**
      * 这一回合的起点事件编号，**只读**（§6.1）。
@@ -253,7 +276,10 @@ class GameSession(
         private set
 
     /**
-     * 一件**必须让玩家看见、但没法只写进日志**的事。**只有"硬圈里那块地长不出来"会置它。**
+     * 一件**必须让玩家看见、但没法只写进日志**的事。
+     *
+     * 原本**只有"硬圈里那块地长不出来"会置它**。§14.49 起多两类：**存档写成功**（玩家按了那个按钮，
+     * 总得有个回音）与**存档失败**（那句理由必须看得见，否则"我明明存了"会变成一个查不出的问题）。
      *
      * 别的失败都只写日志：那是玩家自己那一轮没成，他本来就盯着日志。而这一条不一样——它是**世界少了
      * 一块地**，而玩家可能正站在那个缺口边上，看到的是"这里什么都没有"。界面把日志盖掉之后，这条是
@@ -261,6 +287,11 @@ class GameSession(
      */
     var notice by mutableStateOf<String?>(null)
         private set
+
+    /** 从外面报一件事——入口那一层用它播报"存档写好了/没写成"（§14.49）。 */
+    fun announce(message: String) {
+        notice = message
+    }
 
     fun dismissNotice() {
         notice = null
@@ -331,10 +362,108 @@ class GameSession(
      * 这一局的预设库（附录 A.14）。
      *
      * **存档要带走生成包**——它是世界内容，不是加速表（用户定的：产物是与出厂预设同一层级的东西）。
-     * 现在它挂在那一个判定器上，而判定器是每局造一个，两者寿命正好对上；等存档落地，该由这里持有
-     * 再把库传进判定器。
+     * 它挂在那一个判定器上，而判定器是每局造一个，两者寿命正好对上；§14.49 之后，读档那一边由
+     * [restore] 把这一份库**装回**新的判定器，于是"刚才造过的那张桌子"跨过存档仍然只有一份。
      */
     val presets: PresetLibrary get() = judge.presets
+
+    /**
+     * **每个角色的记忆**（§6.1、§14.49）。
+     *
+     * 它一直在 [npc] 手里，而那个字段是私有的。这一层把它露出来是因为**存档要交出去、读回来要装回去**
+     * ——而"谁写过话"这件事只有测试与探针问得出（`Conversations` 没有别的入口）。露一个只读的属性，
+     * 比让存档那一边拿着 `Npc` 整个人走要好：换一个扮演角色的实现时，这一条不用跟着改。
+     */
+    val conversations: Conversations get() = npc.conversations
+
+    // ── 存档（§14.49） ──────────────────────────────────────────────────────────────
+
+    /**
+     * 这一局正在写向哪一个文件。**没有选定就什么都不落盘**（用户定的形状：单档、玩家自己选的那个文件）。
+     *
+     * 它只由 [saveTo] 设置；自动存档读它，而在它是 null 的时候**静默跳过**——"还没选文件"是一件正常的
+     * 事（一局刚开始），不是错误。
+     */
+    private var savePath: String? = null
+
+    /** 现在这一局在存哪一个文件（界面要显示它）。 */
+    val savingTo: String? get() = savePath
+
+    /** 正在写盘。自动存档与手动存档共用它——两处同时写同一个文件是自找的。 */
+    private var saveInFlight = false
+
+    /**
+     * 把这一局整份交出去（§14.49）。
+     *
+     * **它是一个纯读操作**：世界、对话、生成包各拍一份快照，不碰 `writes` 那把锁。理由在 [run] 的
+     * `finally` 那一段里——它是在回合**结束**时调的，那时没有写世界的活儿在跑。
+     */
+    fun toSaveGame(game: String = ""): SaveGame = SaveGame(
+        game = game,
+        savedAt = System.currentTimeMillis(),
+        world = world.snapshot(),
+        conversations = npc.conversations.snapshot(),
+        presets = presets.generatedPresets(),
+    )
+
+    /**
+     * 存到 [path]：**先选定这个文件，再写一份**。
+     *
+     * 这是"存"那一个按钮的全部行为。选定之后，每一回合结束的自动存档都写向它（[autoSave]）。
+     *
+     * 写不进去会**抛**（磁盘满、没有权限），而界面那一侧把它翻成 [notice] 里的一句话——存档悄悄失败
+     * 比报一个错糟得多。
+     */
+    suspend fun saveTo(path: String, game: String = "") {
+        val snapshot = toSaveGame(game)
+        savePath = path
+        SaveFile.save(path, snapshot)
+        rememberThisFile(path)
+    }
+
+    /**
+     * **把这一局绑到某个文件上，但先不写**（§14.49）。
+     *
+     * 读档那一条路用它：那份存档**已经在磁盘上了**，而读者刚刚从它里面读出来——立刻回写一遍等于把
+     * 读到的字节原样写回去，只为了让"每一回合自动存向哪个文件"这件事有个值。所以它只记路径。
+     */
+    fun autoSaveTo(path: String) {
+        savePath = path
+    }
+
+    /** 记下"上次玩的是这一份"，给主界面的「继续」用。它失败不该影响存档本身。 */
+    private suspend fun rememberThisFile(path: String) {
+        try {
+            LastSave.remember(path)
+        } catch (cause: Throwable) {
+            // 记不住只是"下次要重新选一次文件"，而存档已经写好了——那件事不该变成一个错误。
+        }
+    }
+
+    /**
+     * 回合末尾那一次自动存档（§14.49）。
+     *
+     * **不挡人**：它起一个协程，把快照**先拍下来**（在界面线程上，纯数据），然后写盘落在 IO 线程上。
+     * 快照必须在启动协程**之前**拍，否则写的就是之后的某一刻——而那时候玩家已经在下一回合里动了，
+     * 存下来的会是两个回合混在一起的世界。
+     *
+     * 没选过文件、或者上一次还没写完，就什么都不做。
+     */
+    private fun autoSave(scope: CoroutineScope, game: String) {
+        val path = savePath ?: return
+        if (saveInFlight) return
+        val snapshot = toSaveGame(game)
+        saveInFlight = true
+        scope.launch {
+            try {
+                SaveFile.save(path, snapshot)
+            } catch (cause: Throwable) {
+                notice = "自动存档没写成：${cause.message ?: cause::class.simpleName}（这一局的进度还在，但它没落盘）"
+            } finally {
+                saveInFlight = false
+            }
+        }
+    }
 
     // ── 界面调的动作 ────────────────────────────────────────────────────────────────
 
@@ -391,6 +520,28 @@ class GameSession(
      * 当作听者。这是"预览存在理由"的自然推论，不是一处例外。
      */
     suspend fun runTurn(said: String, acted: String, scope: CoroutineScope? = null) {
+        try {
+            runTurnOnce(said, acted, scope)
+        } finally {
+            // **一回合的账结清了，现在存**（§14.49）。
+            //
+            // 挂在这里、而不是挂在 `run` 那一个包装上，是因为**回合有三条入口**：`submit`（`run` 里跑
+            // 的那个）、探针直接调的 [runTurn]、以及纠正预览切开之后的另一半。挂在包装上只会覆盖第一条。
+            //
+            // 快照在启动协程**之前**拍（[autoSave] 里那条理由：之后拍就会把下一回合的东西混进来）。
+            autoSave(scope ?: fallbackScope, said.ifBlank { acted })
+        }
+    }
+
+    /**
+     * 探针**不给** scope 时用的那一个（§14.49）。
+     *
+     * 在探针里存盘没有意义（它跑一次就结束），所以这个 scope 只负责"别让 `scope.launch` 因为 scope 为
+     * null 而炸掉"。它是 JVM 上的一个普通后台协程，没有人会去等它。
+     */
+    private val fallbackScope: CoroutineScope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+
+    private suspend fun runTurnOnce(said: String, acted: String, scope: CoroutineScope?) {
         val spoken = said.trim()
         val done = acted.trim()
 
@@ -578,6 +729,9 @@ class GameSession(
                 timelineRevision++
                 busy = false
                 status = ""
+                // 这一回合的账已经结清了，现在才是"存下来的世界"与"我看到的那个世界"一致的时刻
+                // （§14.49）。它在 finally 的末尾：前面那些一旦抛出去，这里就不该再动。
+                autoSave(scope, what)
             }
         }
     }
@@ -1276,4 +1430,55 @@ class GameSession(
     /** 给界面显示"这是什么、在哪"。**位置只来自坐标**——关系不存成事实（附录 A.5）。 */
     fun subtitleOf(entity: Entity): String =
         "${entity.kind}｜(${entity.x}, ${entity.y}, ${entity.z}) 厘米"
+
+    companion object {
+
+        /**
+         * **读档**：拿一份存档造成一个会话（§14.49）。
+         *
+         * ## 为什么是"造一个新会话"，而不是"把世界塞进旧的那个"
+         *
+         * 因为 `world` 是 `val`（[GameSession] 里那一行），而会话里还有一大片跟着世界一起派生出来的东西
+         * （渲染器、区块原点、时间轴修订号）。造一个新的让它们一起重新派生，比"就地重置"少十几处能漏的
+         * 地方。而构造它**没有副作用**：不读盘、不发请求，只是把几个客户端造出来。
+         *
+         * ## 生成包：**同一个库要交到每一个看它的地方**
+         *
+         * [presets] 先装回存档里那一份，然后**显式**交给判定、导演、角色三处。
+         *
+         * 这里是踩过一次的地方：第一版写的是 `judge = Judge(config)`，于是那个判定器用的是**它自己那份
+         * 空库**，而 `GameSession.presets` 正是 `judge.presets`——`installPresets` 装好的那一份**谁都没
+         * 在用**，症状是"读回来的这一局生成包是空的，而存档里明明有"（一个只在真存过一次之后才看得见的
+         * 静默错位）。
+         *
+         * ## 对话那一份在造完之后装回去
+         *
+         * `npc.conversations` 默认是空的，而**摘要是重算不出来的**。
+         *
+         * 后面那几个参数是给测试注入假客户端的。默认值故意与构造器那几行的写法**逐字一样**——两处写法
+         * 一旦漂开，就是上面那个错位的同一种。
+         */
+        fun restore(
+            config: EndpointConfig,
+            save: SaveGame,
+            presets: PresetLibrary = PresetLibrary(),
+            scheduler: Scheduling = Scheduler(config),
+            npc: Npc = Npc(config, presets),
+            judge: Judge = Judge(config, presets = presets),
+            director: Director = Director(config, presets),
+        ): GameSession {
+            SaveFile.installPresets(presets, save)
+            val session = GameSession(
+                config = config,
+                presets = presets,
+                startingWorld = World.from(save.world),
+                judge = judge,
+                director = director,
+                npc = npc,
+                scheduler = scheduler,
+            )
+            session.conversations.restore(save.conversations)
+            return session
+        }
+    }
 }

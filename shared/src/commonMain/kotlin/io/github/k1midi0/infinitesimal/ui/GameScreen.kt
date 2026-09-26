@@ -60,12 +60,19 @@ import io.github.k1midi0.infinitesimal.spatial.cell
 import io.github.k1midi0.infinitesimal.spatial.groundMetreCell
 import io.github.k1midi0.infinitesimal.world.Entity
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * 最小界面：**地图 + 东西列表 + 观察窗口 + 日志 + 两个输入框**。
  *
  * 它存在的理由不是"好看"，而是**把已经做好的部件第一次装到一起**，看一整轮到底几次调用、玩家要等
- * 多久。所以这里刻意不做：动画、布局自适应、设置页、存档。
+ * 多久。所以这里刻意不做：动画、布局自适应、设置页。
+ *
+ * **存档与读档在这里只有一个按钮**（§14.49）：读档在主界面那一边（那是一个新界面），而"存"要挑一个
+ * 文件——挑文件是**平台的事**（桌面端是 `java.awt.FileDialog`），所以它由入口把那两个 lambda 递进来
+ * （[onPickSavePath] / [onPickOpenPath]）。这一层只知道"给我一个路径"，不知道对话框长什么样；这也就
+ * 是它不 import `java.awt` 的原因。
  *
  * 三处刻意的设计：
  *
@@ -76,14 +83,33 @@ import kotlin.math.roundToInt
  *   劈一次桌子若自动重渲染七个子物体，其中六个玩家根本不会去看（§7.1）。
  */
 @Composable
-fun GameScreen(session: GameSession, modifier: Modifier = Modifier) {
+fun GameScreen(
+    session: GameSession,
+    modifier: Modifier = Modifier,
+    /**
+     * 挑一个"存到哪"的路径。返回 null = 玩家取消了。
+     *
+     * 默认是 null（不传）——那表示这一层没有挑文件的能力，于是那个按钮**不出现**而不是出现了却没反应。
+     */
+    onPickSavePath: (suspend () -> String?)? = null,
+    /** 挑一个"读哪一份"的路径。**读档在主界面那一边**，这里留着只是为了探针与测试好用。 */
+    onPickOpenPath: (suspend () -> String?)? = null,
+    /** 读进来那份存档要交给谁（主界面那一边会换掉整个会话）。 */
+    onOpen: (suspend (String) -> Unit)? = null,
+) {
     val scope = rememberCoroutineScope()
     var said by remember { mutableStateOf("") }
     var acted by remember { mutableStateOf("") }
 
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().padding(10.dp)) {
-            TopBar(session)
+            TopBar(
+                session = session,
+                onPickSavePath = onPickSavePath,
+                onPickOpenPath = onPickOpenPath,
+                onOpen = onOpen,
+                scope = scope,
+            )
             Spacer(Modifier.height(8.dp))
             Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MapPane(session, Modifier.weight(1f).fillMaxHeight())
@@ -134,8 +160,13 @@ fun GameScreen(session: GameSession, modifier: Modifier = Modifier) {
 // ── 顶栏 ────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun TopBar(session: GameSession) {
-    val scope = rememberCoroutineScope()
+private fun TopBar(
+    session: GameSession,
+    onPickSavePath: (suspend () -> String?)?,
+    onPickOpenPath: (suspend () -> String?)?,
+    onOpen: (suspend (String) -> Unit)?,
+    scope: CoroutineScope,
+) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("无限小", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.width(12.dp))
@@ -171,6 +202,54 @@ private fun TopBar(session: GameSession) {
             enabled = !session.busy && session.pending == null,
         ) {
             Text("让导演排一排")
+        }
+        /*
+         * `存`（§14.49）。
+         *
+         * 三件事都在这里说清：
+         *  - **没选过文件时按它 = 现在选一个**，选完立刻写一份（不是"选了之后等下回合自动存"——玩家按下
+         *    去是想现在就有个文件）。
+         *  - **选过之后它就只是"再存一份"**；而每一回合结束的自动存档也写向同一个文件（会话那一侧
+         *    `autoSave`），于是这个按钮更像是"我怕刚才那一下没存上，再按一次"。
+         *  - **入口没给挑文件的能力时它不出现**（`onPickSavePath == null`）：按钮出现了却没反应比没有
+         *    这个按钮更糟。
+         */
+        if (onPickSavePath != null) {
+            TextButton(
+                enabled = !session.busy,
+                onClick = {
+                    scope.launch {
+                        val path = session.savingTo ?: onPickSavePath()
+                        if (path != null) {
+                            try {
+                                session.saveTo(path)
+                                session.announce("存到 ${path.substringAfterLast('/').substringAfterLast('\\')} 了。")
+                            } catch (cause: Throwable) {
+                                session.announce("没存成：${cause.message ?: cause::class.simpleName}")
+                            }
+                        }
+                    }
+                },
+                content = { Text(if (session.savingTo == null) "存…" else "存") },
+            )
+        }
+        /*
+         * `读取`（§14.49）。**它默认不出现**：用户定的形状是"读档只在主界面"。
+         *
+         * 留着这个入口是因为探针与测试要在一个会话里验"读进来的世界真的换了"——而那件事在界面上不必
+         * 给玩家看。
+         */
+        if (onPickOpenPath != null && onOpen != null) {
+            TextButton(
+                enabled = !session.busy,
+                onClick = {
+                    scope.launch {
+                        val path = onPickOpenPath()
+                        if (path != null) onOpen(path)
+                    }
+                },
+                content = { Text("读取…") },
+            )
         }
         Spacer(Modifier.weight(1f))
         if (session.selection.isNotEmpty()) {

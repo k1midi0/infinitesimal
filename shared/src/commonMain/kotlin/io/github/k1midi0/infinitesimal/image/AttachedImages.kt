@@ -86,3 +86,26 @@ object AttachedImages {
  * 了，而配图要送出去的 base64 必须逐字节就是磁盘上那一份。
  */
 internal expect fun readBytesOrNull(path: String): ByteArray?
+
+/**
+ * 一个文本文件的全部内容。读不出来（不存在、是目录、没有权限）就是 null。
+ *
+ * ## 为什么它不去猜编码
+ *
+ * 按 UTF-8 解，与 [writeTextFile] 那一边**配成一对**：我们自己写出去的存档/配置就是这个编码，所以解
+ * 回来一定对得上。别人的文件（Windows 上 GBK 编码的 txt）解出来会是乱码或抛异常——那两类**都不该被
+ * 当成一份存档读进去**，所以这里不猜、也不静默替换（§14.49：坏档要说得出是哪一步坏的）。
+ */
+internal expect fun readTextOrNull(path: String): String?
+
+/**
+ * 把一段文本写到那个路径，**父目录不存在就现建**。
+ *
+ * ## 为什么是 `suspend`
+ *
+ * 因为它是**阻塞的 IO**：一份存档写出去是一两 MB，在界面线程上做这件事就是一次可感的卡顿。而这个签名
+ * 让调用点必须在协程里想清楚"我在哪条线程上写"，而不是顺手在 Composable 里调一下。
+ *
+ * 写失败**要抛**（磁盘满、路径是目录、没有权限）：存档悄悄没写成功比报一个错糟得多。
+ */
+internal expect suspend fun writeTextFile(path: String, text: String)
