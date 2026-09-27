@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -49,6 +51,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -100,6 +103,7 @@ fun GameScreen(
     val scope = rememberCoroutineScope()
     var said by remember { mutableStateOf("") }
     var acted by remember { mutableStateOf("") }
+    var slots by remember { mutableStateOf("1") }
 
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().padding(10.dp)) {
@@ -144,13 +148,22 @@ fun GameScreen(
             InputBar(
                 said = said,
                 acted = acted,
+                slots = slots,
                 busy = session.busy,
+                tick = session.tickLabel,
                 onSaid = { said = it },
                 onActed = { acted = it },
-                onSubmit = {
-                    session.submit(scope, said, acted)
+                onSlots = { slots = it.filter { c -> c.isDigit() }.take(3) },
+                onSay = {
+                    session.sayNow(scope, said)
                     said = ""
+                },
+                onNextTurn = {
+                    session.nextTurn(scope, acted)
                     acted = ""
+                },
+                onPassSlots = {
+                    session.passSlots(scope, slots.toIntOrNull() ?: 1)
                 },
             )
         }
@@ -177,18 +190,21 @@ private fun TopBar(
         )
         Spacer(Modifier.width(8.dp))
         /*
-         * 「等到下一件事」（§8.1）。
+         * **「等到下一件事」那个按钮已经去掉了**（§14.51）。
          *
-         * **没有可等的事时按钮是禁的，而不是按下去往前推一小时。** 时间轴上没有将来，说明的是"没人
-         * 安排过接下来会发生什么"，不是一个可以被绕过的障碍——凭空推进去会造出一段谁都没看见的时间，
-         * 而那种空白在日志里和"真的无事发生"长得一模一样。
+         * 它是"过足够大的 N 格"——而「过 N 格」碰上时间轴上有事到期会停在那一刻，两条机制做的是同一件
+         * 事。留着它只会让人不知道该按哪个，而"没有可等的"那句禁用状态又正好是「过 N 格」能照常走的
+         * 情形（过一格本来就该走，哪怕时间轴上什么都没有）。
+         *
+         * 而"下一件事在什么时候"这件事仍然看得见：它就印在「下一轮」那个按钮旁边那句话里。
          */
         val next = session.nextStop
-        TextButton(
-            onClick = { session.waitUntilNext(scope) },
-            enabled = !session.busy && session.pending == null && next != null,
-        ) {
-            Text(if (next == null) "没有可等的" else "等到 ${next.short}")
+        if (next != null) {
+            Text(
+                "（时间轴上下一件事：${next.short}）",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         /*
          * 「让导演排一排」（§8）。
@@ -716,36 +732,75 @@ private fun PendingPanel(session: GameSession, onApply: () -> Unit, onRewrite: (
 
 // ── 底部输入 ────────────────────────────────────────────────────────────────────────
 
+/**
+ * 底部那一条（§14.51）。
+ *
+ * ## 三个入口，各是各的东西
+ *
+ *  - **说**：按下去立刻发出去（或者按回车）——**它不推进时间、不占名额**。对象会当场回你，而世界停在
+ *    原处。这就是用户那句"说话不过轮次"。
+ *  - **做**：写在那儿**攒着**，与队列里其他角色的动作一起，等「下一轮」提交。它推进一格。
+ *  - **过 N 格**：只走时间，不叫醒任何人——碰上时间轴上有事到期就停在那一刻。
+ *
+ * 「等到下一件事」那个按钮**已经去掉了**：它就是"过足够大的 N 格"（`passSlots` 碰上到期会停），
+ * 两条机制做同一件事只会让人不知道该按哪个。
+ */
 @Composable
 private fun InputBar(
     said: String,
     acted: String,
+    slots: String,
     busy: Boolean,
+    tick: String,
     onSaid: (String) -> Unit,
     onActed: (String) -> Unit,
-    onSubmit: () -> Unit,
+    onSlots: (String) -> Unit,
+    onSay: () -> Unit,
+    onNextTurn: () -> Unit,
+    onPassSlots: () -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        OutlinedTextField(
-            value = said,
-            onValueChange = onSaid,
-            modifier = Modifier.weight(1f),
-            label = { Text("说") },
-            placeholder = { Text("「这酒怎么这么淡？」") },
-            singleLine = true,
-            enabled = !busy,
-        )
-        OutlinedTextField(
-            value = acted,
-            onValueChange = onActed,
-            modifier = Modifier.weight(1f),
-            label = { Text("做") },
-            placeholder = { Text("我拿起桌上那杯麦酒") },
-            singleLine = true,
-            enabled = !busy,
-        )
-        Button(onClick = onSubmit, enabled = !busy && (said.isNotBlank() || acted.isNotBlank())) {
-            Text(if (busy) "…" else "这一轮")
+    Column(Modifier.fillMaxWidth()) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = said,
+                onValueChange = onSaid,
+                modifier = Modifier.weight(1f),
+                label = { Text("说（立刻，不过时间）") },
+                placeholder = { Text("「这酒怎么这么淡？」") },
+                singleLine = true,
+                enabled = !busy,
+                keyboardActions = KeyboardActions(onDone = { onSay() }),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            )
+            Button(onClick = onSay, enabled = !busy && said.isNotBlank()) {
+                Text("说")
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = acted,
+                onValueChange = onActed,
+                modifier = Modifier.weight(1f),
+                label = { Text("做（攒着，下一轮提交）") },
+                placeholder = { Text("我拿起桌上那杯麦酒") },
+                singleLine = true,
+                enabled = !busy,
+            )
+            Button(onClick = onNextTurn, enabled = !busy) {
+                Text(if (busy) "…" else "下一轮（$tick）")
+            }
+            OutlinedTextField(
+                value = slots,
+                onValueChange = onSlots,
+                modifier = Modifier.width(90.dp),
+                label = { Text("格数") },
+                singleLine = true,
+                enabled = !busy,
+            )
+            TextButton(onClick = onPassSlots, enabled = !busy && (slots.toIntOrNull() ?: 0) > 0) {
+                Text("过")
+            }
         }
     }
 }

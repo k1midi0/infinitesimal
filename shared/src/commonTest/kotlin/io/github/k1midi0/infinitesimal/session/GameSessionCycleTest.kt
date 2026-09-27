@@ -104,7 +104,18 @@ class GameSessionCycleTest {
 
     @Test
     fun crossingABeatMovesItOnTheNextTurn() = runBlocking {
-        val session = sessionOf(twoTurns())
+        // **这一支里没有人被搭话**，而那是必须的：§14.51 起"被指向"会把人从循环上拿下来（§3.2.1），
+        // 而拿下来之后它就不再被作息挪了——那样这一支量到的就不是"跨过一格会挪"，而是"活跃的人不挪"。
+        // 所以玩家的两句话都判成"这一片里没有你点的东西"（判定第一步驳回，没人被指向）。
+        val session = sessionOf(
+            Scripted(
+                listOf(
+                    turn("t1", "reject_targets", """{"reason":"这一片里没有你点的东西。"}"""),
+                    turn("t2", "reject_targets", """{"reason":"这一片里没有你点的东西。"}"""),
+                    stop(),
+                ),
+            ),
+        )
 
         session.world.clock = WorldTime(400) // 第一格里
         session.runTurn("你好啊。", "")

@@ -34,6 +34,7 @@ import io.github.k1midi0.infinitesimal.spatial.audience
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
 import io.github.k1midi0.infinitesimal.spatial.requiredChunks
 import io.github.k1midi0.infinitesimal.world.Active
+import io.github.k1midi0.infinitesimal.world.CHARACTER_KIND
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.EventKind
@@ -140,6 +141,17 @@ class GameSession(
     /** 区划（附录 A.16）。生成器读它，决定一片地方该长成什么样；**它是意图，不是事实**。 */
     zoning: ZoningSnapshot = StartingWorld.zoning(),
     /**
+     * **开局的发言/行动顺序**（§5.4、§14.51）。
+     *
+     * 它与 [seed] / [rules] / [ground] / [zoning] 是同一类东西——开局那份**内容**——所以默认值也取
+     * 开局那一份。在这一条之前，会话按 seed 造世界时**从来没有把它带进去**，于是真实游戏里那个名单
+     * 永远是空的：顺序退化成"按 id 排"，而"玩家在顺序里排第几"根本不存在。
+     *
+     * 名单里没有的 id 无害（`speakersAmong` 会过掉不在世界上的）；反过来，世界上的角色没排进名单就排
+     * 在最后（按 id）——那正是"世界不必先给人排座次才能跑"那条。
+     */
+    speakQueue: List<String> = StartingWorld.speakQueue(),
+    /**
      * 预设库（附录 A.14）。**它挂在会话上**，因为它是活的：一局里造出来的东西会进生成那个包，
      * 而判定、生成器、导演该看**同一份**——三处各拿一份的话，"刚才造过的那张桌子"对另一处就不存在，
      * 而症状是同一件东西被反复建模。
@@ -198,7 +210,7 @@ class GameSession(
     startingWorld: World? = null,
 ) {
     val world: World = startingWorld ?: World.from(
-        WorldSnapshot(seed, rules, terrain = ground, zoning = zoning),
+        WorldSnapshot(seed, rules, terrain = ground, zoning = zoning, speakQueue = speakQueue),
     )
     private val renderer = Renderer(config, world)
 
@@ -237,6 +249,16 @@ class GameSession(
      * "上回合从第 0 条算起"——那会让每一个角色的记忆窗口一次塞进**整局的历史**。
      */
     private var turnStartSeq = world.log.latestSeq
+
+    /**
+     * **上一格**的起点事件编号（§14.51）。
+     *
+     * 用它的地方只有一处：一格开始时给参与者的那条总线（`Heard.Tick`）。**它要比 [turnStartSeq] 早
+     * 一格**——因为用户定的规矩是"一回合内说的话，也放进事件流，下一回合周围的角色可以查看"。只装本格
+     * 的话，上一格说过的话对这个角色**不存在**：`world.bus` 是按 seq 截的，而上一格的 seq 已经落在截断
+     * 之前了。
+     */
+    private var previousTurnStartSeq = world.log.latestSeq
 
     /**
      * 这一回合的起点事件编号，**只读**（§6.1）。
@@ -668,14 +690,19 @@ class GameSession(
         }
 
         say(LogLine.Kind.NOTE, "（你等到 ${stop.at}）")
+        takeDue(stop)
+    }
+
+    /**
+     * 把一次快进里**到期的那几件事**写进日志、写进记录层、投递给这一片的人（§14.37）。
+     *
+     * 到期的那些**已经从时间轴上取走**（时间轴是计划，不是记录），所以这里是它们唯一的落点。
+     *
+     * 一条局限写在明处：**这是一次世界级的事，而它的受众只按玩家身边那一片算**。远处一个同样该知道
+     * "酒馆打烊了"的角色收不到——等角色多起来、时间轴上有跨地点的事时，这里要重新想。
+     */
+    private fun takeDue(stop: Stop) {
         stop.happened.forEach { say(LogLine.Kind.NOTE, "· ${it.what}") }
-        // 到期的那些**已经从时间轴上取走**（时间轴是计划，不是记录），所以这里就是它们唯一的落点。
-        //
-        // **记录层现在有了**（§14.37），于是 §12 第 20 项那个缺口在这里合上：它们进事件流，append-only，
-        // 过了这一局也还在。投递范围与别处同一把尺子——以玩家为中心的那一片。
-        //
-        // 一条局限写在明处：**这是一次世界级的事，而它的受众只按玩家身边那一片算**。远处一个同样该
-        // 知道"酒馆打烊了"的角色收不到——等角色多起来、时间轴上有跨地点的事时，这里要重新想。
         stop.happened.forEach { item ->
             world.log.append(
                 at = stop.at,
@@ -686,6 +713,199 @@ class GameSession(
                 to = world.audience(PLAYER),
             )
         }
+    }
+
+    // ── 说话：即时问答，不等回合（§14.51） ────────────────────────────────────────────
+
+    /** 说一句话。**它不推进时间、不占名额**——说完对象立刻回你。 */
+    fun sayNow(scope: CoroutineScope, text: String) {
+        run(scope, "说一句…") { sayNowNow(text, scope) }
+    }
+
+    /**
+     * 即时说话（§14.51，用户裁定）。
+     *
+     * ## 为什么它不走回合
+     *
+     * > 对于说话，直接唤醒被指向的说话对象，直接问答，不等回合提交。
+     *
+     * 所以这里**不改时钟**、不推进任何东西：判定第一步找出听者（那是一次模型调用），那句话进记录层，
+     * 被指向的人当场醒来回答。想说几句就说几句，世界停在原处——"说话不过轮次"在代码里就是这一行。
+     *
+     * ## 它为什么仍然要过判定第一步
+     *
+     * 因为"这句话是说给谁听的"是**语义判断**，代码做不了（§3.2.3 那条：代码近似出来的知识分布会静默
+     * 地错）。用户也确认了这一条保留。代价写在明处：一句闲聊 = 一次判定调用 + 被指向的人各一次唤醒。
+     */
+    suspend fun sayNowNow(text: String, scope: CoroutineScope? = null) {
+        val spoken = text.trim()
+        if (spoken.isEmpty()) return
+
+        // **气泡只存在当前这一场对话**（§5.3）：说了新的一句，上一批气泡就该退场。
+        speech = emptyList()
+        say(LogLine.Kind.SAY, "你说：「$spoken」")
+        speech = listOf(Spoken(PLAYER, spoken))
+
+        val addressed = addressedBy(spoken)
+        recordSpeech(spoken, addressed)
+        hearAndReact(spoken, addressed, scope)
+        entities = world.all()
+    }
+
+    // ── 一回合 = 一格（§14.51） ──────────────────────────────────────────────────────
+
+    /**
+     * **这一格会自己行动的那些人，按发言队列的顺序**（§14.51）。
+     *
+     * 三类人在里面：**玩家**、**活跃的角色**（被拉出循环的那些）、**剧情角色**（没有循环的那些）。
+     * **氛围角色不在里面**——他有循环、又没被叫住，于是由代码按时钟挪，"这一格要做什么"这个问题根本
+     * 不该问他。§3.2.1 那句「氛围 NPC 平时根本不是 AI」在代码里就是这一行。
+     *
+     * 顺序与"同时被点到名的人依次开口"共用同一个队列（§5.4）：一个人在这两处的位置是同一个位置，而
+     * 玩家也有自己的那一格（`StartingWorld` 把他的 id 也排进了名单）。
+     */
+    private fun roundOrder(): List<String> = world.speakersAmong(
+        world.all()
+            .filter { it.kind == CHARACTER_KIND && (it.active != null || it.cycle.isEmpty) }
+            .map { it.id },
+    )
+
+    /** 「下一轮」：**过一格**（§14.51）。 */
+    fun nextTurn(scope: CoroutineScope, acted: String) {
+        run(scope, "过一格…") { nextTurnNow(acted, scope) }
+    }
+
+    /** 一格有多久，给界面印在按钮上（§14.51）。**它由配置算出来，不是写死的那句话。** */
+    val tickLabel: String
+        get() = scheduleSettings.minutesPerTurn.let { if (it % 60 == 0L) "${it / 60} 小时" else "$it 分钟" }
+
+    /**
+     * 一格的完整流程（§14.51）：
+     *
+     *  1. 钉下这一格的事件起点，清掉上一格的气泡。
+     *  2. 到点就位（这一格开始时谁该在哪）。
+     *  3. **按顺序让参与的人各自行动**：轮到玩家就是他准备的那件事（判定两步），轮到 NPC 就是一次
+     *     `Heard.Tick` 的唤醒。**后来者看得见前面这一格做了什么**——因为每一步都当场落库。
+     *  4. 走一格（时钟往前十五分钟；时间轴上有事到期就停在那一刻并报出来）。
+     *  5. 补硬圈、让快速档看一眼（**一格一次**，不是每人一次）。
+     *  6. 存档。
+     *
+     * ## 为什么"每步当场落库"就是用户要的"统一提交"
+     *
+     * 这一格里所有事件的时刻都是**同一个** `world.clock`——时钟只在第 4 步动。于是"统一提交"落到事实
+     * 上就是"这一格发生的事共用一个世界时刻"，而不需要真去做快照与批量 apply（那是 §12 第 42 项给自己
+     * 留的另一条路，它要买的是并行）。
+     *
+     * ## 为什么玩家也在那个 `for` 里
+     *
+     * 因为用户定的：**玩家也是角色的一员，也有自己在顺序里的位置**。所以轮到他的时候才跑他的动作——
+     * 他前面那些人这一格做了什么，他做决定时是看得见的（与"后来者看得见"同一条规则）。
+     */
+    suspend fun nextTurnNow(acted: String, scope: CoroutineScope? = null) {
+        previousTurnStartSeq = turnStartSeq
+        turnStartSeq = world.log.latestSeq + 1
+        speech = emptyList()
+
+        catchUpCycles()
+
+        for (id in roundOrder()) {
+            if (id == PLAYER) {
+                val done = acted.trim()
+                if (done.isNotEmpty()) {
+                    // **判定不带刚说的话**（用户裁定，§14.51）：语境在听者的对话历史里，而判定那一栏
+                    // 判的是这次动作指向谁、改了什么。
+                    judgeAndCommit(done, "", scope, atTurnEnd = false)
+                }
+            } else {
+                tickFor(id, scope)
+            }
+        }
+
+        val stop = advanceSlot()
+        closeGap()
+        if (scope != null) scope.launch { watch(roundNarrative(stop)) }
+        autoSave(scope ?: fallbackScope, acted)
+    }
+
+    /** 轮到某个 NPC 的"这一格"：一次唤醒，一个 [Heard.Tick]。 */
+    private suspend fun tickFor(id: String, scope: CoroutineScope?) {
+        val task = startTask("${labelOf(id)}在过它这一格…")
+        val reaction = try {
+            writes.withLock {
+                npc.wake(
+                    world,
+                    NpcWaking(
+                        id,
+                        // **它看得到上一格加上本格到目前为止的事**（用户定的："一回合内说的话，也放进
+                        // 事件流，下一回合周围的角色可以查看"）。只用本格起点的话，上一格说过的话对它
+                        // 不存在——`world.bus` 是按 seq 截的。
+                        Heard.Tick,
+                        origin,
+                        sinceSeq = previousTurnStartSeq,
+                    ),
+                )
+            }
+        } catch (t: Throwable) {
+            say(LogLine.Kind.ERROR, "${labelOf(id)}没醒过来：${t.message}")
+            null
+        } finally {
+            endTask(task)
+        }
+        if (reaction != null) announce(id, reaction)
+        entities = world.all()
+    }
+
+    /** 一格给导演快速档看的那一句。 */
+    private fun roundNarrative(stop: Stop): String = buildList {
+        add("这一格（${world.clock}）里：")
+        if (speech.isEmpty()) {
+            add("没人在你眼前说过什么。")
+        } else {
+            add(speech.joinToString("；") { "${labelOf(it.whoId)}说：「${it.text}」" })
+        }
+        if (stop.happened.isNotEmpty()) add("到期的事：${stop.happened.joinToString("；") { it.what }}。")
+    }.joinToString(" ")
+
+    /**
+     * 走一格（§14.51）：世界钟往前 [ScheduleSettings.minutesPerTurn] 分钟，**但时间轴上有事要到期时
+     * 停在那一刻**（[FastForward.run] 的语义：停下来意味着该有人看一眼了）。
+     *
+     * 它顺带把"时钟动了"这件事做完：对一遍循环（§14.44、§14.45）、把界面状态同步过去。
+     */
+    suspend fun advanceSlot(): Stop {
+        val stop = FastForward.run(world, world.clock + scheduleSettings.minutesPerTurn)
+        clock = world.clock
+        timelineRevision++
+        takeDue(stop)
+        catchUpCycles()
+        entities = world.all()
+        return stop
+    }
+
+    /** **过 N 格**（§14.51）：只推时间，不叫任何人、不叫导演。 */
+    fun passSlots(scope: CoroutineScope, count: Int) {
+        run(scope, "过 $count 格…") { passSlotsNow(count, scope) }
+    }
+
+    /**
+     * 推 [count] 格。**零模型调用**——没有谁被叫醒，那几格是"没人看着的时间"（与"推格期间导演一次都
+     * 不看"是同一条）。
+     *
+     * **碰上第一件到期的事就停下**（用户定的，§14.51）：与 [FastForward.run] 那句"停下来意味着该有人
+     * 看一眼了"是同一条理由。剩下的格子留给玩家——他得先看一眼发生了什么，再决定要不要接着过。
+     */
+    suspend fun passSlotsNow(count: Int, scope: CoroutineScope? = null) {
+        if (count <= 0) return
+        var left = count
+        while (left > 0) {
+            val stop = advanceSlot()
+            left--
+            if (stop.interrupted) {
+                say(LogLine.Kind.NOTE, "（走到 ${stop.at} 就停下了——这一格里有事到期；还剩 $left 格没走）")
+                break
+            }
+        }
+        autoSave(scope ?: fallbackScope, "过了 $count 格")
     }
 
     /**
@@ -943,7 +1163,19 @@ class GameSession(
 
     // ── 一轮的内部 ──────────────────────────────────────────────────────────────────
 
-    private suspend fun judgeAndCommit(intention: String, said: String, scope: CoroutineScope?) {
+    private suspend fun judgeAndCommit(
+        intention: String,
+        said: String,
+        scope: CoroutineScope?,
+        /**
+         * 这一次动作是不是**这一轮的末尾**（§14.51）。
+         *
+         * `true`（默认）= 走完它就收尾（被指向的人反应、补硬圈、让导演看一眼）——那是"一次提交就是一轮"
+         * 那条老路的形状。`false` = 这一轮还没完：玩家只是队列表里的某一位，后面还有人要行动，所以收尾
+         * 那三件事由 [nextTurnNow] 在**所有人过完之后**统一做一次。
+         */
+        atTurnEnd: Boolean = true,
+    ) {
         say(LogLine.Kind.ACT, "你做：$intention")
 
         // **标签要先抓下来。** 判定落库之后被 Destroy 的东西就不在世界里了，那时候再查
@@ -1005,7 +1237,7 @@ class GameSession(
                     status = ""
                     return
                 } else {
-                    runEffects(turn, alignment.targets, intention, said, addressed, scope)
+                    runEffects(turn, alignment.targets, intention, said, addressed, scope, atTurnEnd)
                 }
             }
 
@@ -1040,6 +1272,8 @@ class GameSession(
         said: String,
         addressed: List<String>,
         scope: CoroutineScope?,
+        /** 见 [judgeAndCommit] 那一条：`false` = 这一轮还没完，收尾留到所有人过完。 */
+        atTurnEnd: Boolean = true,
     ) {
         // 同一个理由：标签要在落库之前抓。
         val labels = world.all().associate { it.id to it.label }
@@ -1125,7 +1359,7 @@ class GameSession(
         }
 
         selection = emptySet()
-        afterTurn(intention, said, addressed, scope)
+        if (atTurnEnd) afterTurn(intention, said, addressed, scope)
     }
 
     /**
@@ -1359,6 +1593,25 @@ class GameSession(
             val task = startTask("${labelOf(id)}在回应…")
             val reaction = try {
                 writes.withLock {
+                    // **被指向之后，它就不再走自己那个循环了**（§3.2.1、§14.51 落成代码的那一句）。
+                    //
+                    // 原文是「被指向之后，氛围 NPC 转化为活跃氛围 NPC……但保留它的状态循环」，而在这之前
+                    // 那一格从来没做过：说话会把它叫醒，但它下一轮照样被作息挪走——**说着说着人去后厨了**。
+                    //
+                    // 这一条现在更要紧：时间开始走了（一格十五分钟），所以"说着说着人走了"从"可能"变成了
+                    // "一定会"。变活跃之后它就留在原地，直到它自己用 `arrive` 回去（§14.43 那条路），
+                    // 或者 §14.50 那条超时把人交给导演。
+                    val current = world.byId(id)
+                    if (current != null && current.active == null) {
+                        world.put(
+                            current.copy(
+                                active = Active(
+                                    since = world.clock,
+                                    target = current.cycle.beatAt(world.clock),
+                                ),
+                            ),
+                        )
+                    }
                     npc.wake(
                         world,
                         NpcWaking(

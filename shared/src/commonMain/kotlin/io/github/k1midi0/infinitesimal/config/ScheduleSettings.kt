@@ -30,12 +30,51 @@ data class ScheduleSettings(
      * "它只是刚被揍了一顿、还没走回去"也被当成回不去。
      */
     val activeTooLongMinutes: Int = DEFAULT_ACTIVE_TOO_LONG,
+    /**
+     * **一天折成多少格**（§14.51）。
+     *
+     * 这就是"时间流动"的那个换算：一格 = [minutesPerTurn] 分钟。它决定一局里能看见几次作息切换，
+     * 也决定"一回合"在世界里的重量。
+     *
+     * ## 为什么必须整除 1440
+     *
+     * 因为世界钟是 `Long` 的分钟（`world/Clock.kt`），每格的分钟数必须是整数。一天 7 格、100 格这类
+     * 会让每格是 205.7 分钟——**而那不是"约 205 分钟"**：除不尽的话最后一格会比别的短，一天下来世界
+     * 钟与作息表对不上，而那种错位是静默的（作息表按相对分钟查表，不报错）。
+     */
+    val turnsPerDay: Int = DEFAULT_TURNS_PER_DAY,
 ) {
     init {
         require(activeTooLongMinutes > 0) { "超时得是正数，收到 $activeTooLongMinutes" }
+        require(turnsPerDay > 0 && MINUTES_PER_DAY % turnsPerDay == 0L) {
+            "一天折成多少格必须能整除 1440 分钟，收到 $turnsPerDay。" +
+                "1440 的因数有：1、2、3、4、5、6、8、9、10、12、15、16、18、20、24、30、32、36、40、45、" +
+                "48、60、72、80、90、96、120、144、160、180、240、288、360、480、720、1440"
+        }
     }
+
+    /**
+     * **一格过多少分钟**——世界钟每回合往前走的那个数（§14.51）。
+     *
+     * 它是从 [turnsPerDay] 算出来的，而不是另一个可以单独设的旋钮：两个旋钮能对不上，而"一天多少格"
+     * 与"一格多少分钟"本来就是同一件事的两种说法。
+     */
+    val minutesPerTurn: Long get() = MINUTES_PER_DAY / turnsPerDay
 
     companion object {
         const val DEFAULT_ACTIVE_TOO_LONG: Int = 360
+
+        /**
+         * **九十六格**（用户定的，2026-09-27）。
+         *
+         * 也就是**一格十五分钟**。挑它的理由与"一局能看见几次作息切换"直接相关：矮人的作息四格是
+         * 07:00 / 12:00 / 18:00 / 23:00，而开局在 18:00——一局三十轮左右就走完了从招呼客人到打烊那
+         * 一段，看得见作息在动；而一小时一格（24 回合）会让一次普通的长谈（十轮）直接吃掉半天，一次
+         * 对话就能把一个人从下午推到深夜。
+         */
+        const val DEFAULT_TURNS_PER_DAY: Int = 96
+
+        /** 一天多少分钟。**与 `world/Clock.kt` 那个是同一个数**，写在这儿是为了那个 `require` 读得到。 */
+        const val MINUTES_PER_DAY: Long = 1440L
     }
 }

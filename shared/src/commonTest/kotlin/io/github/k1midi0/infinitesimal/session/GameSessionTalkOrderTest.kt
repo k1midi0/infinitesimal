@@ -125,6 +125,10 @@ class GameSessionTalkOrderTest {
         val session = sessionOf(script)
         // 只有吟游诗人排过队。矮人**照样能说话**（世界不必先给人排座次），只是排在最后——而按 id
         // 排它本该先。所以这一支量的是"没排队的排最后"，不是"按 id 排"。
+        //
+        // **先清空**：§14.51 起会话的默认发言名单里已经有玩家与矮人（那是开局内容的一部分），不清的话
+        // 矮人就是排过队的，而这一支要的正是"没排过队的那个人"。
+        session.world.speakQueue = emptyList()
         session.world.joinTheQueue("bard")
 
         session.runTurn("你们好啊。", "")

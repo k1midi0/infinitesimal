@@ -208,8 +208,9 @@ class GameSessionStuckTest {
         val script = Scripted(
             listOf(
                 turn("s1", "report", """{"possible":true,"reason":"没什么不对的。"}"""),
-                turn("t1", "address", """{"id":"dwarf"}"""),
-                turn("c2", "say", """{"text":"……"}"""),
+                // **这一轮没有人被搭话**：§14.51 起"被指向"会把人从循环上拿下来（§3.2.1），而这一支
+                // 量的是"哨兵放行 → 它还在走循环"，那是另一件事。
+                turn("t1", "reject_targets", """{"reason":"这一片里没有你点的东西。"}"""),
                 stop(),
             ),
         )

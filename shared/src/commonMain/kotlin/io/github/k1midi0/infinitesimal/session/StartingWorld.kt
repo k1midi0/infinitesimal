@@ -167,16 +167,27 @@ object StartingWorld {
      *
      * 第五样是**发言的顺序**（2026-09-26 加的）：开局只有矮人一个会说话的角色，它排在队首。空名单
      * 也能跑（没排过队的排在最后），但那样"谁先开口"就不可读了——开局这一份该把人排好。
-     *
-     * [GameSession] 不用它，因为它那四个参数是分开的（测试要能把其中一样换掉）。
      */
     fun snapshot(): WorldSnapshot = WorldSnapshot(
         entities = tavern(),
         rulebook = rules(),
         terrain = ground,
         zoning = zoning(),
-        speakQueue = listOf(DWARF_ID),
+        speakQueue = speakQueue(),
     )
+
+    /**
+     * **开局的发言/行动顺序**（§5.4、§14.51）。
+     *
+     * 它与另外四样（实体、规则书、地形、区划）是**同一类东西**：开局那份内容。所以 [GameSession] 的
+     * 默认值里也有它一份——那一层从前只搬了四样，而这个名单**从来没被带进去过**（名字在这里存在，
+     * 而会话那一侧永远是空名单）。症状很安静：顺序退化成"按 id 排"，而"玩家排第几"这件事在真实游戏里
+     * 根本不存在（§14.51 才发现）。
+     *
+     * **玩家也在名单里**：用户定的「玩家也是角色的一员，也有自己在顺序里的位置」。排在队首是因为这一
+     * 格是他按下去的，而"后来者看得见前面这一格做了什么"这条规则对他同样成立。
+     */
+    fun speakQueue(): List<String> = listOf(PLAYER, DWARF_ID)
 
     /** 开局那个矮人的 id。它现在出现在几处（发言名单、探针、测试），所以给它一个名字。 */
     const val DWARF_ID: String = "dwarf"
