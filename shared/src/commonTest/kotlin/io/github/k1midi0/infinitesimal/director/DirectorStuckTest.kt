@@ -12,6 +12,7 @@ import io.github.k1midi0.infinitesimal.session.StartingWorld
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
 import io.github.k1midi0.infinitesimal.world.ChunkKey
+import io.github.k1midi0.infinitesimal.world.LONG_ABSENT_MARKER
 import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldTime
 import kotlin.test.Test
@@ -120,5 +121,36 @@ class DirectorStuckTest {
         assertTrue("【这一次必须处理的人】" in body, "要点名是谁")
         assertTrue("酒馆里的矮人" in body, "要写得出名字")
         assertTrue("write_cycle" in body, "要告诉它用哪只手改")
+    }
+
+    /**
+     * **被叫起来的那一段话要把两种情形都说出来**（§14.50）。
+     *
+     * 从前它只写一种（"到了那一格却没进得去，正停在门口"），而 §14.50 之后另一条兜底（"离开自己的日子
+     * 太久了"）也走这一档。少了这一段，导演拿到一条"它回不去"的理由时**不知道自己该做什么**——它手上
+     * 那一条规矩说的是"把那一格换成做得了的地方"，而这一种情形下那一格是好端端的，回不去的是那个人。
+     */
+    @Test
+    fun thePromptAlsoCoversTheOneThatSimplyCannotGetBack() = runBlocking {
+        val script = Scripted(listOf(writeCycle("0｜8000,8000,12800｜就在这儿过日子。\n600｜8100,8000,12800｜挪两步。")))
+        val world = world()
+
+        director(script).wake(
+            world,
+            Waking(
+                Wake.Stuck(
+                    required = listOf("dwarf"),
+                    why = listOf("$LONG_ABSENT_MARKER 它被带走了，回不去。"),
+                    was = mapOf("dwarf" to world.byId("dwarf")!!.cycle.bornAt),
+                ),
+                "player",
+                ChunkOrigin.atPlayerStart(ChunkKey(1, 1)),
+            ),
+        )
+
+        val body = script.bodies.first()
+        assertTrue("离开自己的日子太久" in body, "要说得出第二种情形：${body.take(600)}")
+        assertTrue("就地过日子" in body, "还要给出那一条正当的写法（写它此刻在的坐标）")
+        assertTrue(LONG_ABSENT_MARKER in body, "那一段理由要原样带到")
     }
 }

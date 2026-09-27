@@ -150,3 +150,79 @@ fun World.refreshCyclesToClock(): List<Placement> = buildList {
         add(Placement(id = entity.id, beat = beat, reason = null, moved = !already))
     }
 }.sortedBy { it.id }
+
+/** **多久算太久**（§14.50）：活跃了这么多世界分钟还没回到循环上，就该让导演重新看它一眼。 */
+const val DEFAULT_ACTIVE_TOO_LONG_MINUTES: Int = 360
+
+/**
+ * 那一段理由开头的标记（§14.50）。**它是给探针与测试用的，人是看不见它的**：那一段话措辞里有些字
+ * 同时出现在导演的系统提示里（第 12 条讲的也是这件事），于是"数一数请求体里出现了几次"这件事会含混
+ * ——而这个前缀是代码拼的，只可能来自这条判据本身。
+ */
+const val LONG_ABSENT_MARKER: String = "【脱轨太久】"
+
+/**
+ * **它从自己的日子上被拿下来太久了**（§14.50，设计文档 §3.2.2 那条兜底）。
+ *
+ * [refreshCyclesToClock] 管的是"到点该挪却没挪成"——而它**看不见另一种情形**：一个已经活跃的人，
+ * 玩家把它锁在地窖里、或者带出了镇子，于是它永远等不到"此刻循环规定的那一格"（`Active.canGo` 要求它
+ * 人真的站在那儿）。那种时候没有任何一格会"到点"，因为代码根本不看活跃的人。
+ *
+ * 这一条就是那件事的判据，而它是**与判定无关的一条时间判据**：比起"回到循环上"这个有意义的判据，
+ * 它要回答的只是"它到底还有没有可能回去"。
+ *
+ * ## 数的是世界分钟差，不是轮数
+ *
+ * `现在 - Active.since`。两个反直觉的地方都得说清：
+ *
+ *  1. **世界钟只在玩家按「等到…」时走**（`session/FastForward.kt:70` 是全项目唯一推进它的地方）。所以
+ *     玩家原地不动时，一个被关起来的人**不会**被判超时。这是对的：世界才过了几分钟，而它确实只是刚被
+ *     关进去。**判据算的是世界里的时间，不是玩家敲了几次回车。**
+ *  2. **差值为负时也算超时**（`elapsed < 0`）。那说明时钟比它变活跃那一刻还早——只可能来自读档、或者
+ *     手动拨钟。按大小比的话，一个负差值**永远**小于那个正阈值，于是它会永远等不到；与其那样，不如把
+ *     它交出去让导演看一眼。（这一条不是"跑了很久"，理由里写的是另一句话——见下面那个分支。）
+ *
+ * ## 为什么它只在"没在走循环"的人身上生效
+ *
+ * 因为 `active == null` 的人走的是 [refreshCyclesToClock] 那条路。两支不重叠：一个人不可能同时"该被挪
+ * 到那一格去"和"已经被拿下来了"。
+ */
+fun World.longAbsent(minutes: Int = DEFAULT_ACTIVE_TOO_LONG_MINUTES): List<Placement> = buildList {
+    for (entity in all()) {
+        val active = entity.active ?: continue
+        if (entity.kind != CHARACTER_KIND) continue
+        // **归属用的那一格**（不是判据）：`beatAt` 在"相位早于第一格"时返回 null，而那只是"这一刻没有
+        // 哪一格恰好对它"，不是"它没有作息"。那时取第一格来当坐标——理由里那句"它想回去的那一格"是给
+        // 导演看的，而拿 `null` 把它整条跳过会让这一条判据在某些相位上**静默失效**。
+        val beat = entity.cycle.beatAt(clock) ?: entity.cycle.sorted().beats.firstOrNull() ?: continue
+        val elapsed = clock - active.since
+        // 差值**为负**是"这一刻反倒比它被拿下来那一刻还早"——只可能来自读档或手动拨钟。那一种按"等不到"
+        // 算（下面理由是那么写的），而不是按"才过了一会儿"算：一个负的差值永远小于任何正阈值，于是按
+        // 大小比的话它会**永远**等不到。
+        if (elapsed >= minutes) {
+            add(
+                Placement(
+                    id = entity.id,
+                    beat = beat,
+                    reason = "$LONG_ABSENT_MARKER 它从自己的日子上被拿下来已经 $elapsed 分钟" +
+                        "（那一下是在 ${active.since}），而它一直没回到「${beat.state}」那一格上。" +
+                        "此刻该在的那一格是 (${beat.x}, ${beat.y}, ${beat.z})，它人在 " +
+                        "(${entity.x}, ${entity.y}, ${entity.z})。",
+                    moved = false,
+                ),
+            )
+        } else if (elapsed < 0) {
+            add(
+                Placement(
+                    id = entity.id,
+                    beat = beat,
+                    reason = "$LONG_ABSENT_MARKER 它是在 ${active.since} 从自己的日子上被拿下来的，" +
+                        "而世界现在是 $clock——**比那一刻还早**，所以它永远等不到「${beat.state}」那一格。" +
+                        "此刻该在的那一格是 (${beat.x}, ${beat.y}, ${beat.z})，" +
+                        "它人在 (${entity.x}, ${entity.y}, ${entity.z})。",
+                    moved = false,
+                ),
+            )
+        }
+    }
+}.sortedBy { it.id }

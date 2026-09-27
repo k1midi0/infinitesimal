@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.k1midi0.infinitesimal.config.EndpointConfig
+import io.github.k1midi0.infinitesimal.config.ScheduleSettings
 import io.github.k1midi0.infinitesimal.director.Awakening
 import io.github.k1midi0.infinitesimal.director.Director
 import io.github.k1midi0.infinitesimal.director.Wake
@@ -27,6 +28,7 @@ import io.github.k1midi0.infinitesimal.save.SaveFile
 import io.github.k1midi0.infinitesimal.save.SaveGame
 import io.github.k1midi0.infinitesimal.schedule.Scheduler
 import io.github.k1midi0.infinitesimal.schedule.Scheduling
+import io.github.k1midi0.infinitesimal.schedule.SentryJudge
 import io.github.k1midi0.infinitesimal.spatial.ChunkOrigin
 import io.github.k1midi0.infinitesimal.spatial.audience
 import io.github.k1midi0.infinitesimal.spatial.chunkOfEntity
@@ -35,6 +37,7 @@ import io.github.k1midi0.infinitesimal.world.Active
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.EventKind
+import io.github.k1midi0.infinitesimal.world.Placement
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.Spot
@@ -164,7 +167,23 @@ class GameSession(
      * **到点就位**（§14.45）。默认按 [config] 现造一个（它的请求落在 `SystemId.SENTRY` 那个池）；
      * **测试可以塞一个假的进来**——它是第四个会碰端点的人，而"一轮问几次"正是要与不要量的那一个数。
      */
-    private val scheduler: Scheduling = Scheduler(config),
+    /**
+     * **到点就位**（§14.45）。默认按 [config] 现造一个（它的请求落在 `SystemId.SENTRY` 那个池）；
+     * **测试可以塞一个假的进来**——它是第四个会碰端点的人，而"一轮问几次"正是要与不要量的那一个数。
+     *
+     * `null` = **还没造**（§14.50）。它默认是 null 而不是 `Scheduler(config)`，理由只有一条：那个默认
+     * 值要读 [activeTooLongMinutes]，而它在参数表里排在后面——Kotlin 的默认值从左往右求值，前一个参数
+     * 的默认值**引用不到**后一个。于是这里存 null，真要用的时候在 [catchUpCycles] 里现造一次。
+     */
+    private val scheduler: Scheduling? = null,
+    /**
+     * **作息那一层的旋钮**（§14.50）。现在只有一格：**脱离自己的日子超过这么多世界分钟，就该让导演重看
+     * 它那一格**——那是设计文档 §3.2.2 那条兜底（"目标永远达不到"）。
+     *
+     * 它只喂给 [scheduler] 那个默认实现（`Scheduler(config, settings.activeTooLongMinutes)`）；测试塞了
+     * 自己的 scheduler 时它不起作用（那正是"注入点覆盖默认"的意思）。
+     */
+    private val scheduleSettings: ScheduleSettings = ScheduleSettings(),
     /**
      * **整个世界**（§14.49）。给读档用：那是一份已经长好、走过一段的世界，而不是 [seed] / [rules] /
      * [ground] / [zoning] 那四样开局内容。
@@ -793,9 +812,21 @@ class GameSession(
      * `active = Active(since = 现在, target = 那一格)`。那个 `target` **只作归因**（§14.45 改了回归
      * 的判据，见 `Active.canGo`），而它此前在生产代码里从来没有被设过——于是"回到循环上"那条路在真
      * 游戏里一直是死的。这一句就是那条路活过来的地方。
+     *
+     * ## 两路合流：到点进不去，与**脱轨太久**（§14.50）
+     *
+     * 第二路是设计文档 §3.2.2 那条兜底（"目标永远达不到——玩家把它锁起来、带走了"）。它与第一路**共用
+     * 下游**（都会让人变活跃、都会叫导演改作息），但**上游完全不同**：第一路是"它到了那一格却没进得去"
+     * （于是要把它放到那儿），第二路是"它早就该回去而回不去"（于是**什么都不动**——它本来就被锁在别处，
+     * 把它挪到酒馆柜台后面正是它做不到的那件事）。
+     *
+     * 分开的地方是**"进这一段时它是不是已经活跃"**：`world/longAbsent` 报出来的那一格必然来自一个活跃
+     * 的人，而 `refreshCyclesToClock` 报出来的必然来自一个不活跃的。那一读**在锁内**做（外面读会有一个
+     * 窗口让它过期，而这一层全部写世界的东西都在同一把锁里）。
      */
     private suspend fun catchUpCycles() {
-        val caught = scheduler.catchUp(world)
+        val caught = (scheduler ?: Scheduler(SentryJudge(config), scheduleSettings.activeTooLongMinutes))
+            .catchUp(world)
 
         // **一遍进得去的人先就位**（§14.45）。刷新自己只报不写（理由见 `Placement` 的注释），所以
         // 真正落坐标的是这里。放在临界区之外也可以：那时候还没有任何人被判"卡住"，而这一步只是把
@@ -810,24 +841,60 @@ class GameSession(
         val task = startTask("有人到点了却进不去，导演正在改这一片…")
         try {
             writes.withLock {
+                /** 已经脱轨（不是这一轮刚被拿下来）的那批——他们**不动位置**，而且只为"新发现"叫导演。 */
+                val alreadyAbsent = mutableSetOf<String>()
                 val stuck = caught.stuck.mapNotNull { placement ->
                     val who = world.byId(placement.id) ?: return@mapNotNull null
-                    val now = Active(since = world.clock, target = placement.beat)
-                    // **放到那一格的坐标上再变活跃**（§14.45）：它这一趟真的走到了门口。
-                    world.put(who.copy(x = placement.beat.x, y = placement.beat.y, z = placement.beat.z, active = now))
+                    if (who.active == null) {
+                        val now = Active(since = world.clock, target = placement.beat)
+                        // **放到那一格的坐标上再变活跃**（§14.45）：它这一趟真的走到了门口。
+                        world.put(
+                            who.copy(
+                                x = placement.beat.x,
+                                y = placement.beat.y,
+                                z = placement.beat.z,
+                                active = now,
+                            ),
+                        )
+                    } else {
+                        alreadyAbsent += who.id
+                    }
                     placement
                 }
                 if (stuck.isEmpty()) return@withLock
 
-                stuck.forEach { placement ->
+                // **只为该叫的那批叫导演。**
+                //
+                //  - 到点却进不去的人**每一次都值得报**（那是刚发生的一件事，而它此刻正站在门口）。
+                //  - **脱轨太久的人，每一趟脱轨只报一次**——那一趟由 `Active.since` 认出来（它本来就是
+                //    为归因存在的，§14.50 起它同时是这条闸的键）。用"人"当键是不够的：同一次脱轨里
+                //    `catchUpCycles` 会被调两遍（`runTurnOnce` 开头与 `waitUntilNextNow` 里），而一个
+                //    被关着的人会每一轮都再报一遍——那是钱在烧、世界一动不动。
+                //
+                // 那一行会话日志跟着同一个名单走：不然它会每一轮重复一遍。
+                val asked = stuck.filter { placement ->
+                    placement.id !in alreadyAbsent || wasNotAsked(world.byId(placement.id))
+                }
+                if (asked.isEmpty()) return@withLock
+                asked.forEach { forgotten += markerOf(world.byId(it.id)) }
+
+                asked.forEach { placement ->
                     val name = world.byId(placement.id)?.label ?: placement.id
-                    say(LogLine.Kind.NOTE, "（$name 到了「${placement.beat.state}」该在的地方，却没能进去）")
+                    say(
+                        LogLine.Kind.NOTE,
+                        if (placement.id in alreadyAbsent) {
+                            "（$name 离开自己的日子太久了，此刻停在 (${placement.beat.x}, " +
+                                "${placement.beat.y}, ${placement.beat.z}) 之外的什么地方——导演要重看它那一格）"
+                        } else {
+                            "（$name 到了「${placement.beat.state}」该在的地方，却没能进去）"
+                        },
+                    )
                 }
 
-                val why = stuck.map { it.reason ?: "" }
+                val why = asked.map { it.reason ?: "" }
                 // **它此刻那一份作息的出生时刻**：这是"它改没改"唯一读得出来的东西（理由见 `Wake.Stuck`）。
                 val was = buildMap {
-                    for (placement in stuck) {
+                    for (placement in asked) {
                         val born = world.byId(placement.id)?.cycle?.bornAt ?: continue
                         put(placement.id, born)
                     }
@@ -835,7 +902,7 @@ class GameSession(
                 val awakening = director.wake(
                     world,
                     Waking(
-                        Wake.Stuck(required = stuck.map { it.id }, why = why, was = was),
+                        Wake.Stuck(required = asked.map { it.id }, why = why, was = was),
                         PLAYER,
                         origin,
                     ),
@@ -855,6 +922,24 @@ class GameSession(
             endTask(task)
         }
     }
+
+    /**
+     * 这一局里**已经为"脱轨太久"叫过导演**的那些趟（§14.50）。
+     *
+     * 键是**人 + 那一趟的起点**（`id@分钟数`），不是人：同一次脱轨只报一次，而同一趟里 [catchUpCycles]
+     * 会被调两遍（`runTurnOnce` 开头与 `waitUntilNextNow` 里）。它**不进世界状态、不进存档**——读档之后
+     * 重新数一遍是对的（那时 `since` 与 `target` 都还在实体上，判据立刻又成立）。
+     *
+     * **失败不还账**：导演没改成的话，那一次报告仍然发生过，而"下一轮再报一次"只会让它一遍遍重新烧钱
+     * ——世界里的困境没变，重问一遍不会得到不同的答案（`Wake.Stuck` 那一段话本来就说清了它要做什么）。
+     */
+    private val forgotten = mutableSetOf<String>()
+
+    private fun markerOf(who: Entity?): String =
+        "${who?.id}@${who?.active?.since?.minutes ?: -1}"
+
+    /** 这一趟要不要为它叫一次导演。 */
+    private fun wasNotAsked(who: Entity?): Boolean = markerOf(who) !in forgotten
 
     // ── 一轮的内部 ──────────────────────────────────────────────────────────────────
 
@@ -1336,7 +1421,12 @@ class GameSession(
         // **它自己回到了循环上**（§3.2.1、§14.43）。这一行要写出来，因为 `arrive` **不是世界事件**：
         // 世界没因此改变什么（它只是不再脱轨），所以只看"活跃有没有变"的话，看不出是它自己回去的——
         // 而这件事对玩家是有信息量的（那个矮人回去干它的活了）。
-        if (reaction.arrived) say(LogLine.Kind.OK, "（$name 回到了自己的日子上）")
+        if (reaction.arrived) {
+            say(LogLine.Kind.OK, "（$name 回到了自己的日子上）")
+            // **那一趟的账还回去**（§14.50）：已经回到循环上了，于是"为这一趟脱轨叫过导演"这件事作数完
+            // 了。不还的话，它下一次再被带走时就不会再有人替它叫导演——而那是同一个人的第二趟。
+            forgotten.removeAll { it.startsWith("$id@") }
+        }
 
         return reaction.said
     }
@@ -1463,6 +1553,7 @@ class GameSession(
             save: SaveGame,
             presets: PresetLibrary = PresetLibrary(),
             scheduler: Scheduling = Scheduler(config),
+            scheduleSettings: ScheduleSettings = ScheduleSettings(),
             npc: Npc = Npc(config, presets),
             judge: Judge = Judge(config, presets = presets),
             director: Director = Director(config, presets),
@@ -1476,6 +1567,7 @@ class GameSession(
                 director = director,
                 npc = npc,
                 scheduler = scheduler,
+                scheduleSettings = scheduleSettings,
             )
             session.conversations.restore(save.conversations)
             return session

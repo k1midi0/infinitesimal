@@ -18,8 +18,10 @@ import io.github.k1midi0.infinitesimal.spatial.RegionBuilder
 import io.github.k1midi0.infinitesimal.spatial.RegionView
 import io.github.k1midi0.infinitesimal.world.Beat
 import io.github.k1midi0.infinitesimal.world.CycleCatchUp
+import io.github.k1midi0.infinitesimal.world.DEFAULT_ACTIVE_TOO_LONG_MINUTES
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.World
+import io.github.k1midi0.infinitesimal.world.longAbsent
 import io.github.k1midi0.infinitesimal.world.refreshCyclesToClock
 import io.github.k1midi0.infinitesimal.world.rendered
 import io.github.k1midi0.infinitesimal.world.terrainCellOf
@@ -55,7 +57,16 @@ fun interface Scheduling {
  * ——那会把一个人送进"卡住"那条路，而那条路的代价是导演多改一次循环。反过来当"行"的话，一个进不去
  * 的人会每一轮都被重新问一次，症状是钱在烧而世界一动不动。
  */
-class Scheduler(private val sentry: SentryJudge) : Scheduling {
+class Scheduler(
+    private val sentry: SentryJudge,
+    /**
+     * **活跃多久算太久**（§14.50）。它交给 `world/longAbsent`——那一层只判"过了多久"，而这一条线与
+     * `Scheduling` 这个接缝的关系是"一轮里发生的事"多了一类。
+     *
+     * 默认值与 `world/longAbsent` 那个默认值**取同一个数**，于是"忘了传"与"传了默认"是同一件事。
+     */
+    private val activeTooLongMinutes: Int = DEFAULT_ACTIVE_TOO_LONG_MINUTES,
+) : Scheduling {
 
     constructor(config: EndpointConfig) : this(SentryJudge(config))
 
@@ -64,11 +75,15 @@ class Scheduler(private val sentry: SentryJudge) : Scheduling {
         private set
 
     /**
-     * 跑一轮：谁到点了、谁没去成。
+     * 跑一轮：谁到点了、谁没去成、谁脱轨太久。
      *
-     * 每个需要挪过去的人**已经过了地形**（免费，拦下就没问），这里再问一句哨兵。被判"进不去"的人
-     * 留在原地（位置一格不动）——"把它放到那一格的坐标上"是会话那一层的事，因为变活跃的是它，而
-     * 活跃的落点就是那一格（§14.45）。
+     * 两路合起来就是这一层要报的全部：
+     *
+     *  - **在循环里的人**：每个需要挪过去的人**已经过了地形**（免费，拦下就没问），这里再问一句哨兵。
+     *    被判"进不去"的人留在原地（位置一格不动）——"把它放到那一格的坐标上"是会话那一层的事，因为
+     *    变活跃的是它，而活跃的落点就是那一格（§14.45）。
+     *  - **已经活跃的人**（[World.longAbsent]）：**一次调用都不花**。它问的不是"那一格做得了吗"，而是
+     *    "它到底还有没有可能回去"——而那个答案在它自己身上（§14.50）。
      */
     override suspend fun catchUp(world: World): CycleCatchUp {
         val settled = world.refreshCyclesToClock().map { placement ->
@@ -84,7 +99,7 @@ class Scheduler(private val sentry: SentryJudge) : Scheduling {
                 )
             }
         }
-        return CycleCatchUp(settled)
+        return CycleCatchUp(settled + world.longAbsent(activeTooLongMinutes))
     }
 
     /** 问一句，问不成当"不行"（理由写在类头上）。 */

@@ -420,4 +420,77 @@ class SaveFileTest {
         }
         return File(path).isFile && File(path).length() > 0
     }
+
+    // ── 量一量：一份存档到底多大、写一次多久（§14.49 那笔没量的账） ────────────────
+
+    /**
+     * **这一支不断言，只印数**。
+     *
+     * 它要回答的是设计文档里那句"段表才是它真正的大小"到底是多少——开局那份世界算下来是
+     * **12,544 列 / 37,632 段**地形，而它写出来多少字节、写一次多少毫秒，在写这一刀的时候没有人量过。
+     * 一个不断言的测试可以被当成一次可以重跑的读数：数字变了，说明世界大了。
+     */
+    @Test
+    fun howBigASaveIsAndHowLongItTakesToWrite() = runBlocking {
+        val world = World.from(StartingWorld.snapshot())
+        val conversations = Conversations()
+        // 一份有点内容的对话：二十条原文 + 一条摘要。**空对话会让这一格读成 0**，而那不是真实情形。
+        val conversation = conversations.of("dwarf")
+        conversation.commit((1..20).map { ChatMessage.user("第 $it 句话，长短与真说话差不多。") })
+        assertNull(conversation.compact(from = 1, to = 8, topic = "寒暄", text = "头八句是在寒暄。"))
+        val presets = PresetLibrary()
+        presets.restore(
+            listOf(
+                Preset(
+                    name = "老槐树",
+                    brief = "村口那棵",
+                    shape = io.github.k1midi0.infinitesimal.world.VoxelShape(),
+                ),
+            ),
+        )
+
+        val save = SaveGame(
+            game = "0.1.0",
+            savedAt = System.currentTimeMillis(),
+            world = world.snapshot(),
+            conversations = conversations.snapshot(),
+            presets = presets.generatedPresets(),
+        )
+
+        val whole = SaveFile.json.encodeToString(SaveGame.serializer(), save)
+        val mark = kotlin.time.TimeSource.Monotonic.markNow()
+        val path = path("measure.json")
+        SaveFile.save(path, save)
+        val wrote = mark.elapsedNow().inWholeMilliseconds
+        val onDisk = File(path).length()
+
+        fun size(what: String, text: String) = println("   $what：${text.toByteArray().size} 字节")
+        println("【一份存档到底多大（开局世界 + 20 条对话 + 1 条摘要 + 1 条生成包）】")
+        println("   写出来的文件：$onDisk 字节（${onDisk / 1024} KB）｜字符串 ${whole.length} 字符")
+        println("   写盘一次：$wrote 毫秒")
+        println("   读回来一次：${measureRead(path)} 毫秒")
+        size(
+            "地形那一段（它才是主体）",
+            SaveFile.json.encodeToString(
+                io.github.k1midi0.infinitesimal.world.TerrainSnapshot.serializer(),
+                world.snapshot().terrain,
+            ),
+        )
+        size(
+            "对话那一段",
+            SaveFile.json.encodeToString(
+                kotlinx.serialization.builtins.ListSerializer(
+                    io.github.k1midi0.infinitesimal.npc.ConversationSnapshot.serializer(),
+                ),
+                save.conversations,
+            ),
+        )
+        println("   列数 ${world.snapshot().terrain.columns.size}｜段数 ${world.terrain.runCount}｜方格数 ${world.terrain.cellCount}")
+    }
+
+    private fun measureRead(path: String): Long {
+        val mark = kotlin.time.TimeSource.Monotonic.markNow()
+        SaveFile.load(path)
+        return mark.elapsedNow().inWholeMilliseconds
+    }
 }

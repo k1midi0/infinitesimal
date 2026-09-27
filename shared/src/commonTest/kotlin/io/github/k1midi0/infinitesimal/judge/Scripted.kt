@@ -19,6 +19,24 @@ internal class Scripted(private val frames: List<String>) {
     val bodies = mutableListOf<String>()
     private var served = 0
 
+    /**
+     * **这些请求里，手都递过去过哪些**（每次请求一组，按顺序）。
+     *
+     * ## 为什么不能对整个请求体数 `"name"`
+     *
+     * 因为**请求体里装着整串历史，而历史里存着之前几次请求的工具调用**——对整个体数，会把上一轮递过
+     * 的手也算进来，于是"这一次有没有把某只手给它"变成一个永远为真的问题。这与 §14.43 那条差一是
+     * 同一个坑（`substringAfter` 取到了最早那一节）。
+     *
+     * 所以只认 `"tools":[` 到 `"messages":` 之间那一段：那是这一次真正递给它的手。
+     */
+    fun offeredTools(): List<Set<String>> = bodies.map { body ->
+        val from = body.indexOf("\"tools\":")
+        val to = body.indexOf("\"messages\":")
+        val tools = if (from < 0) "" else body.substring(from, if (to > from) to else body.length)
+        Regex("\"name\"\\s*:\\s*\"([a-z_]+)\"").findAll(tools).map { it.groupValues[1] }.toSet()
+    }
+
     val client: HttpClient = HttpClient(
         MockEngine { request ->
             bodies += (request.body as? TextContent)?.text.orEmpty()

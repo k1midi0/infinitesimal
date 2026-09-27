@@ -34,6 +34,83 @@ class ScheduleTest {
 
     private fun routine(vararg beats: Beat) = Cycle(beats.toList(), bornAt = WorldTime(0))
 
+    // ── 脱轨太久（§14.50） ──────────────────────────────────────────────────────────
+
+    /**
+     * **这一条判据要回答的只有"过了多久"**（§14.50）。
+     *
+     * 到点那条路（[refreshCyclesToClock]）看不见一个已经活跃的人——它第一行就把 `active != null` 的
+     * 跳过了。所以"被锁起来、被带走"这种情形在那一层**永远报不出来**，而这一条就是补那个洞的。
+     */
+    @Test
+    fun someoneOffTheirCycleTooLongIsReported() {
+        val w = world()
+        val dwarf = w.byId("dwarf")!!
+        val beat = dwarf.cycle.beatAt(WorldTime(700))!!
+        w.clock = WorldTime(700)
+        w.put(dwarf.copy(x = 5000, y = 5000, active = Active(since = WorldTime(340))))
+
+        val found = w.longAbsent(minutes = 360)
+
+        assertEquals(1, found.size)
+        assertEquals("dwarf", found.single().id)
+        assertEquals(beat.atMinute, found.single().beat.atMinute, "它想回去的那一格要跟出来")
+        assertFalse(found.single().moved, "它不进'该挪过去'那一批：它根本过不去")
+        assertTrue("360" in found.single().reason.orEmpty(), "理由里要写出过了多久：${found.single().reason}")
+    }
+
+    @Test
+    fun beforeTheThresholdNothingIsReported() {
+        val w = world()
+        val dwarf = w.byId("dwarf")!!
+        w.clock = WorldTime(700)
+        w.put(dwarf.copy(x = 5000, y = 5000, active = Active(since = WorldTime(400))))
+
+        assertTrue(w.longAbsent(minutes = 360).isEmpty(), "才过了 300 分钟，还不够久")
+        assertEquals(1, w.longAbsent(minutes = 300).size, "而阈值收到 300 就够久了")
+    }
+
+    @Test
+    fun someoneStillOnTheirCycleIsNotLongAbsent() {
+        val w = world()
+        w.clock = WorldTime(700)
+        // 没脱轨的人：到点那一条路管着它，而它不在这一条的路上。
+        assertTrue(w.longAbsent(minutes = 1).isEmpty())
+    }
+
+    /**
+     * **时钟比它变活跃那一刻还早**（读档、或者有人手动拨过钟）时也报出去。
+     *
+     * 那一种情形下差值永远是负的，于是"等够久"这件事**永远不会发生**——与其让它一直等不到，不如交给
+     * 导演看一眼。
+     */
+    @Test
+    fun aClockThatWentBackwardsCountsAsTooLong() {
+        val w = world()
+        val dwarf = w.byId("dwarf")!!
+        w.clock = WorldTime(100)
+        w.put(dwarf.copy(x = 5000, y = 5000, active = Active(since = WorldTime(900))))
+
+        val found = w.longAbsent(minutes = 360)
+        assertEquals(1, found.size, "负差值也算'等不到'")
+        assertTrue("比那一刻还早" in found.single().reason.orEmpty(), "理由要说清是哪一种：${found.single().reason}")
+    }
+
+    @Test
+    fun aNonCharacterIsIgnoredHere() {
+        val w = world()
+        w.clock = WorldTime(700)
+        w.put(
+            Entity(
+                id = "cup", kind = "物品", label = "杯子",
+                x = 0, y = 0, z = 0, active = Active(since = WorldTime(1)),
+                cycle = routine(Beat(0, "待在桌上。", 1, 1, 1), Beat(600, "换个地方。", 2, 2, 2)),
+            ),
+        )
+
+        assertTrue(w.longAbsent(minutes = 1).none { it.id == "cup" })
+    }
+
     @Test
     fun itCanStandOnTheWorldSurface() {
         val w = world()
