@@ -43,11 +43,11 @@ class DirectorCardTest {
     private fun origin(world: World) =
         ChunkOrigin.atPlayerStart(world.chunkOfEntity("player") ?: io.github.k1midi0.infinitesimal.world.ChunkKey(0, 0))
 
-    /** **它回来了**那一次唤醒（§14.52）：理由里点名是谁。 */
-    private fun returned(world: World, id: String = "dwarf") = Waking(
+    /** **它从氛围角色变成了活跃角色**那一次唤醒（§14.52）：理由里点名是谁、这一段说的是补背景。 */
+    private fun turningActive(world: World, id: String = "dwarf") = Waking(
         Wake.Called(
-            why = "「杜林」（id 是「$id」）刚刚从它自己日子外的那一趟回来了。",
-            returnedId = id,
+            why = "「杜林」（id 是「$id」）刚刚从**氛围角色变成了活跃角色**：有人跟它说上话了。",
+            aboutId = id,
         ),
         "player",
         origin(world),
@@ -80,7 +80,7 @@ class DirectorCardTest {
         )
         val world = world()
 
-        val result = director(script).wake(world, returned(world))
+        val result = director(script).wake(world, turningActive(world))
 
         assertTrue(result is Awakening.Done, "写过就算完成，实得 $result")
         val cards = world.byId("dwarf")!!.cards
@@ -98,7 +98,7 @@ class DirectorCardTest {
         )
         val world = world()
 
-        director(script).wake(world, returned(world))
+        director(script).wake(world, turningActive(world))
 
         val cards = world.byId("dwarf")!!.cards
         assertEquals(4, cards.size, "改写不添新卡")
@@ -121,7 +121,7 @@ class DirectorCardTest {
             ),
         )
 
-        director(script).wake(world, returned(world))
+        director(script).wake(world, turningActive(world))
 
         assertEquals(
             listOf("身份", "性格", "交互范围", "口癖"),
@@ -138,7 +138,7 @@ class DirectorCardTest {
         val script = Scripted(listOf(doneSaying("什么都不用写。")))
         val world = world()
 
-        director(script).wake(world, returned(world))
+        director(script).wake(world, turningActive(world))
 
         val body = script.bodies.first()
         // **按标题改**要求它先知道有哪些标题——这一节就是把那件事做掉的地方。
@@ -165,7 +165,7 @@ class DirectorCardTest {
         val script = Scripted(listOf(doneSaying("这一趟什么都没改变它。")))
         val world = world()
 
-        val result = director(script).wake(world, returned(world))
+        val result = director(script).wake(world, turningActive(world))
 
         assertTrue(result is Awakening.Done, "沉默也算干完了，实得 $result")
         assertEquals(4, world.byId("dwarf")!!.cards.size, "什么都没写")

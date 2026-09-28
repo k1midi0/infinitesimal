@@ -832,9 +832,6 @@ class GameSession(
     /** 轮到某个 NPC 的"这一格"：一次唤醒，一个 [Heard.Tick]。 */
     private suspend fun tickFor(id: String, scope: CoroutineScope?) {
         val task = startTask("${labelOf(id)}在过它这一格…")
-        // **它这一趟是从哪一刻开始的**（§14.52）：`arrive` 会把 `active` 清成 null，而"这一趟里发生过
-        // 什么"要靠这个时刻从记录层里捞——所以必须在唤醒**之前**读下来。
-        val since = world.byId(id)?.active?.since
         val reaction = try {
             writes.withLock {
                 npc.wake(
@@ -858,8 +855,8 @@ class GameSession(
         }
         if (reaction != null) {
             announce(id, reaction)
-            // 它这一格里自己回去了（§14.52）：那也是最常发生的一种"回归"，所以这条路也要归档。
-            settleArrival(id, reaction, since)
+            // 它这一格里自己回去了（§14.52 的更正：回归**不**叫人设追加，只写那一行日志）。
+            settleArrival(id, reaction)
         }
         entities = world.all()
     }
@@ -1600,9 +1597,10 @@ class GameSession(
         }
         for (id in speakers) {
             val task = startTask("${labelOf(id)}在回应…")
-            // **它这一趟是从哪一刻开始的**（§14.52）：`arrive` 会把 `active` 清成 null，而"这一趟里发生
-            // 过什么"要靠这个时刻从记录层里捞——所以必须在唤醒**之前**读下来。
-            val departure = world.byId(id)?.active?.since
+            // **这一下是不是"氛围角色变成活跃角色"的那一刻**（§3.2.1、§14.52）：`active` 本来是空的，
+            // 就是它——那一瞬间要同步叫一次思考档导演，由它决定要不要给这个人补背景。要在唤醒**之前**
+            // 读，因为下面那一段就会把它标成活跃。
+            val turning = world.byId(id)?.active == null
             val reaction = try {
                 writes.withLock {
                     // **被指向之后，它就不再走自己那个循环了**（§3.2.1、§14.51 落成代码的那一句）。
@@ -1644,9 +1642,11 @@ class GameSession(
 
             if (reaction == null) continue
             replies += announce(id, reaction)
-            // **它自己回去了**（§14.52）：那一趟要归档进人设，所以这儿同步叫一次导演。按队列顺序来，
-            // 一个人回来不影响后面那些人的顺序。
-            settleArrival(id, reaction, since = departure)
+            // **它自己回去了**：只写那一行日志（回归不触发人设追加）。
+            settleArrival(id, reaction)
+            // **而"变成活跃角色"那一下要叫导演**（§3.2.1 那句"转化的同时直接唤起思考档导演"，从写下那天
+            // 起就没有落成代码）。放在反应之后：玩家先看到它答话，而导演补的背景是下一次用它。
+            if (turning) wakeTheDirectorAboutTurningActive(id)
         }
 
         // 它们可能改了世界（自己的「做」走过判定并提交）。
@@ -1689,58 +1689,62 @@ class GameSession(
         return reaction.said
     }
 
-    /** 一段"这一趟"最多带几行给导演（§14.52）。**它是个预算**：几十轮的经历压成最后八件事。 */
-    private val TRIP_LINES = 8
-
     /**
-     * **它自己回到了循环上**（§3.2.1、§14.43、§14.52）。
+     * **它自己回到了循环上**（§3.2.1、§14.43）。
      *
-     * ## 为什么它是单独一个函数，而不是塞在 [announce] 里
+     * 它只做一件事：把那一行日志写出来，并把 §14.50 那笔账还掉。**它不叫导演**——回归不触发人设追加。
      *
-     * 两件原因，两件都实在：
-     *
-     *  1. **那一行日志要写出来。** `arrive` **不是世界事件**（世界没因此改变什么，它只是不再脱轨），
-     *     所以只看"活跃有没有变"看不出是它自己回去的——而这件事对玩家有信息量（那个矮人回去干它的
-     *     活了）。
-     *  2. **它要叫导演**（§14.52 的人设追加），而 [announce] **不是挂起函数**（它只写界面日志与气泡，
-     *     一个字都不碰世界）。叫导演要拿锁、要等一次模型，那两者放不进它。
-     *
-     * ## 人设追加为什么要在这儿发生
-     *
-     * §3.2.1 那句是「**回归时**，它的经历归档成人设追加」——经历还是热的，而"归档"本来就是回归这件
-     * 事的一部分。所以这里**同步**叫一次思考档导演，理由里点名是谁回来了、它这一趟在外头待了多久。
-     *
-     * **代价写在明处**：那一次 `arrive` 会多一次思考档调用（最贵的那一档，几十秒）。这是用户拍的
-     * （§14.52 的面板问答："回复那一刻同步写一次"）。
+     * 那一条是这一刀做出来之后**用户更正过的**（§14.52）：人设追加**不是"把这一趟的经历写进去"**——
+     * 历史本来就在角色自己的上下文里（对话历史 + 事件总线）。它要的是**补上它本来该有、而开局那张卡
+     * 没写的那一层背景**：被问到哪里有酒馆、要托付它一条支线、要把它升成剧情角色时，原来那份简单的
+     * 设定就不够了（"它其实是传奇铁匠的传人"）。而那件事发生在**氛围角色变成活跃角色**的那一刻。
      */
-    private suspend fun settleArrival(id: String, reaction: Reaction, since: WorldTime?) {
+    private fun settleArrival(id: String, reaction: Reaction) {
         if (!reaction.arrived) return
-        val name = labelOf(id)
-        say(LogLine.Kind.OK, "（$name 回到了自己的日子上）")
+        say(LogLine.Kind.OK, "（${labelOf(id)} 回到了自己的日子上）")
         // **那一趟的账还回去**（§14.50）：已经回到循环上了，于是"为这一趟脱轨叫过导演"这件事作数完
         // 了。不还的话，它下一次再被带走时就不会再有人替它叫导演——而那是同一个人的第二趟。
         forgotten.removeAll { it.startsWith("$id@") }
+    }
 
+    /**
+     * **一个氛围角色变成了活跃角色**（§3.2.1、§14.52）：那一下同步叫一次思考档导演。
+     *
+     * §3.2.1 早写着「转化的同时**直接唤起思考档导演**，由导演统筹三件事」——而那一句从来没有落成代码
+     * （§14.45 只做了"到点却进不去"那条路，而那是"被世界推着脱轨"，不是"被指向"）。这一刀补的是
+     * **被指向**这条最常发生的路。导演被叫起来之后**自己决定**要不要给这个人补背景（用户的话：
+     * "氛围 npc 转为活跃 npc 时本身就会唤醒思考导演，导演自己就能决定"）。
+     *
+     * ## 导演在这一刻要统筹的三件事（§3.2.1）
+     *
+     *  ① **人设追加**（补背景——"被问到哪里有酒馆"、"要托付它一条支线"时的那一层）；② 归宿（升剧情
+     *  角色，还是事件完了回循环）；③ 是否开一条支线/主线。**现在只有第 1 件有手**（`write_card`），
+     *  第 2、3 件还没有入口。
+     *
+     * ## 代价，以及为什么它不会重复
+     *
+     *  每一次"第一次跟某个人说上话"都多一次思考档调用（实测 6–11 秒）。它**只在转化那一下**发生：
+     *  那个人下一格再开口时它已经是活跃角色了，`heard` 那条路不会再走这一次。
+     */
+    private suspend fun wakeTheDirectorAboutTurningActive(id: String) {
+        val name = labelOf(id)
+        val task = startTask("$name 从氛围角色变成了活跃角色，导演在看它要不要补背景…")
         val before = world.byId(id)?.cards.orEmpty()
-        val back = world.byId(id)?.cycle?.beatAt(world.clock)?.state
-        val task = startTask("$name 回来了，导演在把它这一趟写进人设…")
         try {
             writes.withLock {
                 director.wake(
                     world,
                     Waking(
                         Wake.Called(
-                            why = buildString {
-                                append("「$name」（id 是「$id」）刚刚从它自己日子外的那一趟回来了")
-                                append(if (since == null) "。\n" else "（那一趟是从 ${since} 开始的）。\n")
-                                // **这一趟里发生了什么，导演自己看不到**（它的提示词里没有记录层），
-                                // 所以这一段必须由代码从记录层里捞出来交给它——否则"人设追加"只能靠编。
-                                append(tripLog(id, since))
-                                append("\n把它这一趟的经历写进它的人设——用 `${DirectorTools.WRITE_CARD}`。")
-                                if (back != null) append("它此刻回到的那一格是：「$back」。")
-                                append("这一趟什么都没改变它的话，什么都不写也是对的。")
-                            },
-                            returnedId = id,
+                            why = "$name（id 是「$id」）刚刚从**氛围角色变成了活跃角色**：" +
+                                "有人跟它说上话了，于是它被从自己的日子上拿了下来（§3.2.1）。" +
+                                "这一下由你决定要不要给它**补背景**——它现在这一份人设够不够应付接下来" +
+                                "要问它的事：会不会有人问它这一带有什么、会不会要托付它一条支线、" +
+                                "要不要把它升成剧情角色。够了就什么都不写。要补就写：**改写它现有的某" +
+                                "一张**（标题照着它现在那几张写），或者**添一张新的**（例如它其实是" +
+                                "谁的传人、它知道哪条路）。**别写它这一趟经历了什么**——那些事本来就在" +
+                                "它自己的上下文里，人设要补的是它本来该有、而开局那张卡没写的那一层。",
+                            aboutId = id,
                         ),
                         PLAYER,
                         origin,
@@ -1748,57 +1752,22 @@ class GameSession(
                 )
             }
         } catch (t: Throwable) {
-            say(LogLine.Kind.ERROR, "人设没写成：${t.message}")
+            say(LogLine.Kind.ERROR, "背景没补成：${t.message}")
         } finally {
             endTask(task)
         }
 
         // **看得见的证据**：卡变没变，代码读得出来（与 §14.42 那些读数同一种做法）。不写这一行的话，
-        // "这一次回归到底在它人设上留了什么"只能靠翻提示词才知道。
+        // "这一次转化到底在它人设上留了什么"只能靠翻提示词才知道。
         val after = world.byId(id)?.cards.orEmpty()
         if (after != before) {
             val added = after.filter { card -> before.none { it.title.trim() == card.title.trim() } }
             val rewritten = after.filter { card -> before.any { it.title.trim() == card.title.trim() && it.content != card.content } }
             val what = buildList {
-                if (added.isNotEmpty()) add("添了 ${added.joinToString("、") { "「${it.title}」" }}")
+                if (added.isNotEmpty()) add("补了 ${added.joinToString("、") { "「${it.title}」" }}")
                 if (rewritten.isNotEmpty()) add("改写了 ${rewritten.joinToString("、") { "「${it.title}」" }}")
             }.joinToString("，")
             say(LogLine.Kind.OK, "（它的人设$what——现在 ${after.size} 张：${after.titlesWithSize()}）")
-        } else {
-            say(LogLine.Kind.NOTE, "（导演看过它这一趟了，人设没动）")
-        }
-    }
-
-    /**
-     * **这一趟里与它有关的事**（§14.52）：从记录层里按时刻捞出来、压成几行交给导演。
-     *
-     * ## 为什么必须有它
-     *
-     * 导演的提示词里有身边那一片的地图、时间轴上排着的事、以及看得见的那些人——**唯独没有"刚才发生了
-     * 什么"**（记录层不进任何提示词，§14.39 定的）。而人设追加要回答的正是"这一趟给了它什么"。不给它这
-     * 一段，它只能对着"它刚从外头回来"这半句话编一张卡出来——而编出来的人设会与记录层里的事实对不上，
-     * 且没有任何地方会报错。
-     *
-     * 取的是"它自己说过做过的"加上"投向它的"（`addressedTo` 里有它），最多 [TRIP_LINES] 行，从最新
-     * 往回取——一段几十轮的经历压成最后八件与它有关的事，够它写一张卡了。
-     */
-    private fun tripLog(id: String, since: WorldTime?): String {
-        if (since == null) return "（这一趟刚开始——它此刻是刚从循环上被叫住的。）"
-        val mine = world.log.all().filter { event ->
-            event.at >= since && (event.actorId == id || id in event.addressedTo)
-        }
-        if (mine.isEmpty()) return "（记录层里没有与它有关的事——这一趟它什么都没做。）"
-        return buildString {
-            append("这一趟里与它有关的事（从记录里取的最近 ${minOf(mine.size, TRIP_LINES)} 条）：\n")
-            mine.takeLast(TRIP_LINES).forEach { event ->
-                append("- ").append(event.at).append("　")
-                when {
-                    event.actorId == id -> append("它：").append(event.text)
-                    else -> append(event.actorLabel.ifBlank { "别人" }).append("：").append(event.text)
-                }
-                if (event.effects.isNotEmpty()) append("（后果：").append(event.effects.joinToString("；")).append("）")
-                append("\n")
-            }
         }
     }
 

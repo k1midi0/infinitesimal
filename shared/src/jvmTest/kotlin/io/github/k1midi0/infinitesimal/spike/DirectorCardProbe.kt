@@ -98,17 +98,13 @@ class DirectorCardProbe {
 
     /** 会话那一侧拼的是同一个形状（`GameSession.tripLog`）：开头一句 + 每行一条 + 收尾一句。 */
     private fun reasonFor(world: World, name: String, id: String, since: WorldTime): String = buildString {
-        append("「$name」（id 是「$id」）刚刚从它自己日子外的那一趟回来了（那一趟是从 $since 开始的）。\n")
-        append("这一趟里与它有关的事（从记录里取的最近 8 条）：\n")
-        world.log.all().filter { it.at >= since }.takeLast(8).forEach { event ->
-            append("- ").append(event.at).append("　")
-            append(if (event.actorId == id) "它：" else "${event.actorLabel}：").append(event.text)
-            if (event.effects.isNotEmpty()) append("（后果：").append(event.effects.joinToString("；")).append("）")
-            append("\n")
-        }
-        append("\n把它这一趟的经历写进它的人设——用 `${DirectorTools.WRITE_CARD}`。")
-        append("它此刻回到的那一格是：「${world.byId(id)?.cycle?.beatAt(world.clock)?.state}」。")
-        append("这一趟什么都没改变它的话，什么都不写也是对的。")
+        append("$name（id 是「$id」）刚刚从**氛围角色变成了活跃角色**：有人跟它说上话了，")
+        append("于是它被从自己的日子上拿了下来（§3.2.1）。")
+        append("这一下由你决定要不要给它**补背景**——它现在这一份人设够不够应付接下来要问它的事：")
+        append("会不会有人问它这一带有什么、会不会要托付它一条支线、要不要把它升成剧情角色。")
+        append("够了就什么都不写。要补就写：**改写它现有的某一张**（标题照着它现在那几张写），")
+        append("或者**添一张新的**（例如它其实是谁的传人、它知道哪条路）。")
+        append("**别写它这一趟经历了什么**——那些事本来就在它自己的上下文里。")
     }
 
     private suspend fun oneRun(label: String, trip: List<Triple<String, String, String>>, apiKey: String) {
@@ -127,7 +123,7 @@ class DirectorCardProbe {
         val result = director.wake(
             world,
             Waking(
-                Wake.Called(reasonFor(world, "酒馆里的矮人", "dwarf", since), returnedId = "dwarf"),
+                Wake.Called(reasonFor(world, "酒馆里的矮人", "dwarf", since), aboutId = "dwarf"),
                 "player",
                 origin(world),
             ),
@@ -150,32 +146,34 @@ class DirectorCardProbe {
     }
 
     @Test
-    fun whatItWritesWhenSomebodyComesBack() = runBlocking {
+    fun whatItWritesWhenSomebodyTurnsActive() = runBlocking {
         val apiKey = key
         if (apiKey == null) {
             println("[跳过] 没给 -PinfinitesimalLiveKeyFile，这一支不跑。")
             return@runBlocking
         }
 
-        val realEvent = listOf(
-            Triple("player", "算我欠你一次。", ""),
-            Triple("dwarf", "我替他挡了那一下。", "左臂上撕开一道口子，血流到袖口"),
-            Triple("player", "先别管柜台上那摊东西了。", ""),
+        // **对照一：世界接下来要问它一件它现在答不上来的事。** 玩家刚在问路，而它那四张卡
+        // （身份/性格/交互范围/口癖）里一个字都没有"这一带有什么"。**期望它补一层背景。**
+        val askedTheWay = listOf(
+            Triple("player", "这镇上哪儿还有酒馆？", ""),
+            Triple("dwarf", "就这一家。别的镇上去。", ""),
         )
-        val smallErrand = listOf(
-            Triple("player", "酒还有吗？", ""),
-            Triple("dwarf", "下去搬一箱上来。", "从地窖搬了一箱麦酒上来"),
-            Triple("player", "谢了。", ""),
+        // **对照二：一次普通搭话，它那几张卡够用。** 期望它什么都不写。
+        val smallTalk = listOf(
+            Triple("player", "你喝什么呢？", ""),
+            Triple("dwarf", "跟客人一样。", ""),
         )
 
         repeat(runs) { i ->
-            oneRun("对照一 · 这一趟真的改变了它（第 ${i + 1} 遍）", realEvent, apiKey)
-            oneRun("对照二 · 这一趟什么都没改变它（第 ${i + 1} 遍）", smallErrand, apiKey)
+            oneRun("对照一 · 它被问了一件答不上来的事（第 ${i + 1} 遍）", askedTheWay, apiKey)
+            oneRun("对照二 · 一次普通搭话（第 ${i + 1} 遍）", smallTalk, apiKey)
         }
 
         println(
-            "【怎么读】对照一要写出**设定**（它对人对事的立场变了），对照二**什么都不写**才是对的" +
-                "——两边都写成'它下了地窖/它挡了一刀'那种流水账，就说明这一只手的提示词还得改。",
+            "【怎么读】对照一要补出**背景**（它凭什么知道这一带的事——它是谁、它知道什么），" +
+                "对照二**什么都不写**才是对的。两边都写成「它跟玩家聊了两句」那种流水账，" +
+                "就说明这一只手的提示词还得改。",
         )
     }
 }

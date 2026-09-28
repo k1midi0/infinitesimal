@@ -208,9 +208,10 @@ class GameSessionSlotTest {
         session.sayNowNow("你好啊。")
 
         assertEquals(before, session.world.clock, "说话不过轮次：世界停在原处")
-        // **三次是下限，不是上限漏了**：一次找听者（判定第一步），然后被指向的人**两次**——它先出手
-        // 说那句话（一次工具调用），而工具调用之后那一轮请求是收尾（§5 那一轮的结构）。
-        assertEquals(3, script.bodies.size, "一次找听者 +（出手 + 收尾）")
+        // **四次**：一次找听者（判定第一步），被指向的人**两次**（它先出手说那句话，然后是收尾那一轮），
+        // 以及**"它从氛围角色变成活跃角色"那一下叫的思考档导演**（§3.2.1、§14.52；这一格里脚本给的
+        // 最后一帧是 `stop()`，所以导演那一次就是一声不吭地收工）。
+        assertEquals(4, script.bodies.size, "找听者 +（出手 + 收尾）+ 转化时叫一次导演")
         // 原话原样进了记录层（用户裁定：「结构化一行，原话原样，代码拼」）——最后那个非空记录是矮人
         // 那一句，所以这里找的是"有没有"。
         assertTrue(
@@ -242,93 +243,43 @@ class GameSessionSlotTest {
     }
 
     /**
-     * **它自己回到循环上那一刻，导演把它这一趟写进人设**（§14.52、§3.2.1 的第 1 件事）。
+     * **"氛围角色变成活跃角色"那一下要叫思考档导演**（§3.2.1 那句"转化的同时直接唤起思考档导演"，
+     * 从写下那天起就没落成代码），而**导演自己决定**要不要给它补背景（§14.52，用户的原话：
+     * "氛围 npc 转为活跃 npc 时本身就会唤醒思考导演，导演自己就能决定"）。
      *
-     * 这是"人设追加"那条链在会话这一层的全貌：角色在一格里用 `arrive` 宣告回去 → 会话看到
-     * `Reaction.arrived` → **同步叫一次思考档导演**（`Wake.Called`，理由里点名是谁）→ 导演用
-     * `write_card` 写 → 会话记一行"它的人设变了什么"。
-     *
-     * 那一行日志是有用的：卡变没变只有代码读得出来，而"这一次回归在它人设上留了什么"不该只能靠翻
-     * 提示词才知道。
+     * 这一支也顺手钉住"补的是什么"：这一段理由说的是**背景**（它是谁、它知道什么），而不是"它这一趟
+     * 经历了什么"——后者本来就在角色自己的上下文里。
      */
     @Test
-    fun whenSomebodyComesHomeTheDirectorWritesThatTripIntoItsCards() = runBlocking {
-        val session = sessionOf(Scripted(listOf(stop())))
-        wakeTheDwarfUp(session)
-        val beat = session.world.byId("dwarf")!!.cycle.beatAt(session.world.clock)!!
-
-        // 帧要按调用顺序：① 矮人过它这一格 → 用 arrive 宣告回去（出手 + 收尾两次请求）；
-        // ② 会话因此叫导演 → 导演 write_card（出手 + 收尾两次请求）。
+    fun becomingActiveWakesTheDirectorWhichMayAddBackground() = runBlocking {
         val script = Scripted(
             listOf(
-                turn("a1", NpcTools.ARRIVE, """{"state":"${esc(beat.state)}"}"""),
+                turn("t1", "address", """{"id":"dwarf"}"""),
+                turn("c1", "say", """{"text":"酒馆？就这一家。"}"""),
                 stop(),
+                // 会话因此叫思考档导演：它给这个矮人补了一层来历。
                 turn(
                     "w1",
                     DirectorTools.WRITE_CARD,
-                    """{"id":"dwarf","cards":"${esc("经历｜这一趟你在外头待了很久，回来时把门口那把椅子扶正了。")}"}""",
+                    """{"id":"dwarf","cards":"${esc("来历｜你其实是灰渡镇那个传奇铁匠的传人。")}"}""",
                 ),
                 stop(),
             ),
         )
-        val live = sessionOf(script)
-        wakeTheDwarfUp(live)
-        val before = live.world.byId("dwarf")!!.cards.size
+        val session = sessionOf(script)
+        val before = session.world.byId("dwarf")!!.cards.size
 
-        live.nextTurnNow("")
+        session.sayNowNow("这镇上哪儿有酒馆？")
 
-        val after = live.world.byId("dwarf")!!
-        assertEquals(null, after.active, "它回去了")
-        assertEquals(before + 1, after.cards.size, "人设多了一张：${live.log.map { it.text }}")
-        assertEquals("经历", after.cards.last().title)
+        val after = session.world.byId("dwarf")!!
+        assertTrue(after.active != null, "被搭话之后它是活跃角色")
+        assertEquals(before + 1, after.cards.size, "导演给它补了一层背景：${session.log.map { it.text }}")
+        assertEquals("来历", after.cards.last().title)
         assertTrue(
-            live.log.any { "它的人设" in it.text },
-            "会话里要说得出人设变了什么：${live.log.map { it.text }}",
+            script.bodies.any { "氛围角色变成了活跃角色" in it },
+            "叫它那一次的理由里要说清是这一刻（${script.bodies.size} 次请求）",
         )
-        assertTrue(
-            script.bodies.any { "把它这一趟的经历写进它的人设" in it },
-            "叫导演那一次的理由里要点名这件事",
-        )
-    }
-
-    /**
-     * **这一趟里发生过什么，要由代码交给导演**（§14.52）。
-     *
-     * 导演的提示词里**没有记录层**（§14.39：记录不注入任何提示词），所以"这一趟给了它什么"这件事只有
-     * 一个通道——那一段理由。不给它，它只能对着"它刚从外头回来"这半句话编一张卡，而编出来的人设会与
-     * 记录层里的事实对不上，且没有任何地方会报错。
-     */
-    @Test
-    fun whatHappenedDuringTheTripIsHandedToTheDirector() = runBlocking {
-        val session = sessionOf(Scripted(listOf(stop())))
-        wakeTheDwarfUp(session)
-        val beat = session.world.byId("dwarf")!!.cycle.beatAt(session.world.clock)!!
-
-        val script = Scripted(
-            listOf(
-                // 第一格：它说了一句（这一句会进记录层，actorId 是它）
-                turn("s1", "say", """{"text":"我去地窖搬了箱酒上来。"}"""),
-                stop(),
-                // 第二格：它宣告回去
-                turn("a1", NpcTools.ARRIVE, """{"state":"${esc(beat.state)}"}"""),
-                stop(),
-                // 会话因此叫导演：它该在理由里读到上面那一句
-                turn("w1", DirectorTools.WRITE_CARD, """{"id":"dwarf","cards":"${esc("经历｜这一趟你下过地窖。")}"}"""),
-                stop(),
-            ),
-        )
-        val live = sessionOf(script)
-        wakeTheDwarfUp(live)
-
-        live.nextTurnNow("")
-        live.nextTurnNow("")
-
-        val toDirector = script.bodies.firstOrNull { "把它这一趟的经历写进它的人设" in it }
-        assertTrue(toDirector != null, "导演该被叫起来过：${script.bodies.size} 次请求")
-        assertTrue(
-            "地窖" in toDirector,
-            "这一趟里它说过的话要出现在理由里：${toDirector.substringAfter("【为什么把你叫起来】", "").take(300)}",
-        )
+        assertTrue(session.log.any { "它的人设" in it.text }, "会话里要说得出人设变了什么")
     }
 
     /**
