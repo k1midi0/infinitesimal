@@ -7,6 +7,8 @@ import io.github.k1midi0.infinitesimal.config.EndpointConfig
 import io.github.k1midi0.infinitesimal.config.ScheduleSettings
 import io.github.k1midi0.infinitesimal.director.Awakening
 import io.github.k1midi0.infinitesimal.director.Director
+import io.github.k1midi0.infinitesimal.director.DirectorTools
+import io.github.k1midi0.infinitesimal.director.titlesWithSize
 import io.github.k1midi0.infinitesimal.director.Wake
 import io.github.k1midi0.infinitesimal.director.Waking
 import io.github.k1midi0.infinitesimal.judge.Consequence
@@ -851,7 +853,11 @@ class GameSession(
         } finally {
             endTask(task)
         }
-        if (reaction != null) announce(id, reaction)
+        if (reaction != null) {
+            announce(id, reaction)
+            // 它这一格里自己回去了（§14.52）：那也是最常发生的一种"回归"，所以这条路也要归档。
+            settleArrival(id, reaction)
+        }
         entities = world.all()
     }
 
@@ -1632,6 +1638,9 @@ class GameSession(
 
             if (reaction == null) continue
             replies += announce(id, reaction)
+            // **它自己回去了**（§14.52）：那一趟要归档进人设，所以这儿同步叫一次导演。按队列顺序来，
+            // 一个人回来不影响后面那些人的顺序。
+            settleArrival(id, reaction)
         }
 
         // 它们可能改了世界（自己的「做」走过判定并提交）。
@@ -1671,17 +1680,78 @@ class GameSession(
 
         if (reaction.silent) say(LogLine.Kind.NOTE, "（$name 没什么反应）")
 
-        // **它自己回到了循环上**（§3.2.1、§14.43）。这一行要写出来，因为 `arrive` **不是世界事件**：
-        // 世界没因此改变什么（它只是不再脱轨），所以只看"活跃有没有变"的话，看不出是它自己回去的——
-        // 而这件事对玩家是有信息量的（那个矮人回去干它的活了）。
-        if (reaction.arrived) {
-            say(LogLine.Kind.OK, "（$name 回到了自己的日子上）")
-            // **那一趟的账还回去**（§14.50）：已经回到循环上了，于是"为这一趟脱轨叫过导演"这件事作数完
-            // 了。不还的话，它下一次再被带走时就不会再有人替它叫导演——而那是同一个人的第二趟。
-            forgotten.removeAll { it.startsWith("$id@") }
+        return reaction.said
+    }
+
+    /**
+     * **它自己回到了循环上**（§3.2.1、§14.43、§14.52）。
+     *
+     * ## 为什么它是单独一个函数，而不是塞在 [announce] 里
+     *
+     * 两件原因，两件都实在：
+     *
+     *  1. **那一行日志要写出来。** `arrive` **不是世界事件**（世界没因此改变什么，它只是不再脱轨），
+     *     所以只看"活跃有没有变"看不出是它自己回去的——而这件事对玩家有信息量（那个矮人回去干它的
+     *     活了）。
+     *  2. **它要叫导演**（§14.52 的人设追加），而 [announce] **不是挂起函数**（它只写界面日志与气泡，
+     *     一个字都不碰世界）。叫导演要拿锁、要等一次模型，那两者放不进它。
+     *
+     * ## 人设追加为什么要在这儿发生
+     *
+     * §3.2.1 那句是「**回归时**，它的经历归档成人设追加」——经历还是热的，而"归档"本来就是回归这件
+     * 事的一部分。所以这里**同步**叫一次思考档导演，理由里点名是谁回来了、它这一趟在外头待了多久。
+     *
+     * **代价写在明处**：那一次 `arrive` 会多一次思考档调用（最贵的那一档，几十秒）。这是用户拍的
+     * （§14.52 的面板问答："回复那一刻同步写一次"）。
+     */
+    private suspend fun settleArrival(id: String, reaction: Reaction) {
+        if (!reaction.arrived) return
+        val name = labelOf(id)
+        say(LogLine.Kind.OK, "（$name 回到了自己的日子上）")
+        // **那一趟的账还回去**（§14.50）：已经回到循环上了，于是"为这一趟脱轨叫过导演"这件事作数完
+        // 了。不还的话，它下一次再被带走时就不会再有人替它叫导演——而那是同一个人的第二趟。
+        forgotten.removeAll { it.startsWith("$id@") }
+
+        val before = world.byId(id)?.cards.orEmpty()
+        val back = world.byId(id)?.cycle?.beatAt(world.clock)?.state
+        val task = startTask("$name 回来了，导演在把它这一趟写进人设…")
+        try {
+            writes.withLock {
+                director.wake(
+                    world,
+                    Waking(
+                        Wake.Called(
+                            why = "「$name」（id 是「$id」）刚刚从它自己日子外的那一趟回来了。" +
+                                "把它这一趟的经历写进它的人设——用 `${DirectorTools.WRITE_CARD}`。" +
+                                (back?.let { "它此刻回到的那一格是：「$it」。" } ?: "") +
+                                "这一趟什么都没改变它的话，什么都不写也是对的。",
+                            returnedId = id,
+                        ),
+                        PLAYER,
+                        origin,
+                    ),
+                )
+            }
+        } catch (t: Throwable) {
+            say(LogLine.Kind.ERROR, "人设没写成：${t.message}")
+        } finally {
+            endTask(task)
         }
 
-        return reaction.said
+        // **看得见的证据**：卡变没变，代码读得出来（与 §14.42 那些读数同一种做法）。不写这一行的话，
+        // "这一次回归到底在它人设上留了什么"只能靠翻提示词才知道。
+        val after = world.byId(id)?.cards.orEmpty()
+        if (after != before) {
+            val added = after.filter { card -> before.none { it.title.trim() == card.title.trim() } }
+            val rewritten = after.filter { card -> before.any { it.title.trim() == card.title.trim() && it.content != card.content } }
+            val what = buildList {
+                if (added.isNotEmpty()) add("添了 ${added.joinToString("、") { "「${it.title}」" }}")
+                if (rewritten.isNotEmpty()) add("改写了 ${rewritten.joinToString("、") { "「${it.title}」" }}")
+            }.joinToString("，")
+            say(LogLine.Kind.OK, "（它的人设$what——现在 ${after.size} 张：${after.titlesWithSize()}）")
+        } else {
+            say(LogLine.Kind.NOTE, "（导演看过它这一趟了，人设没动）")
+        }
     }
 
     /**

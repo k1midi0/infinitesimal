@@ -62,8 +62,15 @@ sealed interface Wake {
      */
     data class HardGap(val required: List<ChunkKey>) : Wake
 
-    /** 快速档把思考档叫起来了。这一带还不用长的话，**什么都不做是合法的结果**。 */
-    data class Called(val why: String) : Wake
+    /**
+     * 有人把思考档叫起来了，而且**理由写在 [why] 里**。这一带还不用长的话，**什么都不做是合法的结果**
+     * （[unmet] 对它是空的）。
+     *
+     * [returnedId] 是**这一次要看的那一个人**（§14.52）："它刚从自己日子外的那一趟回来了，
+     * 把这一趟写进它的人设"。它是可空的，因为 `Called` 从前还有别的用法（快速档叫思考档），
+     * 而那些用法只给一句理由、不点人。
+     */
+    data class Called(val why: String, val returnedId: String? = null) : Wake
 
     /**
      * **有人到了点却没进那一格**（§14.45）：代码判过一次（地形站不住、或者哨兵说这一格现在做不了），
@@ -359,6 +366,7 @@ class Director(
         DirectorTools.LOOK_MAP -> lookMap(call, world, waking)
         DirectorTools.WRITE_CYCLE -> writeCycle(call, world, waking)
         DirectorTools.SPAWN_CHARACTER -> spawnCharacter(call, world, waking)
+        DirectorTools.WRITE_CARD -> writeCard(call, world, waking)
         else -> "没有叫「${call.name}」的工具。你现在能用的只有：" +
             DirectorTools.of(waking.why.tier).joinToString("、") { it.function.name } + "。"
     }
@@ -480,6 +488,45 @@ class Director(
             }
             append("\n你写进去的卡是：")
             cards.forEach { append("\n- ").append(it.title).append("：").append(it.content) }
+        }
+    }
+
+    // ── 人设追加（§14.52） ──────────────────────────────────────────────────────────
+
+    /**
+     * 导演手上那只"把这一趟写进它的人设"的手。
+     *
+     * 与 [writeCycle] / [spawnCharacter] 同一个形状：解码 → 世界里有没有这个人 → **看得见吗** →
+     * 解析 → [CardPlanner.problems] → 通过之后才 [CardPlanner.apply]。答复里那句"写好了"只在真的
+     * 落库之后出现（§1.5 第三条：理由不撒谎）。
+     */
+    private fun writeCard(call: ToolCallRequest, world: World, waking: Waking): String {
+        val args = decodeCall(WriteCardArgs.serializer(), call)
+            ?: return "${call.name} 的参数不是合法 JSON：${call.arguments.take(160)}"
+
+        val id = args.id.trim()
+        if (id.isEmpty()) return "没说要写给谁。id 填你眼前那段清单里的那个角色。"
+
+        val target = world.byId(id)
+            ?: return "世界里没有 id 是「$id」的东西。你眼前那段清单里的 id 才是能写的那些。"
+
+        val visible = visibleTo(world, waking.focusId)
+        val parsed = when (val p = CardText.parse(args.cards)) {
+            is CardParse.Parsed -> p.cards
+            is CardParse.Failed -> return p.why
+        }
+
+        val write = CardWrite(id, parsed)
+        val problems = CardPlanner.problems(world, listOf(write), visible)
+        if (problems.isNotEmpty()) return "这份人设没写进去：\n" + problems.joinToString("\n")
+
+        CardPlanner.apply(world, listOf(write))
+        val after = world.byId(id)!!
+        return buildString {
+            append("写好了：「${after.label}」的人设现在是这 ")
+            append("${after.cards.size} 张：${after.cards.titlesWithSize()}。")
+            append("\n你这一次写进去的是：")
+            parsed.forEach { append("\n- ").append(CardText.render(it)) }
         }
     }
 
@@ -822,14 +869,17 @@ class Director(
         val people = visibleTo(world, waking.focusId).mapNotNull { world.byId(it) }
             .filter { it.kind == CHARACTER_KIND }
             .sortedBy { it.id }
-        appendLine("【你这一轮看得见的角色（能写作息的，也就是这些人）】")
+        appendLine("【你这一轮看得见的角色（能写作息、也能写人设的，也就是这些人）】")
         appendLine(
             if (people.isEmpty()) {
                 "（一个都看不见）"
             } else {
                 people.joinToString("\n") {
                     val cycling = if (it.cycle.isEmpty) "没有作息" else "有作息（${it.cycle.beats.size} 格）"
-                    "- ${it.id}｜${it.label}　$cycling"
+                    // **卡要连标题一起印出来**（§14.52）：`write_card` 是**按标题改**的，不列标题它就
+                    // 只能瞎猜一个——而猜错的后果是"在原来那张旁边又添一张互相矛盾的卡"。
+                    val persona = if (it.cards.isEmpty()) "不是角色（没有卡）" else "人设：${it.cards.titlesWithSize()}"
+                    "- ${it.id}｜${it.label}　$cycling｜$persona"
                 }
             },
         )
@@ -853,6 +903,18 @@ class Director(
             }
             appendLine("**他们各要一份新的 `write_cycle`。** 别的地方照旧：这一带该怎么长、将来该发生")
             appendLine("什么，仍然由你看。")
+        }
+
+        // **人设追加**（§14.52）。它是这一档被叫起来时的另一件事：有个人刚从自己日子外的那一趟回来，
+        // 而这一趟该在它的卡上留下点什么。**它不点名就没人管**——所以理由里点了名的那个要再出现一次。
+        val returned = (waking.why as? Wake.Called)?.returnedId
+        if (returned != null) {
+            val who = world.byId(returned)
+            appendLine()
+            appendLine("【这一次要看的人】")
+            appendLine("- ${who?.label ?: returned}（id 是「$returned」）")
+            appendLine("它现在的人设卡：${(who?.cards ?: emptyList()).titlesWithSize()}")
+            appendLine("**上面这些标题里已经有的，就是那张卡**——想改哪一面，标题照着写。")
         }
     }
 
@@ -971,6 +1033,13 @@ class Director(
                 **不要在这里一件一件地放**。**也别拿它凑人数**——一条街上该有三五个人是长地形时顺手
                 放的，按名字叫出来的该是这一个故事用得着的那一个。**已经有的 id 会被驳回**：改它现在
                 的日子是 `write_cycle` 的事。
+            14. 有一个人**刚从它自己日子外的那一趟回来**时（【为什么把你叫起来】会点名是哪一个），
+                用 `write_card` 把这一趟写进它的人设。**按标题改**：一行一张「标题｜内容」，标题写它现在
+                已有的那个就是**替换那一张**（它现在有哪些标题，写在你能看见的那份清单里），写一个新
+                标题就是**添一张**。这一只手是用来**让它被这件事改变**的，不是给它记流水账：这一趟
+                真的改变了它什么，就改写或添上那一条；**只是跑了一趟、什么都没变，那就什么都不写**
+                （那是一个合法的结果）。两条上限（一张 400 字、合计 2000 字）到顶时，**改写或合并现有
+                的那几张**，别只往上添——卡是它每次醒来都要全文读一遍的东西。
         """.trimIndent()
     }
 }
@@ -1026,4 +1095,11 @@ internal data class SpawnCharacterArgs(
     val cards: String = "",
     val at: String = "",
     val beats: String = "",
+)
+
+/** [DirectorTools.WRITE_CARD] 的参数。 */
+@Serializable
+internal data class WriteCardArgs(
+    val id: String = "",
+    val cards: String = "",
 )
