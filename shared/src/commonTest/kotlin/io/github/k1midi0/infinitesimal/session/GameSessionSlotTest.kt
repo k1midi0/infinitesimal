@@ -292,6 +292,46 @@ class GameSessionSlotTest {
     }
 
     /**
+     * **这一趟里发生过什么，要由代码交给导演**（§14.52）。
+     *
+     * 导演的提示词里**没有记录层**（§14.39：记录不注入任何提示词），所以"这一趟给了它什么"这件事只有
+     * 一个通道——那一段理由。不给它，它只能对着"它刚从外头回来"这半句话编一张卡，而编出来的人设会与
+     * 记录层里的事实对不上，且没有任何地方会报错。
+     */
+    @Test
+    fun whatHappenedDuringTheTripIsHandedToTheDirector() = runBlocking {
+        val session = sessionOf(Scripted(listOf(stop())))
+        wakeTheDwarfUp(session)
+        val beat = session.world.byId("dwarf")!!.cycle.beatAt(session.world.clock)!!
+
+        val script = Scripted(
+            listOf(
+                // 第一格：它说了一句（这一句会进记录层，actorId 是它）
+                turn("s1", "say", """{"text":"我去地窖搬了箱酒上来。"}"""),
+                stop(),
+                // 第二格：它宣告回去
+                turn("a1", NpcTools.ARRIVE, """{"state":"${esc(beat.state)}"}"""),
+                stop(),
+                // 会话因此叫导演：它该在理由里读到上面那一句
+                turn("w1", DirectorTools.WRITE_CARD, """{"id":"dwarf","cards":"${esc("经历｜这一趟你下过地窖。")}"}"""),
+                stop(),
+            ),
+        )
+        val live = sessionOf(script)
+        wakeTheDwarfUp(live)
+
+        live.nextTurnNow("")
+        live.nextTurnNow("")
+
+        val toDirector = script.bodies.firstOrNull { "把它这一趟的经历写进它的人设" in it }
+        assertTrue(toDirector != null, "导演该被叫起来过：${script.bodies.size} 次请求")
+        assertTrue(
+            "地窖" in toDirector,
+            "这一趟里它说过的话要出现在理由里：${toDirector.substringAfter("【为什么把你叫起来】", "").take(300)}",
+        )
+    }
+
+    /**
      * **这一格说的话，下一格周围的人看得到**（用户定的）。
      *
      * 形状上的要害是那条总线的起点：给"这一格"的唤醒用的是**上一格**的起点（`previousTurnStartSeq`）。

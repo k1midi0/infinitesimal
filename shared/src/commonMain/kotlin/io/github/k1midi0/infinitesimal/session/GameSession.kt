@@ -832,6 +832,9 @@ class GameSession(
     /** 轮到某个 NPC 的"这一格"：一次唤醒，一个 [Heard.Tick]。 */
     private suspend fun tickFor(id: String, scope: CoroutineScope?) {
         val task = startTask("${labelOf(id)}在过它这一格…")
+        // **它这一趟是从哪一刻开始的**（§14.52）：`arrive` 会把 `active` 清成 null，而"这一趟里发生过
+        // 什么"要靠这个时刻从记录层里捞——所以必须在唤醒**之前**读下来。
+        val since = world.byId(id)?.active?.since
         val reaction = try {
             writes.withLock {
                 npc.wake(
@@ -856,7 +859,7 @@ class GameSession(
         if (reaction != null) {
             announce(id, reaction)
             // 它这一格里自己回去了（§14.52）：那也是最常发生的一种"回归"，所以这条路也要归档。
-            settleArrival(id, reaction)
+            settleArrival(id, reaction, since)
         }
         entities = world.all()
     }
@@ -1597,6 +1600,9 @@ class GameSession(
         }
         for (id in speakers) {
             val task = startTask("${labelOf(id)}在回应…")
+            // **它这一趟是从哪一刻开始的**（§14.52）：`arrive` 会把 `active` 清成 null，而"这一趟里发生
+            // 过什么"要靠这个时刻从记录层里捞——所以必须在唤醒**之前**读下来。
+            val departure = world.byId(id)?.active?.since
             val reaction = try {
                 writes.withLock {
                     // **被指向之后，它就不再走自己那个循环了**（§3.2.1、§14.51 落成代码的那一句）。
@@ -1640,7 +1646,7 @@ class GameSession(
             replies += announce(id, reaction)
             // **它自己回去了**（§14.52）：那一趟要归档进人设，所以这儿同步叫一次导演。按队列顺序来，
             // 一个人回来不影响后面那些人的顺序。
-            settleArrival(id, reaction)
+            settleArrival(id, reaction, since = departure)
         }
 
         // 它们可能改了世界（自己的「做」走过判定并提交）。
@@ -1683,6 +1689,9 @@ class GameSession(
         return reaction.said
     }
 
+    /** 一段"这一趟"最多带几行给导演（§14.52）。**它是个预算**：几十轮的经历压成最后八件事。 */
+    private val TRIP_LINES = 8
+
     /**
      * **它自己回到了循环上**（§3.2.1、§14.43、§14.52）。
      *
@@ -1704,7 +1713,7 @@ class GameSession(
      * **代价写在明处**：那一次 `arrive` 会多一次思考档调用（最贵的那一档，几十秒）。这是用户拍的
      * （§14.52 的面板问答："回复那一刻同步写一次"）。
      */
-    private suspend fun settleArrival(id: String, reaction: Reaction) {
+    private suspend fun settleArrival(id: String, reaction: Reaction, since: WorldTime?) {
         if (!reaction.arrived) return
         val name = labelOf(id)
         say(LogLine.Kind.OK, "（$name 回到了自己的日子上）")
@@ -1721,10 +1730,16 @@ class GameSession(
                     world,
                     Waking(
                         Wake.Called(
-                            why = "「$name」（id 是「$id」）刚刚从它自己日子外的那一趟回来了。" +
-                                "把它这一趟的经历写进它的人设——用 `${DirectorTools.WRITE_CARD}`。" +
-                                (back?.let { "它此刻回到的那一格是：「$it」。" } ?: "") +
-                                "这一趟什么都没改变它的话，什么都不写也是对的。",
+                            why = buildString {
+                                append("「$name」（id 是「$id」）刚刚从它自己日子外的那一趟回来了")
+                                append(if (since == null) "。\n" else "（那一趟是从 ${since} 开始的）。\n")
+                                // **这一趟里发生了什么，导演自己看不到**（它的提示词里没有记录层），
+                                // 所以这一段必须由代码从记录层里捞出来交给它——否则"人设追加"只能靠编。
+                                append(tripLog(id, since))
+                                append("\n把它这一趟的经历写进它的人设——用 `${DirectorTools.WRITE_CARD}`。")
+                                if (back != null) append("它此刻回到的那一格是：「$back」。")
+                                append("这一趟什么都没改变它的话，什么都不写也是对的。")
+                            },
                             returnedId = id,
                         ),
                         PLAYER,
@@ -1751,6 +1766,39 @@ class GameSession(
             say(LogLine.Kind.OK, "（它的人设$what——现在 ${after.size} 张：${after.titlesWithSize()}）")
         } else {
             say(LogLine.Kind.NOTE, "（导演看过它这一趟了，人设没动）")
+        }
+    }
+
+    /**
+     * **这一趟里与它有关的事**（§14.52）：从记录层里按时刻捞出来、压成几行交给导演。
+     *
+     * ## 为什么必须有它
+     *
+     * 导演的提示词里有身边那一片的地图、时间轴上排着的事、以及看得见的那些人——**唯独没有"刚才发生了
+     * 什么"**（记录层不进任何提示词，§14.39 定的）。而人设追加要回答的正是"这一趟给了它什么"。不给它这
+     * 一段，它只能对着"它刚从外头回来"这半句话编一张卡出来——而编出来的人设会与记录层里的事实对不上，
+     * 且没有任何地方会报错。
+     *
+     * 取的是"它自己说过做过的"加上"投向它的"（`addressedTo` 里有它），最多 [TRIP_LINES] 行，从最新
+     * 往回取——一段几十轮的经历压成最后八件与它有关的事，够它写一张卡了。
+     */
+    private fun tripLog(id: String, since: WorldTime?): String {
+        if (since == null) return "（这一趟刚开始——它此刻是刚从循环上被叫住的。）"
+        val mine = world.log.all().filter { event ->
+            event.at >= since && (event.actorId == id || id in event.addressedTo)
+        }
+        if (mine.isEmpty()) return "（记录层里没有与它有关的事——这一趟它什么都没做。）"
+        return buildString {
+            append("这一趟里与它有关的事（从记录里取的最近 ${minOf(mine.size, TRIP_LINES)} 条）：\n")
+            mine.takeLast(TRIP_LINES).forEach { event ->
+                append("- ").append(event.at).append("　")
+                when {
+                    event.actorId == id -> append("它：").append(event.text)
+                    else -> append(event.actorLabel.ifBlank { "别人" }).append("：").append(event.text)
+                }
+                if (event.effects.isNotEmpty()) append("（后果：").append(event.effects.joinToString("；")).append("）")
+                append("\n")
+            }
         }
     }
 
