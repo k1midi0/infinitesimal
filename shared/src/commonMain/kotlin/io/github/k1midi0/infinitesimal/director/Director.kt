@@ -367,6 +367,7 @@ class Director(
         DirectorTools.WRITE_CYCLE -> writeCycle(call, world, waking)
         DirectorTools.SPAWN_CHARACTER -> spawnCharacter(call, world, waking)
         DirectorTools.WRITE_CARD -> writeCard(call, world, waking)
+        DirectorTools.PROMOTE_CHARACTER -> promoteCharacter(call, world, waking)
         else -> "没有叫「${call.name}」的工具。你现在能用的只有：" +
             DirectorTools.of(waking.why.tier).joinToString("、") { it.function.name } + "。"
     }
@@ -489,6 +490,33 @@ class Director(
             append("\n你写进去的卡是：")
             cards.forEach { append("\n- ").append(it.title).append("：").append(it.content) }
         }
+    }
+
+    // ── 归宿：升成剧情角色（§14.53） ────────────────────────────────────────────────
+
+    /**
+     * 导演手上那只"把它升成剧情角色"的手（§3.2.1 的第 2 件事）。
+     *
+     * 与 [writeCycle] / [spawnCharacter] / [writeCard] 同一个形状：解码 → 世界里有没有这个人 →
+     * [CyclePlanner.dropProblems] 五道门 → 通过之后才 [CyclePlanner.dropActiveCycle]。答复里那句
+     * "升好了"只在真的落库之后出现（§1.5 第三条）。
+     *
+     * **位置不动**：升剧情不是传送。它此刻站在哪儿就留在哪儿——从这一刻起没人会再挪它。
+     */
+    private fun promoteCharacter(call: ToolCallRequest, world: World, waking: Waking): String {
+        val args = decodeCall(PromoteArgs.serializer(), call)
+            ?: return "${call.name} 的参数不是合法 JSON：${call.arguments.take(160)}"
+
+        val id = args.id.trim()
+        val visible = visibleTo(world, waking.focusId)
+        val problems = CyclePlanner.dropProblems(world, id, visible)
+        if (problems.isNotEmpty()) return "没升成：\n" + problems.joinToString("\n")
+
+        CyclePlanner.dropActiveCycle(world, id)
+        val after = world.byId(id)!!
+        return "升好了：「${after.label}」现在是**剧情角色**——它没有作息了，到点不会有人挪它，" +
+            "它会一直待在 (${after.x}, ${after.y}, ${after.z})，等你按名字叫它。" +
+            "要让它重新有自己的日子，给它写一份新的作息（`${DirectorTools.WRITE_CYCLE}`）。"
     }
 
     // ── 人设追加（§14.52） ──────────────────────────────────────────────────────────
@@ -998,8 +1026,10 @@ class Director(
             你有两档，同一次工作里可能会换档：
             · **快速档**看着。玩家每做完一个动作，你被叫起来一次，判断该不该动手。你**只有一只手**：
               唤醒思考档。你自己不能改任何东西。
-            · **思考档**干活。你只有五只手：排时间轴、长地形与放东西、看地图、给一个角色写它的作息、
-              放一个有名字的人出来。
+            · **思考档**干活。你手上有七只手：排时间轴、长地形与放东西、看地图、给一个角色写它的作息、
+              放一个有名字的人出来、写一个人的人设、把一个已经活着的人升成剧情角色。
+              （**这一行要跟着手一起改**——它是模型每次开工读到的第一段，而漏改它的症状是"那只手明明
+              在，它却不知道自己有"。§14.53 才发现它从 §14.52 起就少了后面两只。）
 
             **换档不是换人。** 同一次工作里你从头到尾是同一个你，只是快的那一档不该做慢的那一档的判断。
 
@@ -1052,6 +1082,16 @@ class Director(
                 **它这一趟经历了什么不用你写**——那些事本来就在它自己的上下文里。两条上限（一张
                 400 字、合计 2000 字）到顶时，**改写或合并现有的那几张**，别只往上添——卡是它每次
                 醒来都要全文读一遍的东西。
+            15. 同一个人被你叫起来那一下，你还要判**归宿**（§3.2.1 的第 2 件事）：**它留在故事里，
+                还是回到日子里**。三条路，而**不做任何事也是其中一条**：
+                  · **升它成剧情角色**（`promote_character`）：从此它没有作息、到点不会被挪，就守在
+                    此刻这个地方，等你按名字叫它。**这是丢掉它的日子**——用在该它一直留在故事里的
+                    时候（它成了某条线的主角、要一直站在这里等玩家回来）。**位置不动**，它不是被传送。
+                  · **让它就地过日子**（`write_cycle`）：它此刻在哪儿，就把"此刻"那一格写成那个地方、
+                    那件事——它照样有自己的日子，只是日子跟着它走。**卡在别处回不去的那个人，走这条。**
+                  · **什么都不做**：它自己想回去时，会用 `arrive` 说（§14.43）。**这是最常对的那一条**
+                    ——一次普通搭话之后，它多半就该回去干它的活了。
+                **你手上没有"把它放回去"的动作**，那是故意的：回不回去该是**它自己**说的。
         """.trimIndent()
     }
 }
@@ -1115,3 +1155,7 @@ internal data class WriteCardArgs(
     val id: String = "",
     val cards: String = "",
 )
+
+/** [DirectorTools.PROMOTE_CHARACTER] 的参数。 */
+@Serializable
+internal data class PromoteArgs(val id: String = "")

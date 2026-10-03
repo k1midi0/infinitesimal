@@ -226,6 +226,49 @@ object CyclePlanner {
      */
     private fun liveTargetOf(active: Active, fresh: Cycle) =
         active.target?.takeIf { want -> fresh.beats.any { it.atMinute == want.atMinute } }
+
+    // ── 归宿的另一半：升成剧情角色（§14.53、§3.2.1 的第 2 件事） ────────────────────────
+
+    /**
+     * **把它升成剧情角色**：丢掉它的作息（§14.53）。
+     *
+     * ## 为什么"升剧情"就是"清掉作息"
+     *
+     * 因为这个项目里**两档人是结构决定的**：有作息 = 氛围角色（代码按时钟挪它，平时零模型调用），
+     * 没有作息 = 剧情角色（待在原地，被叫到才有人演它）。§14.46 放一个人出来时就是这么分的
+     * （`beats` 空着 = 剧情角色），而这一只做的是**同一个判断的另一半：一个已经活着的人怎么变档**。
+     * 用户 2026-09-28 就是这么定的（另外两个选项——加一个显式标记、或者"保留作息但暂停"——都被否了：
+     * 那会多出一个字段、一种状态）。
+     *
+     * ## 为什么连 `active` 一起清掉
+     *
+     * 用户定的。而且不清的话会留一个**永远做不了的动作**：`Active.canGo` 要靠 `cycle.beatAt`，而空循环
+     * 恒为 null——于是它每次醒来都会看到「做完了就用 `arrive` 回去」，而那只手对它**恒失败**。清掉
+     * `active` 之后它就不再是"脱轨的人"，它就是"这种角色"。
+     *
+     * （`Schedule.longAbsent` 那一侧不用管：它的判据里有 `cycle.beatAt ?: beats.firstOrNull() ?: continue`，
+     * 空循环的人本来就不会被报"脱轨太久"。）
+     */
+    fun dropProblems(world: World, id: String, visible: Set<String>): List<String> = buildList {
+        val target = world.byId(id)
+        when {
+            id.isEmpty() -> add("没说要让谁变成剧情角色。id 填你眼前那段清单里的那个角色。")
+            target == null -> add("世界里没有 id 是「$id」的东西。")
+            target.kind != CHARACTER_KIND -> add("「${target.label}」不是角色（它是个${target.kind}）。")
+            target.cycle.isEmpty -> add("「${target.label}」**本来就是剧情角色**——它没有作息，到点也不会被挪。")
+            id !in visible -> add("「${target.label}」不在你这一轮看得见的范围里。")
+        }
+    }
+
+    /**
+     * 落库：**作息清空、活跃标记清掉**，位置不动（它此刻站在哪儿就留在哪儿——升剧情不是传送）。
+     *
+     * 只在校验通过之后被调用。
+     */
+    fun dropActiveCycle(world: World, id: String) {
+        val target = world.byId(id) ?: return
+        world.put(target.copy(cycle = Cycle(), active = null))
+    }
 }
 
 /**
