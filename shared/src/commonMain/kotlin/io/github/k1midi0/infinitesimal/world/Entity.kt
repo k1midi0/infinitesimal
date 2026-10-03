@@ -167,4 +167,11 @@ data class WorldSnapshot(
      * 默认空表——没排过队的角色照样能说话（排在最后），所以**老快照装回来也能跑**。
      */
     val speakQueue: List<String> = emptyList(),
+    /**
+     * **剧本池**（§8.4、§12 第 25 项）。
+     *
+     * 默认空表——与 [speakQueue] 同一条纪律：**带默认值的新字段不用加 format 版本**，老快照装回来照样
+     * 能跑（只是池子是空的，那是"这一局还没有剧本"，不是坏档）。
+     */
+    val scripts: List<Script> = emptyList(),
 )

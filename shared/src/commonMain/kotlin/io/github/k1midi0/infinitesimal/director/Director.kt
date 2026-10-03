@@ -24,6 +24,8 @@ import io.github.k1midi0.infinitesimal.spatial.nearestMissing
 import io.github.k1midi0.infinitesimal.spatial.requiredChunks
 import io.github.k1midi0.infinitesimal.world.BUFFER_RADIUS_CHUNKS
 import io.github.k1midi0.infinitesimal.world.CHARACTER_KIND
+import io.github.k1midi0.infinitesimal.world.ScriptState
+import io.github.k1midi0.infinitesimal.world.listing
 import io.github.k1midi0.infinitesimal.world.ChunkKey
 import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.TimelineEntry
@@ -368,6 +370,9 @@ class Director(
         DirectorTools.SPAWN_CHARACTER -> spawnCharacter(call, world, waking)
         DirectorTools.WRITE_CARD -> writeCard(call, world, waking)
         DirectorTools.PROMOTE_CHARACTER -> promoteCharacter(call, world, waking)
+        DirectorTools.LOOK_SCRIPT -> lookScript(call, world)
+        DirectorTools.WRITE_SCRIPT -> writeScript(call, world, waking)
+        DirectorTools.ANNOTATE_SCRIPT -> annotateScript(call, world)
         else -> "没有叫「${call.name}」的工具。你现在能用的只有：" +
             DirectorTools.of(waking.why.tier).joinToString("、") { it.function.name } + "。"
     }
@@ -517,6 +522,80 @@ class Director(
         return "升好了：「${after.label}」现在是**剧情角色**——它没有作息了，到点不会有人挪它，" +
             "它会一直待在 (${after.x}, ${after.y}, ${after.z})，等你按名字叫它。" +
             "要让它重新有自己的日子，给它写一份新的作息（`${DirectorTools.WRITE_CYCLE}`）。"
+    }
+
+    // ── 剧本池（§8.4、§14.54） ──────────────────────────────────────────────────────
+
+    /**
+     * **打开一份剧本读它**（§8.4）：正文 + 最近的几条批注。
+     *
+     * 它不改世界，所以随便谁（两档）都能调。
+     */
+    private fun lookScript(call: ToolCallRequest, world: World): String {
+        val args = decodeCall(LookScriptArgs.serializer(), call)
+            ?: return "${call.name} 的参数不是合法 JSON：${call.arguments.take(160)}"
+        val script = world.scripts.firstOrNull { it.id == args.id.trim() }
+            ?: return "池子里没有 id 是「${args.id}」的剧本。现在这些是：" +
+            (if (world.scripts.isEmpty()) "（一条都没有）" else world.scripts.joinToString("、") { it.id })
+
+        return buildString {
+            append("【${script.title}】（id 是「${script.id}」）现在：${script.state.label}\n")
+            append("摘要：${script.summary}\n\n")
+            append("正文：\n").append(script.body).append("\n")
+            if (script.notes.isNotEmpty()) {
+                append("\n批注（最近 ${minOf(script.notes.size, ScriptPlanner.NOTES_IN_PROMPT)} 条，" +
+                    "一共 ${script.notes.size} 条）：\n")
+                script.notes.takeLast(ScriptPlanner.NOTES_IN_PROMPT).forEach {
+                    append("- ").append(it.at).append("　").append(it.text).append("\n")
+                }
+            }
+        }
+    }
+
+    /**
+     * **写一份剧本**（新建，或者把已有的那一条整张换掉）。与 [writeCycle] 同一个形状。
+     */
+    private fun writeScript(call: ToolCallRequest, world: World, waking: Waking): String {
+        val args = decodeCall(WriteScriptArgs.serializer(), call)
+            ?: return "${call.name} 的参数不是合法 JSON：${call.arguments.take(160)}"
+
+        val state = ScriptState.of(args.state)
+            ?: return "「${args.state}」不是一个状态。五态是：未安排 / 已安排 / 运行 / 中断 / 完结。" +
+                "（「中断」与「完结」的差别是「以后还会不会发生」。）"
+
+        val write = ScriptWrite(
+            id = args.id,
+            title = args.title,
+            summary = args.summary,
+            body = args.body,
+            state = state,
+        )
+        val problems = ScriptPlanner.problems(world, listOf(write))
+        if (problems.isNotEmpty()) return "这份剧本没写进去：\n" + problems.joinToString("\n")
+
+        val before = world.scripts.size
+        ScriptPlanner.apply(world, listOf(write))
+        val after = world.scripts.first { it.id == args.id.trim() }
+        return "写好了：「${after.title}」（id 是「${after.id}」）现在：${after.state.label}。" +
+            (if (world.scripts.size > before) "池子里现在有 ${world.scripts.size} 条线。" else "这一条替换了原来那份（批注留着）。") +
+            "\n摘要：${after.summary}"
+    }
+
+    /**
+     * **往一份剧本上写一条批注**（§8.4）——**快速档唯一的写权限**（§1.4）。
+     *
+     * 时刻由代码取（模型不知道现在是几点，而这件事只有一个答案）。
+     */
+    private fun annotateScript(call: ToolCallRequest, world: World): String {
+        val args = decodeCall(AnnotateScriptArgs.serializer(), call)
+            ?: return "${call.name} 的参数不是合法 JSON：${call.arguments.take(160)}"
+
+        val problems = ScriptPlanner.noteProblems(world, args.id, args.text)
+        if (problems.isNotEmpty()) return "这条批注没记上：\n" + problems.joinToString("\n")
+
+        ScriptPlanner.annotate(world, args.id, args.text, world.clock)
+        val after = world.scripts.first { it.id == args.id.trim() }
+        return "记下了（${after.notes.size} 条）。"
     }
 
     // ── 人设追加（§14.52） ──────────────────────────────────────────────────────────
@@ -805,6 +884,10 @@ class Director(
                 appendLine("【你在哪一档】")
                 appendLine("快速档。你只是看着。")
                 appendLine()
+                // **快速档也要看剧本池**：它唯一的写权限就是往剧本上记批注（§8.5、§1.4），
+                // 而"这一轮与哪条线有关"要靠那份清单认。
+                append(scriptPool(world))
+                appendLine()
             }
 
             is Wake.Called -> {
@@ -894,6 +977,9 @@ class Director(
         appendLine(timelineListing(world, scheduled))
         appendLine()
 
+        append(scriptPool(world))
+        appendLine()
+
         val people = visibleTo(world, waking.focusId).mapNotNull { world.byId(it) }
             .filter { it.kind == CHARACTER_KIND }
             .sortedBy { it.id }
@@ -964,6 +1050,23 @@ class Director(
         val near = nearestMissing(world, player) ?: return "缓冲圈里没有空地了。"
         return "还有 ${near.chunksAway} 块远，离内圈边缘 ${near.beyondHard} 块。" +
             "（内圈就是玩家非有地形不可的那一圈。）"
+    }
+
+    /**
+     * **剧本池那一节**（§8.4、§14.54）：标题 + 摘要 + 状态，再带上每份最近的几条批注。
+     *
+     * **正文不在里面**——那是 `look_script` 的事（§8.4 那句"正文要打开才看"）。所以这一段是唯一常驻
+     * 提示词的剧本内容，而它的成本是"**份数 × 摘要**"。两档都要看它：思考档照它安排环境，快速档照它
+     * 判断这一轮该不该往上记一条批注。
+     */
+    private fun scriptPool(world: World): String = buildString {
+        appendLine("【剧本池】")
+        appendLine(world.scripts.listing())
+        world.scripts.forEach { script ->
+            script.notes.takeLast(ScriptPlanner.NOTES_IN_PROMPT).forEach {
+                appendLine("    ${script.id} · ${it.at}　${it.text}")
+            }
+        }
     }
 
     private fun timelineListing(world: World, scheduled: List<TimelineEntry>): String {
@@ -1092,6 +1195,16 @@ class Director(
                   · **什么都不做**：它自己想回去时，会用 `arrive` 说（§14.43）。**这是最常对的那一条**
                     ——一次普通搭话之后，它多半就该回去干它的活了。
                 **你手上没有"把它放回去"的动作**，那是故意的：回不回去该是**它自己**说的。
+            16. **剧本池**是你手上那几条线：**标题 + 摘要 + 状态 + 最近的批注**进你每一次开工读的那份
+                清单，**正文要 `look_script` 打开看**。用 `write_script` 写新的、或者改写已有的那一条。
+                **一份剧本 = 一条完整的剧情，用自然语言写**，而它是给你**安排环境**用的、不是舞台戏：
+                你照着它设计环境（公告上贴着「圣剑拔出的日子到了」、而圣剑只认勇者），玩家看见公告
+                **自己去拔**，也可能根本不拔、直接走掉——**走了就是偏离，你来改剧本**。五态照实写：
+                **「中断」与「完结」的差别是「以后还会不会发生」**，不是「谁结束了它」。池子里最多八
+                条线，而摘要才是常驻的那一段（正文不进提示词）。同一个世界里还能有**互相冲突**的剧本
+                ——两个仇人，玩家帮其中一方，探索就有了深度。
+            17. **往剧本上记批注是快速档的活**（它唯一能写的东西）。批注是**只追加、永不改写**的：
+                **改计划写正文，记发生过什么写批注**——两者别混在一个字段里（§1.5）。
         """.trimIndent()
     }
 }
@@ -1159,3 +1272,24 @@ internal data class WriteCardArgs(
 /** [DirectorTools.PROMOTE_CHARACTER] 的参数。 */
 @Serializable
 internal data class PromoteArgs(val id: String = "")
+
+/** [DirectorTools.LOOK_SCRIPT] 的参数。 */
+@Serializable
+internal data class LookScriptArgs(val id: String = "")
+
+/** [DirectorTools.WRITE_SCRIPT] 的参数。**全部有默认值**，缺字段只会退化成一次看得懂的失败。 */
+@Serializable
+internal data class WriteScriptArgs(
+    val id: String = "",
+    val title: String = "",
+    val summary: String = "",
+    val body: String = "",
+    val state: String = "",
+)
+
+/** [DirectorTools.ANNOTATE_SCRIPT] 的参数。 */
+@Serializable
+internal data class AnnotateScriptArgs(
+    val id: String = "",
+    val text: String = "",
+)

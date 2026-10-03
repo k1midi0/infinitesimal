@@ -67,6 +67,16 @@ class World private constructor(
      * 默认空表——**没排过队的角色照样能说话**（排在最后），世界不必先有人给它排个座次才能跑起来。
      */
     var speakQueue: List<String> = emptyList(),
+    /**
+     * **剧本池**（§8.4、§12 第 25 项）：导演手上那几条线的正文、摘要与状态。
+     *
+     * 它落在**世界**这一层，而不是导演自己的内存里——与 [timeline] 同一条理由（§8.1 那条分界：
+     * **时间是世界的事实，往前走是会话的动作**）。剧本是"这个世界将来要发生的那几条线"，它必须存下
+     * 来、只有一个答案、随存档走（§14.49）。
+     *
+     * 名单本身是 `var`（整张替换是导演那一侧的语义），但**一条剧本的批注只追加**（见 [Script]）。
+     */
+    var scripts: List<Script> = emptyList(),
 ) {
 
     fun all(): List<Entity> = entities.values.toList()
@@ -120,6 +130,7 @@ class World private constructor(
         zoning = zoning.snapshot(),
         log = log.snapshot(),
         speakQueue = speakQueue,
+        scripts = scripts,
     )
 
     companion object {
@@ -144,6 +155,7 @@ class World private constructor(
             Zoning.from(snapshot.zoning),
             EventLog.from(snapshot.log),
             snapshot.speakQueue,
+            snapshot.scripts,
         )
     }
 }

@@ -42,6 +42,8 @@ import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.EventKind
 import io.github.k1midi0.infinitesimal.world.Placement
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
+import io.github.k1midi0.infinitesimal.world.Script
+import io.github.k1midi0.infinitesimal.world.ScriptState
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.Spot
 import io.github.k1midi0.infinitesimal.world.TerrainSnapshot
@@ -154,6 +156,13 @@ class GameSession(
      */
     speakQueue: List<String> = StartingWorld.speakQueue(),
     /**
+     * **开局的剧本池**（§8.4、§14.54）。
+     *
+     * 与 [speakQueue] 同一条纪律、也是同一个坑：那一层从前只搬了四样内容，于是发言名单**从来没被带进
+     * 世界**（§14.51 才发现）。剧本池是第六样，所以在同一处默认成开局那一份。
+     */
+    scripts: List<Script> = StartingWorld.scripts(),
+    /**
      * 预设库（附录 A.14）。**它挂在会话上**，因为它是活的：一局里造出来的东西会进生成那个包，
      * 而判定、生成器、导演该看**同一份**——三处各拿一份的话，"刚才造过的那张桌子"对另一处就不存在，
      * 而症状是同一件东西被反复建模。
@@ -212,7 +221,7 @@ class GameSession(
     startingWorld: World? = null,
 ) {
     val world: World = startingWorld ?: World.from(
-        WorldSnapshot(seed, rules, terrain = ground, zoning = zoning, speakQueue = speakQueue),
+        WorldSnapshot(seed, rules, terrain = ground, zoning = zoning, speakQueue = speakQueue, scripts = scripts),
     )
     private val renderer = Renderer(config, world)
 
