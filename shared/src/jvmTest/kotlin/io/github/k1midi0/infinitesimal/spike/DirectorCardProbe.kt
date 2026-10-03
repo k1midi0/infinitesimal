@@ -96,22 +96,22 @@ class DirectorCardProbe {
         return world
     }
 
-    /** 会话那一侧拼的是同一个形状（`GameSession.tripLog`）：开头一句 + 每行一条 + 收尾一句。 */
-    private fun reasonFor(world: World, name: String, id: String, since: WorldTime): String = buildString {
-        append("$name（id 是「$id」）刚刚从**氛围角色变成了活跃角色**：有人跟它说上话了，")
-        append("于是它被从自己的日子上拿了下来（§3.2.1）。")
-        append("这一下由你决定要不要给它**补背景**——它现在这一份人设够不够应付接下来要问它的事：")
-        append("会不会有人问它这一带有什么、会不会要托付它一条支线、要不要把它升成剧情角色。")
-        append("够了就什么都不写。要补就写：**改写它现有的某一张**（标题照着它现在那几张写），")
+    /** 会话那一侧拼的是同一个形状（`GameSession.wakeTheDirectorAboutTurningActive`）。 */
+    private fun reasonFor(world: World, name: String, id: String, heard: String): String = buildString {
+        append("$name（id 是「$id」）刚刚从**氛围角色变成了活跃角色**：")
+        append("有人跟它说上话了，于是它被从自己的日子上拿了下来（§3.2.1）。\n")
+        append("跟它说的是：「$heard」\n")
+        append("由你决定要不要给它**补背景**——**只有你能说出一件接下来确实会问它的事**")
+        append("（问路、托付一条支线、要它知道更多）时才补；说不出来就**什么都别写**——那是合法的结果。")
+        append("要补就写：**改写它现有的某一张**（标题照着它现在那几张写），")
         append("或者**添一张新的**（例如它其实是谁的传人、它知道哪条路）。")
         append("**别写它这一趟经历了什么**——那些事本来就在它自己的上下文里。")
     }
 
-    private suspend fun oneRun(label: String, trip: List<Triple<String, String, String>>, apiKey: String) {
+    private suspend fun oneRun(label: String, heard: String, apiKey: String) {
         val config = configOf(apiKey)
-        val world = scene(trip)
+        val world = scene(listOf(Triple("player", heard, "")))
         val before = world.byId("dwarf")!!.cards
-        val since = world.byId("dwarf")!!.active!!.since
 
         val director = Director(
             LlmClient(config.copy(userId = io.github.k1midi0.infinitesimal.config.SystemId.DIRECTOR)),
@@ -123,7 +123,7 @@ class DirectorCardProbe {
         val result = director.wake(
             world,
             Waking(
-                Wake.Called(reasonFor(world, "酒馆里的矮人", "dwarf", since), aboutId = "dwarf"),
+                Wake.Called(reasonFor(world, "酒馆里的矮人", "dwarf", heard), aboutId = "dwarf"),
                 "player",
                 origin(world),
             ),
@@ -155,15 +155,11 @@ class DirectorCardProbe {
 
         // **对照一：世界接下来要问它一件它现在答不上来的事。** 玩家刚在问路，而它那四张卡
         // （身份/性格/交互范围/口癖）里一个字都没有"这一带有什么"。**期望它补一层背景。**
-        val askedTheWay = listOf(
-            Triple("player", "这镇上哪儿还有酒馆？", ""),
-            Triple("dwarf", "就这一家。别的镇上去。", ""),
-        )
-        // **对照二：一次普通搭话，它那几张卡够用。** 期望它什么都不写。
-        val smallTalk = listOf(
-            Triple("player", "你喝什么呢？", ""),
-            Triple("dwarf", "跟客人一样。", ""),
-        )
+        val askedTheWay = "这镇上哪儿还有酒馆？"
+        // **对照二：一次普通搭话，它那几张卡够用。** 期望它什么都不写——这一档是
+        // 2026-09-28 第一遍跑出来的**假阳性**（当时理由里只有一份"将来可能会问它什么"的泛泛清单，
+        // 于是它两次都补）：现在理由里带上了"跟它说的是什么"，这一档就是那条修正的判据。
+        val smallTalk = "你喝什么呢？"
 
         repeat(runs) { i ->
             oneRun("对照一 · 它被问了一件答不上来的事（第 ${i + 1} 遍）", askedTheWay, apiKey)
