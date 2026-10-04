@@ -99,6 +99,13 @@ fun GameScreen(
     onPickOpenPath: (suspend () -> String?)? = null,
     /** 读进来那份存档要交给谁（主界面那一边会换掉整个会话）。 */
     onOpen: (suspend (String) -> Unit)? = null,
+    /**
+     * **中止这一格**（§14.58）。默认 null = 这一层没有那条路（按钮不出现）。
+     *
+     * 入口那一边要做的有两件：取消这一局还在飞的调用，**并且拿上一份自动存档重建一个会话**——那才
+     * 等于"回到上一格"。两件都在入口（它拿着存档路径与会话的持有权），这一层只负责把按钮给出来。
+     */
+    onAbortTurn: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var said by remember { mutableStateOf("") }
@@ -112,6 +119,7 @@ fun GameScreen(
                 onPickSavePath = onPickSavePath,
                 onPickOpenPath = onPickOpenPath,
                 onOpen = onOpen,
+                onAbortTurn = onAbortTurn,
                 scope = scope,
             )
             Spacer(Modifier.height(8.dp))
@@ -178,6 +186,7 @@ private fun TopBar(
     onPickSavePath: (suspend () -> String?)?,
     onPickOpenPath: (suspend () -> String?)?,
     onOpen: (suspend (String) -> Unit)?,
+    onAbortTurn: (() -> Unit)?,
     scope: CoroutineScope,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -218,6 +227,19 @@ private fun TopBar(
             enabled = !session.busy && session.pending == null,
         ) {
             Text("让导演排一排")
+        }
+        /*
+         * **「中止这一格」**（§14.58，用户定的一条出路）。
+         *
+         * 它只在**有活在跑**的时候出现：空着的时候没有"这一格"可中止，摆一个永远灰着的按钮只会让人
+         * 以为它坏了。按下之后那两件事都在入口那一层做——取消还在飞的调用，然后**拿上一份自动存档重建
+         * 一个会话**，所以世界回到**上一格**，而不是回到半路（判定第二步是就地提交的，半路没有干净的
+         * 落脚点）。
+         */
+        if (onAbortTurn != null && session.busy) {
+            TextButton(onClick = { onAbortTurn() }) {
+                Text("中止这一格", color = MaterialTheme.colorScheme.error)
+            }
         }
         /*
          * `存`（§14.49）。

@@ -13,13 +13,19 @@ import io.github.k1midi0.infinitesimal.llm.ThinkingRequest
 import io.github.k1midi0.infinitesimal.llm.ToolCall
 import io.github.k1midi0.infinitesimal.llm.ToolDefinition
 import io.github.k1midi0.infinitesimal.llm.Usage
+import io.github.k1midi0.infinitesimal.progress.Progress
 import io.github.k1midi0.infinitesimal.world.Preset
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.ShapeGrid
 import io.github.k1midi0.infinitesimal.world.ShapeLimits
 import io.github.k1midi0.infinitesimal.world.VOXEL_CM
 import io.github.k1midi0.infinitesimal.world.VoxelShape
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -73,6 +79,15 @@ class ShapeModeler(
     var requestCount = 0
         private set
 
+    /**
+     * 数请求与"画完了几件"的那个小锁（§14.58）。
+     *
+     * 并行画之后 `requestCount++` 与 `++finished` 都是**共享的普通变量**：不加锁的话，两个画完的
+     * 协程可能各自读到同一个旧值、写回同一个新值（丢一次），而症状是账上少算一次请求——正是那种
+     * "只在真的并行时才偶尔出现"的错。这一段是微秒级的，锁起来不花钱。
+     */
+    private val counting = Mutex()
+
     /** 最近一次建模失败时，代码报回去的那些问题。诊断用。 */
     var lastProblems: List<String> = emptyList()
         private set
@@ -122,26 +137,96 @@ class ShapeModeler(
                 tags = it.tags,
             )
         }
-        return when (val result = draw(brief)) {
-            is Result.Modeled -> {
-                // **产物是一条预设**（用户定的），不是一份加速表：它进生成预设包，存档要带走。
-                val stored = presets.learn(
-                    Preset(
-                        name = result.name,
-                        brief = brief.trim(),
-                        shape = result.shape,
-                        category = result.category,
-                        tags = result.tags,
-                    ),
-                )
-                Result.Modeled(stored.name, stored.shape, category = stored.category, tags = stored.tags)
-            }
-
-            is Result.Failed -> result
-        }
+        return store(
+            brief = brief,
+            result = draw(brief) { round ->
+                // 一件一件画的时候（判定那只 `make_object` 手走的就是这条路），
+                // "第几个来回"是这一行字最有用的那部分（§14.58）。
+                Progress.report("正在建模「${brief.take(BRIEF_IN_STATUS)}」（第 $round 回来）")
+            },
+        )
     }
 
-    private suspend fun draw(brief: String): Result {
+    /**
+     * **一次画一批**（§14.58）：名单是现成的，所以不必画完一件再去问下一件。
+     *
+     * 用户对这一条的原话是「建模应该是可以并行的，可以一次性给出要的物品名单，并行建模」。这一层正是
+     * 那件事落地的地方——而它为什么值：一回合点名十几件东西时，一件一件画是**串行等待**（每一件自己
+     * 还要几个到二十几个来回，而每个来回十几秒到一分钟）。
+     *
+     * ## 三件事的次序是这一支的要害
+     *
+     * 1. **先串行查缓存**（免费、且命中就不必画）；
+     * 2. **并行画**——[draw] 只跟端点说话、**不碰库**，所以这一批互不干扰；
+     * 3. **落库串行、按名单顺序**——[PresetLibrary.generated] 是一个 `LinkedHashMap`，并发 `learn` 会让
+     *    它坏掉（而这正是"并行"最容易踩的那一脚）；顺序定下来之后，同一批的产物在存档里的先后也就是
+     *    稳定的。
+     *
+     * [onProgress] 收到的是"画完了几件"（`done`/`total`），它由**画完那一刻**调用——所以那行字是真的
+     * 在动，而不是等整批都回来才跳一下。
+     */
+    suspend fun modelAll(
+        briefs: Collection<String>,
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
+    ): Map<String, Result> {
+        val wanted = briefs.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        val out = LinkedHashMap<String, Result>()
+        val misses = mutableListOf<String>()
+
+        for (brief in wanted) {
+            val hit = presets.byBrief(brief)
+            if (hit != null) {
+                out[brief] = Result.Modeled(
+                    name = hit.name,
+                    shape = hit.shape,
+                    cached = true,
+                    category = hit.category,
+                    tags = hit.tags,
+                )
+            } else {
+                misses += brief
+            }
+        }
+        if (misses.isEmpty()) return out
+
+        var finished = 0
+        val drawn = coroutineScope {
+            misses.map { brief ->
+                async {
+                    val result = draw(brief)
+                    val done = counting.withLock { ++finished }
+                    onProgress(done, misses.size)
+                    brief to result
+                }
+            }.awaitAll()
+        }
+
+        // **落库在这里、一件一件来**（见上面第 3 条）。
+        for ((brief, result) in drawn) {
+            out[brief] = store(brief, result)
+        }
+        return out
+    }
+
+    /** 画成的那一件进库（"产物是一条预设"，不是一份加速表）；没画成就原样退回。 */
+    private fun store(brief: String, result: Result): Result = when (result) {
+        is Result.Modeled -> {
+            val stored = presets.learn(
+                Preset(
+                    name = result.name,
+                    brief = brief.trim(),
+                    shape = result.shape,
+                    category = result.category,
+                    tags = result.tags,
+                ),
+            )
+            Result.Modeled(stored.name, stored.shape, category = stored.category, tags = stored.tags)
+        }
+
+        is Result.Failed -> result
+    }
+
+    private suspend fun draw(brief: String, onRound: (Int) -> Unit = {}): Result {
         /** 交上来的层：z -> 这一层的所有行。**同一个 z 再交一次就是改那一层。** */
         val floors = sortedMapOf<Int, String>()
         val messages = mutableListOf(
@@ -154,7 +239,8 @@ class ShapeModeler(
 
         while (failures < maxAttempts && rounds < MAX_ROUNDS) {
             rounds++
-            requestCount++
+            onRound(rounds)
+            counting.withLock { requestCount++ }
             val raw = Raw.of(client.streamChat(
                 messages = messages,
                 tools = TOOLS,
@@ -426,6 +512,14 @@ class ShapeModeler(
          * 东西有几层就该交几层。40 够一个两米高、每 5 厘米一层的东西（40 层）一次画完。
          */
         const val MAX_ROUNDS = 40
+
+        /**
+         * 状态那一行里那句要求最多几个字（§14.58）。
+         *
+         * 它只进**给人看的那一行字**（`Progress`），不进任何请求：一句要求可以写得很长，而一行状态被
+         * 它撑满之后，"正在建模哪一件"反而看不见了。
+         */
+        const val BRIEF_IN_STATUS = 24
 
         /**
          * 一条预设最多几个标签。

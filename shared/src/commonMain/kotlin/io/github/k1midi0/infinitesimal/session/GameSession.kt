@@ -55,9 +55,13 @@ import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import io.github.k1midi0.infinitesimal.world.ZoningSnapshot
 import io.github.k1midi0.infinitesimal.world.WorldTime
 import io.github.k1midi0.infinitesimal.world.speakersAmong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -887,7 +891,7 @@ class GameSession(
 
         val stop = advanceSlot()
         closeGap()
-        if (scope != null) scope.launch { watch(roundNarrative(stop)) }
+        if (scope != null) remember(scope.launch { watch(roundNarrative(stop)) })
         autoSave(scope ?: fallbackScope, acted)
     }
 
@@ -1078,9 +1082,17 @@ class GameSession(
         playLog?.section("$what｜${world.clock}")
         val mine = startTask(what)
         foreground = mine
-        scope.launch {
+        // **`UNDISPATCHED`：这一格要同步进到 `try` 里**（§14.58）。`launch` 默认是"排到 dispatcher 上，
+        // 稍后才开始跑"，而 `busy` 是**现在**就置上了——于是在"还没轮到开始跑"的那一小段里按中止，
+        // 取消掉的是一个**从未进入 try/finally** 的协程：`finally` 不执行，`busy` 永远为真、按钮永远锁着。
+        // （玩家按下按钮之后马上又按中止，正好落在这条缝里；这一支的测试第一次就是这么挂住的。）
+        remember(scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 block()
+            } catch (t: CancellationException) {
+                // **中止这一格**（§14.58）：取消不是"出错了"。世界本来就要回到上一份存档，日志里不该
+                // 留一句吓人的话；重新抛出去，让这一次按取消的方式收场。
+                throw t
             } catch (t: Throwable) {
                 say(LogLine.Kind.ERROR, "出错了：${t.message}")
             } finally {
@@ -1093,9 +1105,13 @@ class GameSession(
                 status = ""
                 // 这一回合的账已经结清了，现在才是"存下来的世界"与"我看到的那个世界"一致的时刻
                 // （§14.49）。它在 finally 的末尾：前面那些一旦抛出去，这里就不该再动。
-                autoSave(scope, what)
+                //
+                // **中止这一格时不写盘**（§14.58）：这一格里的改动是就地提交的、半路没有干净的落脚点，
+                // 而"上一格"正是盘上那一份——在这里写一次就等于把它换成一份半成品。这一条是"中止 =
+                // 回上一份存档"能成立的全部前提。
+                if (!coroutineContext.job.isCancelled) autoSave(scope, what)
             }
-        }
+        })
     }
 
     // ── 任务清单（§8.3.2） ──────────────────────────────────────────────────────────
@@ -1127,6 +1143,57 @@ class GameSession(
     private fun phase(text: String) {
         status = text
         foreground?.text = text
+    }
+
+    /**
+     * **从外面推一句"现在在做什么"**（§14.58）：入口把它接给
+     * [io.github.k1midi0.infinitesimal.progress.Progress] 那一个观察者。
+     *
+     * 深处那几层（长地形、建模）说不出"我这一步在整件事里的哪一段"，所以它们只报自己那一段；而这一行
+     * 字本来就是**会被下一句覆盖**的，所以不需要谁去拼。
+     */
+    fun working(text: String) {
+        phase(text)
+    }
+
+    // ── 中止这一格（§14.58） ─────────────────────────────────────────────────────────
+
+    /**
+     * **这一局排出去、还没回来的活**，收的是 `Job` 本身。
+     *
+     * ## 为什么不另立一个父 Job
+     *
+     * 那样写很顺手（`scope.launch(work)`），但它会把这些协程**从调用方那个 scope 的树上摘下来**——
+     * 而好几支测试正是靠那棵树等它们跑完的（`settle()` = 把 children 全 join 掉）。摘下来之后那些
+     * 测试会静默地变成"什么都没等"，而症状是偶尔的、看起来毫不相关的断言失败。
+     *
+     * 所以这里只收集句柄：父子关系照旧，取消的时候逐个 `cancel()`。收集点都在同一个线程上（界面那一侧
+     * 是 Main，测试是 `runBlocking` 那一条），所以用一个普通表就够了；而每次收之前把已经跑完的摘掉，
+     * 长一局也不会攒下一串死句柄。
+     *
+     * **自动存档不在这里**——它是在收拾前面的摊子，取消它只会让"上一份存档"变得不确定。
+     */
+    private val running = mutableListOf<Job>()
+
+    private fun remember(job: Job): Job {
+        running.removeAll { it.isCompleted }
+        running += job
+        return job
+    }
+
+    /**
+     * **中止这一格**（§14.58、用户定的形状）：把这一局还在飞的调用全部取消。
+     *
+     * 它**不修世界**，因为这一格里的改动已经落在内存的那个世界上（判定第二步是就地提交的）。所以调用点
+     * 拿到它之后要做的第二件事是**用上一份自动存档重建一个会话**——那才等于"回到上一格"。桌面 App 那
+     * 一侧就是这两步（`abortTurn`）。
+     *
+     * 取消为什么能把请求掐掉：那些调用是 `Flow` 的收集者（`streamChat(...).toList()`），协程一取消，
+     * 收集就停了，端点那一趟也就断了——**这也正是不给请求设超时的代价的另一半**：现在至少有一条路能
+     * 主动断掉它。
+     */
+    fun abortTurn() {
+        running.toList().forEach { it.cancel() }
     }
 
     // ── 到点就位（§14.45） ──────────────────────────────────────────────────────────
@@ -1527,7 +1594,7 @@ class GameSession(
         closeGap()
         // scope 为 null = 调用方是 spike 的挂起入口，它自己拿着协程；那一看就不起（否则一次
         // runBlocking 会被一条后台协程拖着不结束）。
-        if (scope != null) scope.launch { watch(narrative(intention, said, replies)) }
+        if (scope != null) remember(scope.launch { watch(narrative(intention, said, replies)) })
     }
 
     /**

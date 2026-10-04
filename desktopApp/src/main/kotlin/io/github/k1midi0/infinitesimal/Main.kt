@@ -33,6 +33,7 @@ import androidx.compose.ui.window.rememberWindowState
 import io.github.k1midi0.infinitesimal.config.EndpointConfig
 import io.github.k1midi0.infinitesimal.config.ThinkingMode
 import io.github.k1midi0.infinitesimal.llm.LlmTrace
+import io.github.k1midi0.infinitesimal.progress.Progress
 import io.github.k1midi0.infinitesimal.save.LastSave
 import io.github.k1midi0.infinitesimal.save.PlayLog
 import io.github.k1midi0.infinitesimal.save.SaveFile
@@ -169,9 +170,51 @@ private fun AppRoot(
     fun beginLog(savePath: String, what: String): PlayLog {
         val log = PlayLog.beside(savePath, scope)
         LlmTrace.install(log::exchange)
+        // **"现在在做什么"那一行字**（§14.58）：深处那几层（长地形、建模）报出来的字交给**当前这一局**。
+        // 它读的是 AppRoot 那个 var，所以新开一局之后不必重装——挂上去的一直是"现在这一局"。
+        Progress.install { text -> session?.working(text) }
         log.line("===== 无限小：$what｜${stampOf(System.currentTimeMillis())} =====")
         log.line("模型 ${config.model}｜端点 ${config.baseUrl}｜账与存档同目录同名前缀（.log 是账，.trace.jsonl 是原文）")
         return log
+    }
+
+    /**
+     * **中止这一格**（§14.58）：两件事，缺一不可。
+     *
+     * 1. **取消**还在飞的调用（`session.abortTurn()`）——不然那几十秒的等待会继续烧钱，而玩家已经
+     *    不要这一格了；
+     * 2. **拿上一份自动存档重建一个会话**——这一格里的世界改动是就地提交的，所以"回到上一格"只能是
+     *    "从上一份存档重开"，这与「继续」走的是同一条路（§14.49 定的形状：读档 = 重建一个会话）。
+     *
+     * 没选过存档文件（`savingTo == null`）时**什么都不做**：那种情况下没有"上一格"可以回（自动存档一次
+     * 都没写过），硬造一个只会让玩家丢掉全部进度。
+     */
+    fun abortTurn() {
+        val current = session ?: return
+        val path = current.savingTo
+        if (path == null) {
+            current.announce("这一局还没有存过档，没有上一格可以回。先按一次「存」。")
+            return
+        }
+        scope.launch {
+            current.abortTurn()
+            when (val loaded = withContext(Dispatchers.IO) { SaveFile.load(path) }) {
+                is SaveLoad.Failed -> menuNotice = loaded.why
+                is SaveLoad.Loaded -> {
+                    val log = beginLog(path, "中止了这一格，从上一份存档接着玩")
+                    val restored = GameSession.restore(
+                        config,
+                        loaded.game,
+                        presets = library,
+                        references = references,
+                        playLog = log,
+                    )
+                    restored.autoSaveTo(path)
+                    restored.announce("这一格中止了——世界回到上一份存档（上一格结束时那一份）。")
+                    session = restored
+                }
+            }
+        }
     }
 
     /** 开一局新的：**先问存到哪**，选定之后每一回合都会自动存向它。 */
@@ -242,6 +285,7 @@ private fun AppRoot(
         GameScreen(
             session = current,
             onPickSavePath = { pickSavePath() },
+            onAbortTurn = ::abortTurn,
         )
     }
 }

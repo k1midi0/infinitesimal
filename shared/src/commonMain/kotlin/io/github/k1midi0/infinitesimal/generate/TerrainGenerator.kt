@@ -15,6 +15,7 @@ import io.github.k1midi0.infinitesimal.llm.ThinkingRequest
 import io.github.k1midi0.infinitesimal.llm.ToolCallRequest
 import io.github.k1midi0.infinitesimal.llm.Usage
 import io.github.k1midi0.infinitesimal.llm.decodeCall
+import io.github.k1midi0.infinitesimal.progress.Progress
 import io.github.k1midi0.infinitesimal.spatial.chunks
 import io.github.k1midi0.infinitesimal.world.CHUNK_CELLS
 import io.github.k1midi0.infinitesimal.world.ChunkKey
@@ -276,6 +277,9 @@ class TerrainGenerator(
         while (round < MAX_ROUNDS) {
             round++
             requestCount++
+            // 这一层一跑就是几十秒到几分钟，而界面上那一行字说的是最外面那一步（"算后果…"）。
+            // 这一句让它说得出自己在哪一轮、铺多大一片（§14.58）。
+            Progress.report("正在长地形（第 $round 轮，${request.chunks.size} 块）…")
 
             val turn = AssistantTurn.of(
                 client.streamChat(
@@ -298,8 +302,13 @@ class TerrainGenerator(
             if (turn.calls.isEmpty()) break
 
             messages += turn.asAssistantMessage()
+
+            // **这一轮要现造的东西一次画完**（§14.58）：名单在这一轮的 calls 里就看得见，所以不必等
+            // 一件画完再去问下一件——一件一件画是这一层最贵的一处（一回合点名十几件时尤其明显）。
+            val warmed = warmModels(turn.calls)
+
             for (call in turn.calls) {
-                messages += ChatMessage.toolResult(call.id, answerFor(call, world, consequences))
+                messages += ChatMessage.toolResult(call.id, answerFor(call, world, consequences, warmed))
             }
         }
 
@@ -311,8 +320,10 @@ class TerrainGenerator(
         call: ToolCallRequest,
         world: World,
         consequences: MutableList<Consequence>,
+        /** 这一轮**已经画好**的那些（键是那句要求），见 [warmModels]。 */
+        warmed: Map<String, ShapeModeler.Result> = emptyMap(),
     ): String {
-        if (call.name == GeneratorTools.MAKE_OBJECT) return makeObject(call, world, consequences)
+        if (call.name == GeneratorTools.MAKE_OBJECT) return makeObject(call, world, consequences, warmed)
         if (call.name == GeneratorTools.FIND_PRESET) return findPresets(call)
 
         val args = decodeCall(BoxArgs.serializer(), call) ?: return unreadable(call)
@@ -466,6 +477,7 @@ class TerrainGenerator(
         call: ToolCallRequest,
         world: World,
         consequences: MutableList<Consequence>,
+        warmed: Map<String, ShapeModeler.Result> = emptyMap(),
     ): String {
         val args = decodeCall(MakeArgs.serializer(), call) ?: return unreadable(call)
 
@@ -481,7 +493,11 @@ class TerrainGenerator(
                 "写成「三人合抱的老橡树，树皮皲裂」这样。"
         }
 
-        val preset = named ?: presets.byBrief(brief) ?: when (val modeled = modeler.model(brief)) {
+        // **先问这一轮已经画好的那一批**（§14.58）。命中它就不必再画一次；而它已经在里面画失败了的
+        // 那一件，也就**不再重画一遍**——那句话原样退回去（重画一次是四十个来回的代价）。
+        val preset = named ?: presets.byBrief(brief) ?: when (
+            val modeled = warmed[brief] ?: modeler.model(brief)
+        ) {
             is ShapeModeler.Result.Modeled -> presets.find(modeled.name)
             is ShapeModeler.Result.Failed ->
                 return "这一件造不出来：「$brief」——${modeled.problems.joinToString("；")}"
@@ -502,6 +518,38 @@ class TerrainGenerator(
         )
         consequences += Consequence.Spawn(entity)
         return "放好了：${entity.label}（用「${preset.name}」这份形状，${entity.shape?.cellCount ?: 0} 格）"
+    }
+
+    /**
+     * **把这一轮要现造的东西一次画完**（§14.58）。
+     *
+     * 用户定的原话是「建模应该是可以并行的，可以一次性给出要的物品名单，并行建模」——名单就在这一轮的
+     * `calls` 里，而**它不必等任何一件画完**。所以这里先把这一轮所有 `make_object` 里"没有点名预设"的
+     * 那几句要求收起来（**同一句要求只画一次**），交给 [ShapeModeler.modelAll] 并行画。
+     *
+     * 画好的那些回到 [makeObject] 时就是一次免费的命中（它先查 `presets.byBrief`）；画失败的那些也
+     * 一并交给它，**不重画第二遍**（重画一次是几十个来回）。
+     *
+     * 它一次都不抛：建模这条路本来就"失败也是答案"（一句退回去的文字）。
+     */
+    private suspend fun warmModels(calls: List<ToolCallRequest>): Map<String, ShapeModeler.Result> {
+        val briefs = calls
+            .filter { it.name == GeneratorTools.MAKE_OBJECT }
+            .mapNotNull { decodeCall(MakeArgs.serializer(), it) }
+            .filter { it.preset.isBlank() && it.brief.trim().isNotEmpty() }
+            .map { it.brief.trim() }
+            .distinct()
+        if (briefs.isEmpty()) return emptyMap()
+
+        Progress.report("正在建模 ${briefs.size} 件（并行）…")
+        val results = modeler.modelAll(briefs) { done, total ->
+            Progress.report("正在建模：已完成 $done/$total 件")
+        }
+        val failed = results.values.count { it is ShapeModeler.Result.Failed }
+        if (failed > 0) {
+            Progress.report("正在建模：${briefs.size - failed} 件画好了，$failed 件没画成")
+        }
+        return results
     }
 
     // ── 提示词 ─────────────────────────────────────────────────────────────────────
