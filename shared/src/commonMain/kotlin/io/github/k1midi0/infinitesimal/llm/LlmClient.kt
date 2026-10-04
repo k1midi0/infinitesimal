@@ -90,6 +90,109 @@ class LlmClient(
         tools: List<ToolDefinition>? = null,
         thinking: ThinkingRequest? = null,
         maxTokens: Int? = null,
+    ): Flow<LlmEvent> {
+        // **没装观察者时走的就是原来那条路**（§14.56）：一次判断，然后一字不差地是原来那个流。
+        val sink = LlmTrace.sink ?: return streamChatRaw(messages, tools, thinking, maxTokens)
+        return recordedStream(messages, tools, thinking, maxTokens, sink)
+    }
+
+    /**
+     * 一边把事件原样发下去，一边抄一份给 [LlmTrace]（§14.56）。
+     *
+     * 三件事按重要程度排：**抄的东西绝不能改变这一轮**（事件逐个原样 `emit`，一个字节都不动）、
+     * **抄失败绝不能影响这一轮**（观察者抛出来的异常被吞掉）、**失败的那一趟也要抄**（配置没配好、
+     * 端点拒绝、流断在中途——那些正是最需要看原文的时候，所以记录写在 `finally` 里）。
+     *
+     * 抄的是**传进来那串 messages**，不是 `toWire` 之后的那一份：图片在那里被展开成 base64，而一条
+     * 记录不该被一张图撑成几兆（见 [Exchange] 的注释）。
+     */
+    private fun recordedStream(
+        messages: List<ChatMessage>,
+        tools: List<ToolDefinition>?,
+        thinking: ThinkingRequest?,
+        maxTokens: Int?,
+        sink: (Exchange) -> Unit,
+    ): Flow<LlmEvent> = flow {
+        val startedAt = System.currentTimeMillis()
+        val config = configuration()
+
+        val content = StringBuilder()
+        val reasoning = StringBuilder()
+        val drafts = LinkedHashMap<Int, CallDraft>()
+        var usage: Usage? = null
+        var failure: String? = null
+
+        try {
+            streamChatRaw(messages, tools, thinking, maxTokens).collect { event ->
+                when (event) {
+                    is LlmEvent.Content -> content.append(event.text)
+                    is LlmEvent.Reasoning -> reasoning.append(event.text)
+                    is LlmEvent.ToolCallStarted ->
+                        drafts.getOrPut(event.index) { CallDraft() }.apply {
+                            id = event.id
+                            name = event.name
+                        }
+
+                    is LlmEvent.ToolCallArguments ->
+                        drafts.getOrPut(event.index) { CallDraft() }.apply {
+                            arguments.append(event.fragment)
+                        }
+
+                    is LlmEvent.Finished -> usage = event.usage
+                }
+                emit(event)
+            }
+        } catch (cause: Throwable) {
+            failure = cause.message ?: cause::class.simpleName
+            throw cause
+        } finally {
+            // 顺序就是 index，于是同一趟里调了两只工具时它们按模型给的顺序落下来。
+            val calls = drafts.entries
+                .sortedBy { it.key }
+                .mapNotNull { (_, draft) ->
+                    val name = draft.name ?: return@mapNotNull null
+                    ToolCall(
+                        id = draft.id ?: "",
+                        function = FunctionCall(name = name, arguments = draft.arguments.toString()),
+                    )
+                }
+
+            val record = Exchange(
+                startedAtMs = startedAt,
+                elapsedMs = System.currentTimeMillis() - startedAt,
+                pool = config.userId?.userId.orEmpty(),
+                model = config.model,
+                thinking = thinking?.options?.type.orEmpty(),
+                effort = thinking?.effort,
+                messages = messages,
+                tools = tools.orEmpty().map { it.function.name },
+                content = content.toString(),
+                reasoning = reasoning.toString(),
+                calls = calls,
+                usage = usage,
+                failure = failure,
+            )
+            try {
+                sink(record)
+            } catch (cause: Throwable) {
+                // 抄日志这件事本身失败（磁盘满、路径没了），**不许影响这一轮**。
+                println("[账没抄下来] ${cause.message ?: cause::class.simpleName}")
+            }
+        }
+    }
+
+    /** 抄一份的过程中，一只工具的参数还在分片里慢慢拼——拼完才变成 `ToolCall`。 */
+    private class CallDraft {
+        var id: String? = null
+        var name: String? = null
+        val arguments = StringBuilder()
+    }
+
+    private fun streamChatRaw(
+        messages: List<ChatMessage>,
+        tools: List<ToolDefinition>? = null,
+        thinking: ThinkingRequest? = null,
+        maxTokens: Int? = null,
     ): Flow<LlmEvent> = flow {
         val config = configuration()
         val missing = config.missingFields()

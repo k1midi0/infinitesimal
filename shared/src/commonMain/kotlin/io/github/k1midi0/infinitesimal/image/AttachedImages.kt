@@ -109,3 +109,21 @@ internal expect fun readTextOrNull(path: String): String?
  * 写失败**要抛**（磁盘满、路径是目录、没有权限）：存档悄悄没写成功比报一个错糟得多。
  */
 internal expect suspend fun writeTextFile(path: String, text: String)
+
+/**
+ * 往那个文件**末尾追加**一段文本，父目录不存在就现建。
+ *
+ * ## 为什么它不是"读出全部、拼上新的、再写回去"
+ *
+ * 一局的账可以长到几兆（§14.56：每一趟调用都抄一份完整的提示词），而那条路是**每一行都重写一遍整个
+ * 文件**——行数一多就变成平方级的 IO，而且是边玩边卡。
+ *
+ * ## 它与 `writeTextFile` 的差别只有一条，而那条要紧
+ *
+ * 这条**不做"先写临时文件再原子改名"**：追加本来就不需要一个原子快照，而做过一次改名就等于把前面
+ * 已经写好的几兆搬一遍。代价是**它可能留下半行**（写到一半被 kill）——账里半行是可以接受的，存档里
+ * 半行不可以（那是两件事用两条路的理由）。
+ *
+ * 它**不 suspend**：调用点是单写者协程（见 `save/PlayLog.kt`），它已经是安排在 IO 线程上的了。
+ */
+internal expect fun appendTextToFile(path: String, text: String)

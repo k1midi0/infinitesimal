@@ -32,7 +32,9 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import io.github.k1midi0.infinitesimal.config.EndpointConfig
 import io.github.k1midi0.infinitesimal.config.ThinkingMode
+import io.github.k1midi0.infinitesimal.llm.LlmTrace
 import io.github.k1midi0.infinitesimal.save.LastSave
+import io.github.k1midi0.infinitesimal.save.PlayLog
 import io.github.k1midi0.infinitesimal.save.SaveFile
 import io.github.k1midi0.infinitesimal.save.SaveLoad
 import io.github.k1midi0.infinitesimal.session.GameSession
@@ -153,12 +155,32 @@ private fun AppRoot(
     var lastPath by remember(session) { mutableStateOf(LastSave.path()) }
     var lastHeader by remember(session) { mutableStateOf(lastPath?.let { SaveFile.peek(it) }) }
 
+    /**
+     * **把这一局的账建起来，并让客户端那一侧也开始抄**（§14.56）。
+     *
+     * 两份账必须属于同一次游戏，所以它们在**这一个地方**一起建：会话那一侧（事件、每一格的分段头）
+     * 由 `GameSession` 写，客户端那一侧（每一趟调用的原始提示词与回答）由 [LlmTrace] 那一个观察者写。
+     *
+     * 装的这一格是**进程级**的，所以它由入口负责装——测试与探针那一侧永远不装，于是它们一个字都不多写。
+     * 新的一局会把它换成新的那一份（旧的会话不会再被调用）。
+     *
+     * **它必须写在 [startNewGame] 前面**：Kotlin 的局部函数只在声明之后可见。
+     */
+    fun beginLog(savePath: String, what: String): PlayLog {
+        val log = PlayLog.beside(savePath, scope)
+        LlmTrace.install(log::exchange)
+        log.line("===== 无限小：$what｜${stampOf(System.currentTimeMillis())} =====")
+        log.line("模型 ${config.model}｜端点 ${config.baseUrl}｜账与存档同目录同名前缀（.log 是账，.trace.jsonl 是原文）")
+        return log
+    }
+
     /** 开一局新的：**先问存到哪**，选定之后每一回合都会自动存向它。 */
     fun startNewGame() {
         scope.launch {
             val path = pickSavePath() ?: return@launch
+            val log = beginLog(path, "新的一局")
             // 参考剧本库那一份挂到会话上（§14.55）：导演要照它填出这一局的线。
-            val fresh = GameSession(config, presets = library, references = references)
+            val fresh = GameSession(config, presets = library, references = references, playLog = log)
             // **开局那一批线在进游戏之前排**（§14.55、用户定的"开局填一批，其余留空由导演途中补"）：
             // 玩家等这一次思考档调用，换到的是"第一句话之前，这一带已经有三件事在等着"。
             // 它要一分钟上下，所以界面上先说一句——与后面的通知共用 [menuNotice] 那一行。
@@ -168,10 +190,8 @@ private fun AppRoot(
             menuNotice = opened.exceptionOrNull()?.let {
                 "这一局开起来了，但开局那几条线没排出来：${it.message ?: it::class.simpleName}"
             }
-            runCatching { fresh.saveTo(path) }
-                .onFailure {
-                    menuNotice = "这一局开起来了，但第一份存档没写成：${it.message ?: it::class.simpleName}"
-                }
+            // **存档写两次不会更牢靠**：这里从前连着写了两遍（§14.56 顺手收掉），第二遍只是把同一份
+            // 字节再写一次，而它失败时还会把第一遍那句通知盖掉。
             runCatching { fresh.saveTo(path) }
                 .onFailure {
                     menuNotice = "这一局开起来了，但第一份存档没写成：${it.message ?: it::class.simpleName}"
@@ -186,11 +206,13 @@ private fun AppRoot(
             when (val loaded = withContext(Dispatchers.IO) { SaveFile.load(path) }) {
                 is SaveLoad.Failed -> menuNotice = loaded.why
                 is SaveLoad.Loaded -> {
+                    val log = beginLog(path, "从存档接着玩")
                     val restored = GameSession.restore(
                         config,
                         loaded.game,
                         presets = library,
                         references = references,
+                        playLog = log,
                     )
                     restored.autoSaveTo(path)
                     menuNotice = null

@@ -37,3 +37,9 @@ internal actual suspend fun writeTextFile(path: String, text: String) {
         }
     }
 }
+
+internal actual fun appendTextToFile(path: String, text: String) {
+    val file = File(path)
+    file.parentFile?.mkdirs()
+    file.appendText(text)
+}

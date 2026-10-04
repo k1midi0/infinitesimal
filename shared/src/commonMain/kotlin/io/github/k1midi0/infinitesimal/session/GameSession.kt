@@ -27,6 +27,7 @@ import io.github.k1midi0.infinitesimal.npc.Waking as NpcWaking
 import io.github.k1midi0.infinitesimal.render.DetailInserters
 import io.github.k1midi0.infinitesimal.render.Renderer
 import io.github.k1midi0.infinitesimal.save.LastSave
+import io.github.k1midi0.infinitesimal.save.PlayLog
 import io.github.k1midi0.infinitesimal.save.SaveFile
 import io.github.k1midi0.infinitesimal.save.SaveGame
 import io.github.k1midi0.infinitesimal.schedule.Scheduler
@@ -65,9 +66,17 @@ import kotlin.time.TimeSource
 /** 玩家自己的 id。开局世界和判定都用它。 */
 const val PLAYER = "player"
 
-/** 日志里的一行。[Kind] 只用来决定颜色，不参与任何逻辑。 */
+/** 日志里的一行。[Kind] 决定颜色，也决定账里那一行的开头（§14.56）；它不参与任何逻辑。 */
 data class LogLine(val kind: Kind, val text: String) {
-    enum class Kind { SAY, ACT, OK, REJECT, PROBLEM, NOTE, ERROR }
+    enum class Kind(val label: String) {
+        SAY("说"),
+        ACT("做"),
+        OK("成"),
+        REJECT("驳"),
+        PROBLEM("问题"),
+        NOTE("记"),
+        ERROR("错"),
+    }
 }
 
 /**
@@ -229,6 +238,17 @@ class GameSession(
      * 可空参数（编译期就能看出来，但看出来的方式是三十处 `Only safe calls are allowed`）。
      */
     startingWorld: World? = null,
+    /**
+     * **这一局的账**（§14.56）：玩家看得见的那一栏、世界里发生的事、以及每一格花了多少。
+     *
+     * 它默认 null，于是**测试与探针一个字都不多写**（"默认不落盘"这条纪律与 [presets] 那条同一形状）。
+     * 真实入口（桌面 App）在挑定存档之后建一份，与 [LlmTrace] 的 sink 一起装上——两份账（会话这一侧
+     * 的事件、客户端那一侧的原始调用）**必须是同一次游戏**，所以它们由同一个地方一起建。
+     *
+     * 会话这一侧只写两种东西：**每一段的分段头**（[run] 开头那一下，带世界钟）与**每一行给玩家看的话**
+     * （[say] 那个漏斗）。原始调用不走这里——它由客户端直接交给同一份账。
+     */
+    private val playLog: PlayLog? = null,
 ) {
     val world: World = startingWorld ?: World.from(
         WorldSnapshot(seed, rules, terrain = ground, zoning = zoning, speakQueue = speakQueue, scripts = scripts),
@@ -352,7 +372,18 @@ class GameSession(
 
     /** 从外面报一件事——入口那一层用它播报"存档写好了/没写成"（§14.49）。 */
     fun announce(message: String) {
+        tell(message)
+    }
+
+    /**
+     * 置那条**必须让玩家看见**的通知，同时把它写进账（§14.56）。
+     *
+     * 所有对 [notice] 的写入都走这里：通知本来就会从界面上消失，一局玩完只剩账——而那几句话往往正是
+     * "为什么出了事"的答案（自动存档没写成、那块地没长出来）。
+     */
+    private fun tell(message: String) {
         notice = message
+        playLog?.line("[通知] $message")
     }
 
     fun dismissNotice() {
@@ -530,9 +561,11 @@ class GameSession(
             try {
                 SaveFile.save(path, snapshot)
             } catch (cause: Throwable) {
-                notice = "自动存档没写成：${cause.message ?: cause::class.simpleName}（这一局的进度还在，但它没落盘）"
+                tell("自动存档没写成：${cause.message ?: cause::class.simpleName}（这一局的进度还在，但它没落盘）")
             } finally {
                 saveInFlight = false
+                // **一回合结一次账**（§14.56）：这一段（这一回合/这一格）到此为止，把它的花费结算成一行。
+                playLog?.flush()
             }
         }
     }
@@ -1040,6 +1073,9 @@ class GameSession(
         if (busy) return
         busy = true
         status = what
+        // **账里的分段就是玩家眼里的分段**（§14.56）：开一段就把上一段结算掉（几次调用、多少 token、
+        // 多少钱），而这一段的头一行带世界钟——"第 1 天 18:15 花了 40 秒"是这一局最要紧的那个读数。
+        playLog?.section("$what｜${world.clock}")
         val mine = startTask(what)
         foreground = mine
         scope.launch {
@@ -1906,7 +1942,7 @@ class GameSession(
                     LogLine.Kind.ERROR,
                     "硬圈里那几块地没能长出来（试了 ${result.attempts} 次）：${result.problems.joinToString("；")}",
                 )
-                notice = "你走到了一块还没有地形的地方，它试了 ${result.attempts} 次都没长出来。"
+                tell("你走到了一块还没有地形的地方，它试了 ${result.attempts} 次都没长出来。")
             }
         }
     }
@@ -1941,6 +1977,7 @@ class GameSession(
 
     private fun say(kind: LogLine.Kind, text: String) {
         log = log + LogLine(kind, text)
+        playLog?.line("[${kind.label}] $text")
     }
 
     fun clearLog() {
@@ -1995,6 +2032,8 @@ class GameSession(
             npc: Npc = Npc(config, presets),
             judge: Judge = Judge(config, presets = presets),
             director: Director = Director(config, presets, references = references),
+            /** 同一份账（§14.56）：读档接着玩的那一局，账也接着那一份写。 */
+            playLog: PlayLog? = null,
         ): GameSession {
             SaveFile.installPresets(presets, save)
             SaveFile.installReferences(references, save)
@@ -2008,6 +2047,7 @@ class GameSession(
                 npc = npc,
                 scheduler = scheduler,
                 scheduleSettings = scheduleSettings,
+                playLog = playLog,
             )
             session.conversations.restore(save.conversations)
             return session

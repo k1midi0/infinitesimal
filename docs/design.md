@@ -4573,6 +4573,110 @@ append("""{"id":"$id",…,"body":"正文""")
 
 ---
 
+### 14.56 让读数有地方落：一局的账
+
+用户拍的是「**联机真跑一局，你自己在桌面 App 里玩，先 6 格试试水**」。这条口径一落地就暴露出一个更靠
+前的问题：**桌面 App 一分钱账都不落盘**——会话状态全在内存里（`GameSession.log` 是 Compose 的
+`mutableStateListOf`，`notice` 是 `mutableStateOf`），玩完关掉窗口就什么都不剩。于是"让玩家去玩一局，
+我看读数"这件事，**先要做的不是读数，是让它有地方落**。
+
+这一节就是那件事：每一次模型调用、世界里发生的每一行、每一格花了多少，都写进存档旁边那两个文件。
+
+#### 用户拍的两条（面板问答）
+
+| 问题 | 拍的 |
+|---|---|
+| 账写在哪 | **与存档同目录、同名前缀**（`world.infsave.json` → `world.infsave.log`）——一局一份，下一局不盖上一局 |
+| 记到多细 | **账 + 每一次调用的完整提示词与回答**（两份文件：`.log` 给人读、`.trace.jsonl` 给 grep） |
+
+#### 形状
+
+```
+world.infsave.json         存档（原来那一份，不动）
+world.infsave.log          账：每段一行、每趟调用一行、世界里发生的每一行
+world.infsave.trace.jsonl  一行一趟调用，装完整请求与回答
+
+llm/Exchange.kt
+  @Serializable data class Exchange(startedAtMs, elapsedMs, pool, model, thinking, effort,
+                                    messages, tools, content, reasoning, calls, usage, failure)
+  object LlmTrace { var sink; install(sink); uninstall() }      // **默认没装 = 零行为变化**
+llm/LlmClient.kt
+  streamChat(...) = 没装 sink → streamChatRaw(...)（原来那条路，一字不差）
+                  = 装了     → recordedStream(...)（边发边抄，失败也抄）
+image/AttachedImages.kt
+  internal expect fun appendTextToFile(path, text)             // 追加；与原子改名的 writeTextFile 分开
+save/PlayLog.kt
+  class PlayLog(logPath, tracePath, scope)
+    line(text) / section(title) / exchange(e) / suspend flush()
+    companion: beside(savePath, scope) / LOG_SUFFIX / TRACE_SUFFIX / costOf / missOf
+session/GameSession.kt
+  private val playLog: PlayLog? = null      // 默认 null：测试与探针一个字都不多写
+    · say(kind, text)   → 也写一行 [说]/[做]/[记]…（Kind 多一格 label）
+    · tell(message)     → 置 notice 的**唯一出口**，四个写入点全走它（含"自动存档没写成"）
+    · run(scope, what)  → playLog.section("$what｜${world.clock}")   ← 每一次玩家动作 = 一段
+    · autoSave 的 finally → playLog.flush()                          ← 一回合结一次账
+desktopApp/Main.kt
+  beginLog(savePath, what)：建账 + LlmTrace.install(log::exchange) + 两行表头（模型、端点）
+```
+
+#### 几个要紧的判断
+
+- **观察者做成进程级的一格，而不是每个客户端的构造参数。** 一个 `GameSession` 会造**七八个** `LlmClient`
+  （判定两个、NPC、导演、哨兵、生成、建模、渲染），它们各自在自己的便捷构造器里现造。要把这一格穿过去，
+  就得改七八个构造器，而且以后每添一个模型段都要记得再穿一次——§14.55 那个"数手的句子连着漏了两刀"就是
+  这类病的证据。代价是它**全局**，所以配两条纪律：**默认是 null**、**装了就负责卸**（测试里装在它自己那
+  一支、卸在 `finally`）。
+- **抄一份绝不许影响这一轮**：事件逐个原样 `emit`；观察者抛异常时被吞掉（只往控制台留一句）。一个诊断
+  把游戏弄坏，比没有诊断糟得多。
+- **失败的那一趟也要抄**：记录写在 `finally` 里，配置没配好、端点拒绝、流断在中途——那些正是最需要看
+  原文的时候。`usage` 缺了就写"（没回 token）"，**不拿零去冒充**。
+- **抄的是应用那一层的 messages，不是 `toWire` 之后那一份**：图片在那里被展开成 base64，一条记录不该被
+  一张图撑成几兆。
+- **单写者**：写账的地方杂（界面写事件、导演在后台写、哨兵在另一个协程里写），而追加写不是线程安全的。
+  所以所有行进一个无界队列，由一个协程按顺序追加——调用方随时、从任何线程、非挂起地写；阻塞 IO 只在那
+  一个协程里发生。
+- **追加那条路不做"先写临时文件再原子改名"**（`writeTextFile` 那条路做）：追加不需要原子快照，而改名等于
+  把前面写好的几兆重搬一遍。代价是**可能留下半行**——账里半行可以接受，存档里半行不可以，这是两件事用
+  两条路的理由。
+- **段就是"玩家按下什么"**：所有前台入口（看/说/做/过一格/过 N 格/等/导演排一排）都经过 `run(...)`，所以
+  段头只在那一处写；`...Now()` 那几个挂起版（探针与测试走的）没有段——它们本来也不带账本。
+- **钱是估的**：命中 0.04 / 未命中 2 / 输出 8（元每百万，高峰价，§10.2）；两格都缺时按**全部未命中**算
+  （偏贵的那一边——读数用来做决定，宁可估高）。不到一分钱显示成"厘"，否则"花了多少"看起来像没花。
+
+#### 踩到并修掉的三处
+
+1. **写得出、读不回来**（测试逮到的真 bug）：`Exchange.effort` 是 `String?` 却**没有默认值**，而那份
+   trace 是紧凑写的（null 不写出去）——于是**每一趟思考关着的调用都写得出、谁也读不回来**
+   （`MissingFieldException: Field 'effort' is required`）。加一个 `= null` 就好了，但值得记：**写文件与
+   读文件是两条路，"写得出来"不等于"读得回去"**，只有把文件读回来才算验过。
+2. **写者协程一直活着**：它等的是"队列关掉"，所以把它挂在"等活干完"的那个 job 下面，`settle()` 就永远
+   等不完——那一支测试第一次**挂到七分钟没回来**（我以为是端点慢）。等账落盘要用 `flush()`，不要等它的
+   协程结束。
+3. **顺手收掉入口那一处重复**：`startNewGame` 里从前连着写了两遍 `runCatching { fresh.saveTo(path) }`，
+   第二遍只是把同一份字节再写一次，而它失败时还会把第一遍那句通知盖掉。
+
+#### 单测（114 个测试类、759 个用例，全绿）
+
+- `save/PlayLogTest`（jvmTest，6 条）：三个文件同名前缀（含没有 `.json` 后缀那一格） / 分段结算与每一行
+  都进文件 / **一行一个 JSON 对象**（换行与引号必须被转义在字符串里面，否则"一行一次调用"不成立） /
+  失败那一趟写着失败 / 成本按端点自己那几个数估（含两格都缺时偏贵的那一边） / 没发生什么就不该有文件。
+- `llm/LlmTraceTest`（4 条，假引擎）：一趟成功被完整抄下来（含参数分片拼起来的那一份） / **失败也抄** /
+  **没装观察者时行为与从前逐字一样** / **抄日志的人自己抛异常不许弄坏这一轮**。
+- `session/GameSessionPlayLogTest`（jvmTest，2 条）：通知与世界里每一行都落账、段头带世界钟 /
+  **没给账本就不该有任何文件冒出来**（"默认零侵入"在会话这一侧的形态）。
+
+#### 还没做的
+
+- **FIM 那条路（`FimClient`）没抄**：它现在只走离线渲染兜底那一条（§14.3 的结论是默认只走工具路），所以
+  这一局看不到它。要用到的时候再补同一个形状。
+- **账没有轮转与上限**：一部长局可以长到几十兆（每一趟都装完整提示词）。它只是个文件，删掉就完了，但
+  "玩到第 200 格时它有多大"还没量过。
+- **界面上没有"打开账"的入口**：现在要自己去存档目录看。
+- **安卓端还没有入口**：账与存档同命（`LastSave.directory` 那条账照旧）。
+
+---
+
+
 ## 附：空间与物体
 
 这一节是 v0.1 定稿之后补的，尚未并入正文，等它自己稳定下来再重排编号。
