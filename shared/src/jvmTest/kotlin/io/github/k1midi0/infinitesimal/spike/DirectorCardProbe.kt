@@ -41,7 +41,7 @@ import kotlinx.coroutines.runBlocking
  * 跑法（与别的探头一样，没给密钥就跳过）：
  * ```
  * .\gradlew.bat :shared:jvmTest --tests "*DirectorCardProbe*" --rerun ^
- *   -PinfinitesimalLiveKeyFile="C:\Users\20758\Desktop\测试key.txt" -PinfinitesimalCardRuns=1
+ *   -PinfinitesimalLiveKeyFile="<密钥文件>" -PinfinitesimalCardRuns=1
  * ```
  */
 class DirectorCardProbe {

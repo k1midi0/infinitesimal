@@ -21,7 +21,7 @@ import kotlin.time.TimeSource
  * 跑法：
  *
  *     .\gradlew.bat :shared:jvmTest --tests "*TerrainGenProbe*" --rerun `
- *         -PinfinitesimalLiveKeyFile="C:\Users\20758\Desktop\测试key.txt"
+ *         -PinfinitesimalLiveKeyFile="<密钥文件>"
  *
  * stdout 从 `shared/build/test-results/jvmTest/TEST-*TerrainGenProbe*.xml` 的 `system-out` 里读。
  */

@@ -35,7 +35,7 @@ import kotlinx.coroutines.runBlocking
  *
  * ```
  * .\gradlew.bat :shared:jvmTest --tests "*NpcProbe*" --rerun `
- *     -PinfinitesimalLiveKeyFile="C:\Users\20758\Desktop\测试key.txt"
+ *     -PinfinitesimalLiveKeyFile="<密钥文件>"
  * ```
  *
  * 没有密钥时它只打那张**离线**的图（矮人自己看见的那一片），不联网。

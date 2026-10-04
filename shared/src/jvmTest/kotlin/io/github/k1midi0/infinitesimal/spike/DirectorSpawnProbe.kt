@@ -33,7 +33,7 @@ import kotlinx.coroutines.runBlocking
  * 跑法：
  * ```
  * .\gradlew.bat :shared:jvmTest --tests "*DirectorSpawnProbe*" --rerun `
- *     -PinfinitesimalLiveKeyFile="C:\Users\20758\Desktop\测试key.txt"
+ *     -PinfinitesimalLiveKeyFile="<密钥文件>"
  * ```
  * stdout 从 `shared/build/test-results/jvmTest/TEST-*DirectorSpawnProbe*.xml` 的 `system-out` 读。
  * 整支探针要真联网，很慢——单独跑它一支，别与别的探针一起。

@@ -38,7 +38,7 @@ import kotlinx.coroutines.runBlocking
  *
  * ```
  * .\gradlew.bat :shared:jvmTest --tests "*SentryProbe*" --rerun `
- *   -PinfinitesimalLiveKeyFile="C:\Users\20758\Desktop\测试key.txt"
+ *   -PinfinitesimalLiveKeyFile="<密钥文件>"
  * ```
  */
 class SentryProbe {

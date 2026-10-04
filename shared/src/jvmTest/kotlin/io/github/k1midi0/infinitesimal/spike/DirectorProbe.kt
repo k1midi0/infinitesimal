@@ -31,7 +31,7 @@ import kotlinx.coroutines.runBlocking
  * 跑法：
  * ```
  * .\gradlew.bat :shared:jvmTest --tests "*DirectorProbe*" --rerun `
- *     -PinfinitesimalLiveKeyFile="C:\Users\20758\Desktop\测试key.txt"
+ *     -PinfinitesimalLiveKeyFile="<密钥文件>"
  * ```
  * stdout 从 `shared/build/test-results/jvmTest/TEST-*DirectorProbe*.xml` 的 `system-out` 读。
  */
