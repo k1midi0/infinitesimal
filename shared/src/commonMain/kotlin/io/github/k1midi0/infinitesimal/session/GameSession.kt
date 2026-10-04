@@ -8,6 +8,7 @@ import io.github.k1midi0.infinitesimal.config.ScheduleSettings
 import io.github.k1midi0.infinitesimal.director.Awakening
 import io.github.k1midi0.infinitesimal.director.Director
 import io.github.k1midi0.infinitesimal.director.DirectorTools
+import io.github.k1midi0.infinitesimal.director.ScriptPlanner
 import io.github.k1midi0.infinitesimal.director.titlesWithSize
 import io.github.k1midi0.infinitesimal.director.Wake
 import io.github.k1midi0.infinitesimal.director.Waking
@@ -43,6 +44,7 @@ import io.github.k1midi0.infinitesimal.world.EventKind
 import io.github.k1midi0.infinitesimal.world.Placement
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
 import io.github.k1midi0.infinitesimal.world.Script
+import io.github.k1midi0.infinitesimal.world.ScriptLibrary
 import io.github.k1midi0.infinitesimal.world.ScriptState
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.Spot
@@ -158,10 +160,11 @@ class GameSession(
     /**
      * **开局的剧本池**（§8.4、§14.54）。
      *
-     * 与 [speakQueue] 同一条纪律、也是同一个坑：那一层从前只搬了四样内容，于是发言名单**从来没被带进
-     * 世界**（§14.51 才发现）。剧本池是第六样，所以在同一处默认成开局那一份。
+     * **它现在默认是空的**（§14.55 改的）：从前开局挂一条手写的种子，而按两层那套结构，这个世界的剧本
+     * 该由导演**照参考剧本库填出来**（[fillOpeningScripts]），不是手写的。要一局带着现成的线开局（测试、
+     * 探针、剧本杀式的开局），把这一份传进来就是——它仍然是"开局那份内容"的一员。
      */
-    scripts: List<Script> = StartingWorld.scripts(),
+    scripts: List<Script> = emptyList(),
     /**
      * 预设库（附录 A.14）。**它挂在会话上**，因为它是活的：一局里造出来的东西会进生成那个包，
      * 而判定、生成器、导演该看**同一份**——三处各拿一份的话，"刚才造过的那张桌子"对另一处就不存在，
@@ -172,6 +175,13 @@ class GameSession(
      */
     presets: PresetLibrary = PresetLibrary(),
     /**
+     * **参考剧本库**（§14.55）——世界之外的素材（把一部小说拆成的那些骨架）。
+     *
+     * 与 [presets] 同一条纪律，而且**必须交给导演那一处**：只有它看这个库（列没填过的、读骨架、
+     * 判 `write_script` 的 `source`）。默认是一个空库，真实入口在读 `BuiltinScripts` 之后把它传进来。
+     */
+    references: ScriptLibrary = ScriptLibrary(),
+    /**
      * 判定（§4）。默认按 [config] 与 [presets] 现造一个；**测试可以塞一个假的进来**——它在这条路上
      * 是第一个真的去碰端点的人，不注入就只能拿真 key 跑。
      */
@@ -180,7 +190,7 @@ class GameSession(
      * 导演（§8）。默认按 [config] 与 [presets] 现造一个；**测试可以塞一个假的进来**——它在会话里
      * 有三条触发路径（手动按钮、硬圈缺口、每回合那一看），没有注入点就只能靠真端点验。
      */
-    private val director: Director = Director(config, presets),
+    private val director: Director = Director(config, presets, references = references),
     /**
      * 扮演 AI 角色（§3.2、§5）。默认按 [config] 与 [presets] 现造一个；**测试可以塞一个假的进来**
      * ——它是这一层第三个会碰端点的人，不注入就只能拿真 key 跑（§14.35 踩过一次）。
@@ -428,6 +438,15 @@ class GameSession(
      */
     val conversations: Conversations get() = npc.conversations
 
+    /**
+     * **这一局的参考剧本库**（§14.55）。
+     *
+     * 与 [presets] 同一个写法而且同一个理由：**它在导演手里**（只有那一边看它），而会话要能把它交出去
+     * （存档）与交回来（读档）。走 getter 而不是另存一个字段，是为了**不可能出现两份库**——§14.49 那个
+     * "装好的生成包谁都没在用"就是两处各拿一份的后果。
+     */
+    val references: ScriptLibrary get() = director.references
+
     // ── 存档（§14.49） ──────────────────────────────────────────────────────────────
 
     /**
@@ -456,6 +475,7 @@ class GameSession(
         world = world.snapshot(),
         conversations = npc.conversations.snapshot(),
         presets = presets.generatedPresets(),
+        references = references.all(),
     )
 
     /**
@@ -954,6 +974,58 @@ class GameSession(
                     "（导演没排成：${result.problems.joinToString("；")}）",
                 )
             }
+        }
+    }
+
+    /**
+     * **开局那一次填充**（§14.55）：把这一局挑中的参考剧本交给导演，让它填成这个世界的线。
+     *
+     * ## 它为什么在会话这一侧，而不在导演里面
+     *
+     * 因为**挑哪几条**是会话的事：参考剧本库是世界之外的素材（§14.55 的第一层），而"这一局打算用哪几条"
+     * 是一次选择——与 [arrangeNow] 同一条纪律：谁叫醒导演、拿什么理由叫，是会话决定的（导演只负责那一次
+     * 工作里的事）。
+     *
+     * ## 它为什么在进游戏之前跑
+     *
+     * 用户定的口径是「开局填一批，其余留空由导演途中补」。开局这一批跑在**主界面那两个按钮按下之后、
+     * 玩家进场之前**——那时候玩家等得起（一次思考档调用），而池子一开始就是有内容的：玩家第一句话之前，
+     * 这一带已经有三件事在等着了。
+     *
+     * ## 它没有失败就不算完这一条
+     *
+     * 一条参考剧本都没填成（协议失败、或者模型一直写不对）**不挡进游戏**：世界照样能玩，只是这一局暂时
+     * 没有线。所以这里只写日志——与 [closeGap] 那种"世界少了一块地"的失败不同，它不是玩家看得见的东西。
+     *
+     * [count] 默认 [ScriptPlanner.OPENING_FILL]（三条），而库里没有剩下的（都填过了、或者一条都没有）时
+     * **一次调用都不花**。
+     */
+    suspend fun fillOpeningScripts(count: Int = ScriptPlanner.OPENING_FILL) {
+        val pending = references.pendingIn(world).take(count)
+        if (pending.isEmpty()) return
+        val before = world.scripts.map { it.id }.toSet()
+
+        val result = try {
+            writes.withLock { director.wake(world, Waking(Wake.Opening(pending), PLAYER, origin)) }
+        } catch (t: Throwable) {
+            say(LogLine.Kind.ERROR, "开局那几条线没排起来：${t.message}")
+            return
+        }
+
+        when (result) {
+            is Awakening.Done -> {
+                // **数的是"这一次真的添了几条"，不是"交给它了几条"。** 两者会不一样，而且探针逮到过：
+                // 它可以从【参考剧本】那一节里挑一条**这一批没交给它**的（那一节列的是库里所有还没填过
+                // 的），于是"日志说 2 条、池子里多了 3 条"——一句会让人去查代码的假账（§1.5 第三条）。
+                val fresh = world.scripts.filter { it.id !in before }
+                say(LogLine.Kind.NOTE, "（导演排下了这一局的线：${fresh.size} 条）")
+                fresh.forEach { say(LogLine.Kind.NOTE, "· ${it.title}　${it.summary}") }
+            }
+
+            is Awakening.FailedProtocol -> say(
+                LogLine.Kind.PROBLEM,
+                "（开局这几条线没能排出来（试了 ${result.attempts} 次）：${result.problems.joinToString("；")}）",
+            )
         }
     }
 
@@ -1917,16 +1989,19 @@ class GameSession(
             config: EndpointConfig,
             save: SaveGame,
             presets: PresetLibrary = PresetLibrary(),
+            references: ScriptLibrary = ScriptLibrary(),
             scheduler: Scheduling = Scheduler(config),
             scheduleSettings: ScheduleSettings = ScheduleSettings(),
             npc: Npc = Npc(config, presets),
             judge: Judge = Judge(config, presets = presets),
-            director: Director = Director(config, presets),
+            director: Director = Director(config, presets, references = references),
         ): GameSession {
             SaveFile.installPresets(presets, save)
+            SaveFile.installReferences(references, save)
             val session = GameSession(
                 config = config,
                 presets = presets,
+                references = references,
                 startingWorld = World.from(save.world),
                 judge = judge,
                 director = director,

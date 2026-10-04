@@ -101,6 +101,16 @@ data class Script(
     val state: ScriptState = ScriptState.UNARRANGED,
     /** 批注：只追加（§8.4）。 */
     val notes: List<ScriptNote> = emptyList(),
+    /**
+     * **它照哪一条参考剧本填出来的**（§14.55）：填的是那一份 [ReferenceScript] 的 id。
+     *
+     * `null` = **导演自己想出来的**，不来自任何参考——那是合法的，而且很常见（玩家把一件事带成了
+     * 一条线，导演顺手把它记下来）。所以它不是"必填的来源"，而是"这条线的出处"。
+     *
+     * 它有两个用处：**别把同一条参考剧本填两遍**（库里那些已经出现在某个 `source` 上的，就是填过的），
+     * 以及日后回看这一局时指得回原典。
+     */
+    val source: String? = null,
 )
 
 /** 把池子列成给导演看的那一份清单（标题 + 摘要 + 状态）。**正文不在里面**，那是 `look_script` 的事。 */

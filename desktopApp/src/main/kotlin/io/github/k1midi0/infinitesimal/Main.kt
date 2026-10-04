@@ -38,7 +38,9 @@ import io.github.k1midi0.infinitesimal.save.SaveLoad
 import io.github.k1midi0.infinitesimal.session.GameSession
 import io.github.k1midi0.infinitesimal.ui.GameScreen
 import io.github.k1midi0.infinitesimal.world.BuiltinPresets
+import io.github.k1midi0.infinitesimal.world.BuiltinScripts
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
+import io.github.k1midi0.infinitesimal.world.ScriptLibrary
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
@@ -78,7 +80,20 @@ fun main() = application {
             val state by produceState<PresetState>(PresetState.Loading, key) {
                 value = runCatching { PresetLibrary(BuiltinPresets.load()) }
                     .fold(
-                        onSuccess = { PresetState.Ready(it) },
+                        onSuccess = { library ->
+                            // **参考剧本库是另一份资源，而它读不出来不挡路**（§14.55）：一份能玩的游戏没有
+                            // 参考剧本，只是导演不会自己排线。所以失败在这里被翻成一句通知，而不是等待界面。
+                            val loaded = runCatching { ScriptLibrary(BuiltinScripts.load()) }
+                            PresetState.Ready(
+                                library = library,
+                                references = loaded.getOrElse { ScriptLibrary() },
+                                referencesProblem = loaded.exceptionOrNull()?.let {
+                                    "参考剧本库读不出来（${it.message ?: it::class.simpleName}）——这一局导演不会自己排线。" +
+                                        "它在 shared/src/commonMain/composeResources/files/builtin-scripts.json，" +
+                                        "跑一次 spike/ScriptDigest 就能重新生成。"
+                                },
+                            )
+                        },
                         onFailure = { PresetState.Failed(it.message ?: it.toString()) },
                     )
             }
@@ -96,7 +111,12 @@ fun main() = application {
                      * 存档路径）一律不作数。
                      */
                     key(key) {
-                        AppRoot(config = configOf(key), library = current.library)
+                        AppRoot(
+                            config = configOf(key),
+                            library = current.library,
+                            references = current.references,
+                            openingNotice = current.referencesProblem,
+                        )
                     }
                 }
             }
@@ -118,9 +138,15 @@ fun main() = application {
  * 挂起函数，`GameScreen` 只负责在按钮被按下时调用它们。
  */
 @Composable
-private fun AppRoot(config: EndpointConfig, library: PresetLibrary) {
+private fun AppRoot(
+    config: EndpointConfig,
+    library: PresetLibrary,
+    references: ScriptLibrary,
+    /** 进主界面时先说一句（现在只有一条：参考剧本库读不出来）。 */
+    openingNotice: String? = null,
+) {
     var session by remember { mutableStateOf<GameSession?>(null) }
-    var menuNotice by remember { mutableStateOf<String?>(null) }
+    var menuNotice by remember { mutableStateOf(openingNotice) }
     val scope = rememberCoroutineScope()
 
     // **每次回到主界面都要重新读一遍"上次那一份"**：游戏里刚存过，那一条就变了。
@@ -131,7 +157,21 @@ private fun AppRoot(config: EndpointConfig, library: PresetLibrary) {
     fun startNewGame() {
         scope.launch {
             val path = pickSavePath() ?: return@launch
-            val fresh = GameSession(config, presets = library)
+            // 参考剧本库那一份挂到会话上（§14.55）：导演要照它填出这一局的线。
+            val fresh = GameSession(config, presets = library, references = references)
+            // **开局那一批线在进游戏之前排**（§14.55、用户定的"开局填一批，其余留空由导演途中补"）：
+            // 玩家等这一次思考档调用，换到的是"第一句话之前，这一带已经有三件事在等着"。
+            // 它要一分钟上下，所以界面上先说一句——与后面的通知共用 [menuNotice] 那一行。
+            // **排不成不挡人**：世界照样能玩，只是这一局暂时没有线（会话日志里已经写了那一句）。
+            menuNotice = "导演正在安排这一局的线……"
+            val opened = runCatching { fresh.fillOpeningScripts() }
+            menuNotice = opened.exceptionOrNull()?.let {
+                "这一局开起来了，但开局那几条线没排出来：${it.message ?: it::class.simpleName}"
+            }
+            runCatching { fresh.saveTo(path) }
+                .onFailure {
+                    menuNotice = "这一局开起来了，但第一份存档没写成：${it.message ?: it::class.simpleName}"
+                }
             runCatching { fresh.saveTo(path) }
                 .onFailure {
                     menuNotice = "这一局开起来了，但第一份存档没写成：${it.message ?: it::class.simpleName}"
@@ -146,7 +186,12 @@ private fun AppRoot(config: EndpointConfig, library: PresetLibrary) {
             when (val loaded = withContext(Dispatchers.IO) { SaveFile.load(path) }) {
                 is SaveLoad.Failed -> menuNotice = loaded.why
                 is SaveLoad.Loaded -> {
-                    val restored = GameSession.restore(config, loaded.game, presets = library)
+                    val restored = GameSession.restore(
+                        config,
+                        loaded.game,
+                        presets = library,
+                        references = references,
+                    )
                     restored.autoSaveTo(path)
                     menuNotice = null
                     session = restored
@@ -262,10 +307,20 @@ private fun stampOf(millis: Long): String =
  *
  * 它有两种用法，而两句话都必须是实话：**还在读**与**读坏了**。合成一个"请稍候"会让一次打包错误看起来
  * 像一次慢启动，而这两件事要做的下一步完全不同。
+ *
+ * ## 两份资源：一份挡路，一份不挡
+ *
+ * [Ready] 带着出厂预设包与参考剧本库（§14.55）。但两者失败的后果不同：**预设包读不出来就不该进游戏**
+ * （那会让每一样东西都现场建模，一次几十秒），而**参考剧本库读不出来照样能玩**——只是导演不会自己排线。
+ * 所以后者不挡路，而是变成主界面上的一句 [Ready.referencesProblem]。
  */
 private sealed interface PresetState {
     data object Loading : PresetState
-    data class Ready(val library: PresetLibrary) : PresetState
+    data class Ready(
+        val library: PresetLibrary,
+        val references: ScriptLibrary,
+        val referencesProblem: String? = null,
+    ) : PresetState
     data class Failed(val why: String) : PresetState
 }
 

@@ -3,6 +3,7 @@ package io.github.k1midi0.infinitesimal.save
 import io.github.k1midi0.infinitesimal.image.readTextOrNull
 import io.github.k1midi0.infinitesimal.image.writeTextFile
 import io.github.k1midi0.infinitesimal.world.PresetLibrary
+import io.github.k1midi0.infinitesimal.world.ScriptLibrary
 import kotlinx.serialization.json.Json
 
 /**
@@ -99,6 +100,14 @@ object SaveFile {
      * （它内部是个保序的 `LinkedHashMap`，见 `world/PresetLibrary.kt:32` 那段注释）。
      */
     fun installPresets(library: PresetLibrary, game: SaveGame) = library.restore(game.presets)
+
+    /**
+     * 把参考剧本库装回 [library]（读档那条路要用，§14.55）。
+     *
+     * 与 [installPresets] 同一个理由：**"怎么装"只有库自己知道**（[ScriptLibrary.restore] 是合并而不是
+     * 清空——出厂那份在存档之外，一份没有参考剧本的旧档不该把它一起清掉）。
+     */
+    fun installReferences(library: ScriptLibrary, game: SaveGame) = library.restore(game.references)
 
     /**
      * 从文件开头往下读多少**字符**去找那三个头字段。

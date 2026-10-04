@@ -79,4 +79,25 @@ tasks.withType<Test>().configureEach {
         "infinitesimal.presetFile",
         providers.gradleProperty("infinitesimalPresetFile").getOrElse(""),
     )
+    // ── 参考剧本那一层（§14.55） ──────────────────────────────────────────────────
+    // 拆一部小说（spike/ScriptDigest）：原文在哪、写到哪个库文件、这一次最多拆几段。
+    // 与密钥同一个理由留在命令行上：它们是"这一次要拆哪本书"的输入，不是产品的配置。
+    systemProperty(
+        "infinitesimal.novelFile",
+        providers.gradleProperty("infinitesimalNovelFile").getOrElse(""),
+    )
+    systemProperty(
+        "infinitesimal.scriptsFile",
+        providers.gradleProperty("infinitesimalScriptsFile").getOrElse(""),
+    )
+    systemProperty(
+        "infinitesimal.digestChunks",
+        providers.gradleProperty("infinitesimalDigestChunks").getOrElse(""),
+    )
+    // 开局填充那个探针跑几遍（spike/OpeningScriptsProbe）。**它一次要一分钟上下**，所以默认值写在
+    // 探针里（3），这个旋钮是"今天只想看一遍"时用的。
+    systemProperty(
+        "infinitesimal.openingRuns",
+        providers.gradleProperty("infinitesimalOpeningRuns").getOrElse(""),
+    )
 }

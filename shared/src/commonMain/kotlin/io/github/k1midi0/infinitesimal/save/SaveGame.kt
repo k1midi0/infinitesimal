@@ -2,6 +2,7 @@ package io.github.k1midi0.infinitesimal.save
 
 import io.github.k1midi0.infinitesimal.npc.ConversationSnapshot
 import io.github.k1midi0.infinitesimal.world.Preset
+import io.github.k1midi0.infinitesimal.world.ReferenceScript
 import io.github.k1midi0.infinitesimal.world.WorldSnapshot
 import kotlinx.serialization.Serializable
 
@@ -42,6 +43,14 @@ data class SaveGame(
     val world: WorldSnapshot = WorldSnapshot(emptyList()),
     val conversations: List<ConversationSnapshot> = emptyList(),
     val presets: List<Preset> = emptyList(),
+    /**
+     * **这一局用过的参考剧本库**（§14.55）。
+     *
+     * 与 [presets] 同一条纪律：它是**世界之外的素材**，但读档那一局要照着它才知道"还有哪几条线没被填
+     * 出来"，所以它跟着存档走。带默认值，于是刀七那批老档照读（它们的池子里那些剧本没有来源，
+     * 而那是当时的实话）。
+     */
+    val references: List<ReferenceScript> = emptyList(),
 ) {
     companion object {
         /**

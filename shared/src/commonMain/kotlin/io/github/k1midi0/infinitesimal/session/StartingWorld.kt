@@ -8,8 +8,6 @@ import io.github.k1midi0.infinitesimal.world.Entity
 import io.github.k1midi0.infinitesimal.world.HARD_RADIUS_CHUNKS
 import io.github.k1midi0.infinitesimal.world.Landform
 import io.github.k1midi0.infinitesimal.world.RuleEntry
-import io.github.k1midi0.infinitesimal.world.Script
-import io.github.k1midi0.infinitesimal.world.ScriptState
 import io.github.k1midi0.infinitesimal.world.Rulebook
 import io.github.k1midi0.infinitesimal.world.Shapes
 import io.github.k1midi0.infinitesimal.world.TerrainCell
@@ -170,8 +168,10 @@ object StartingWorld {
      * 第五样是**发言的顺序**（2026-09-26 加的）：开局只有矮人一个会说话的角色，它排在队首。空名单
      * 也能跑（没排过队的排在最后），但那样"谁先开口"就不可读了——开局这一份该把人排好。
      *
-     * 第六样是**剧本池**（2026-09-28 加的，§14.54）：空池子也能跑，但那样"剧本池"这件事在真游戏里
-     * 一次都不会被走到。所以开局挂一条从这张地图里长出来的种子。
+     * **开局不再挂剧本**（§14.55 改的）：从前这里挂着一条手写的种子（"地窖底下那条道"），那是把
+     * **第二层**（这个世界的剧本）直接生造成开局内容——而它的来源本该是**第一层**（参考剧本库，见
+     * [io.github.k1midi0.infinitesimal.world.ReferenceScript]）。现在的路是：
+     * 开局那一批由导演照参考剧本填出来（`GameSession.fillOpeningScripts`），而池子空着也能玩。
      */
     fun snapshot(): WorldSnapshot = WorldSnapshot(
         entities = tavern(),
@@ -179,38 +179,6 @@ object StartingWorld {
         terrain = ground,
         zoning = zoning(),
         speakQueue = speakQueue(),
-        scripts = scripts(),
-    )
-
-    /**
-     * **开局那份剧本**（§8.4、§14.54）。
-     *
-     * 它与另外五样（实体、规则书、地形、区划、发言名单）是**同一类东西**：开局那份内容。存在的理由与
-     * §14.44 那份手写作息一样——**池子空着的话，"剧本池"这件事在真游戏里一次都不会被走到**，而一份
-     * 种子能让导演第一次开工就看见"原来有这么一条线挂着"。
-     *
-     * 这条种子是从开局那张酒馆里**长出来的**，不是我另编一个世界观：地窖门底下那条旧道——它在本会话
-     * §14.52 的联机读数里被导演自己编出来过两次（"地窖墙角压着一条早年通河边的旧排水沟，砖已经松
-     * 了"），所以它是这张地图上**本来就有**的一个钩子。
-     *
-     * **状态是"未安排"**：舞台（那条道通向哪儿、河边有什么）还没搭——那是导演照它去长地形的事。
-     */
-    fun scripts(): List<Script> = listOf(
-        Script(
-            id = "地窖底下那条道",
-            title = "旧排水沟",
-            summary = "酒馆地窖门底下压着一条早年通河边的旧道，砖已经松了。玩家可能顺着它摸到河边，" +
-                "也可能只当那是块旧地板——他不去，这条线就一直挂着（那不算浪费）。",
-            body = "「醉猫」的地窖底下有一条比酒馆本身老得多的排水沟：早年间镇上还没有正经码头，" +
-                "酒是从河上偷运进来的，这条沟就是那时候挖的，一头通地窖墙角，一头通镇南河湾的乱石滩。" +
-                "后来河道改了、镇子也换了样子，沟口的砖松了，可那条道还在。\n\n" +
-                "玩家可能怎么撞上它：翻地窖里的酒桶、看见墙角那块砖的颜色与别处不一样、" +
-                "或者干脆问矮人「这底下还有什么」。\n\n" +
-                "顺着它下去能到河边——那一段地形还没有，要现长。河边可以是空的（一阵风、一片芦苇），" +
-                "也可以接上别的东西（有人在那头等过谁、留下过什么）。**玩家不去就不要推**：这条线的用处" +
-                "是「这一带有东西可以挖」，不是「这一局必须演一出下地窖」。",
-            state = ScriptState.UNARRANGED,
-        ),
     )
 
     /**

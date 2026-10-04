@@ -26,7 +26,9 @@ import kotlinx.coroutines.runBlocking
  *
  * 这一支钉四件事：
  *
- *  1. **池子是真世界状态**：开局就有一条种子（`StartingWorld.scripts()`），它随快照往返。
+ *  1. **池子是真世界状态**：它随快照往返（这一支自己带一条线进去——§14.55 之后**开局不再挂种子**了：
+ *     这个世界的线该由导演照参考剧本填出来，那件事在 `DirectorOpeningTest` 与
+ *     `GameSessionOpeningScriptsTest` 里钉）。
  *  2. **五态照字读**（"未安排/已安排/运行/中断/完结"，也认枚举名），读不懂就驳回。
  *  3. **两手上限**：份数 8、摘要 200 字、正文 2000 字；**改写已有的那一条不受份数限制**（那正是
  *     "线太多"的出路）。
@@ -41,7 +43,16 @@ class ScriptPoolTest {
         thinking = ThinkingMode.Always,
     )
 
-    private fun world(): World = World.from(StartingWorld.snapshot())
+    /** 这一支自己那条线：**它不从 `StartingWorld` 来**（开局已经不挂剧本了，§14.55）。 */
+    private val seed = Script(
+        id = "地窖底下那条道",
+        title = "旧排水沟",
+        summary = "酒馆地窖门底下压着一条早年通河边的旧道，砖已经松了。",
+        body = "「醉猫」的地窖底下有一条比酒馆本身老得多的排水沟，一头通地窖墙角，一头通镇南河湾的乱石滩。",
+        state = ScriptState.UNARRANGED,
+    )
+
+    private fun world(): World = World.from(StartingWorld.snapshot().copy(scripts = listOf(seed)))
 
     private fun origin(world: World) =
         ChunkOrigin.atPlayerStart(world.chunkOfEntity("player") ?: io.github.k1midi0.infinitesimal.world.ChunkKey(0, 0))
@@ -59,15 +70,6 @@ class ScriptPoolTest {
     )
 
     // ── 数据层 ─────────────────────────────────────────────────────────────────────
-
-    @Test
-    fun theOpeningWorldCarriesOneSeedScript() {
-        val pool = world().scripts
-        assertEquals(1, pool.size, "开局挂一条种子——空池子的话，剧本池在真游戏里一次都不会被走到")
-        assertEquals("地窖底下那条道", pool.single().id)
-        assertEquals(ScriptState.UNARRANGED, pool.single().state, "舞台还没搭，所以是未安排")
-        assertTrue(pool.single().body.length > pool.single().summary.length, "正文比摘要长")
-    }
 
     @Test
     fun thePoolRidesTheSnapshot() {
@@ -116,7 +118,7 @@ class ScriptPoolTest {
     @Test
     fun thePoolHasRoomForEightAndRewritingIsAlwaysAllowed() {
         val w = world()
-        // 把池子填满（种子之外再添七条）。
+        // 把池子填满（那一条之外再添七条）。
         repeat(7) { i ->
             ScriptPlanner.apply(w, listOf(write(id = "线$i", title = "线 $i")))
         }
@@ -187,7 +189,7 @@ class ScriptPoolTest {
         val fresh = world.scripts.first { it.id == "圣剑择主" }
         assertEquals("圣剑拔出的日子", fresh.title)
         assertEquals(ScriptState.UNARRANGED, fresh.state)
-        assertEquals(2, world.scripts.size, "种子之外添了一条")
+        assertEquals(2, world.scripts.size, "那一条之外添了一条")
     }
 
     @Test

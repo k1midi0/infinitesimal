@@ -20,6 +20,13 @@ data class ScriptWrite(
     val summary: String,
     val body: String,
     val state: ScriptState,
+    /**
+     * 这一条是照哪一份**参考剧本**填的（§14.55）。空着 = 导演自己想出来的（合法，而且常见）。
+     *
+     * 非空时它必须是 [ScriptLibrary] 里真的有的 id——一个打错的来源会**静默地指不到原典**，而
+     * "这条线是从哪儿来的"正是日后唯一能查的东西，所以它在 [ScriptPlanner.problems] 里过一道门。
+     */
+    val source: String? = null,
 )
 
 /**
@@ -67,9 +74,26 @@ object ScriptPlanner {
     /** 清单里每份剧本各带几条批注（只给最近这几条）。 */
     const val NOTES_IN_PROMPT: Int = 3
 
+    /**
+     * **开局那一次填充写几条**（§14.55）。
+     *
+     * 三条的来处：池子的上限是 [MAX_SCRIPTS]（八条），而开局**不该把八条一次用掉**——用户定的口径是
+     * 「开局填一批，其余留空由导演途中补」。三条正好是"这一带现在有三件事在等着"：再多，导演第一次
+     * 开工就要在八条线里挑，而那时候它对这一局的走向还什么都不知道。
+     */
+    const val OPENING_FILL: Int = 3
+
     fun problems(
         world: World,
         writes: List<ScriptWrite>,
+        /**
+         * **参考剧本库里有的那些 id**（§14.55）。
+         *
+         * 默认空集合的意思是"这一次调用不知道库"。而 `source` 非空时它会**驳回**——那是故意的：一个
+         * 新的调用点忘了把库传进来，症状是一句看得懂的"库里没有这条参考剧本"，而不是一条来源悄悄指
+         * 不到原典的剧本（§1.5 第三条：驳回理由不撒谎）。
+         */
+        referenceIds: Set<String> = emptySet(),
         maxScripts: Int = MAX_SCRIPTS,
         maxSummaryChars: Int = MAX_SUMMARY_CHARS,
         maxBodyChars: Int = MAX_BODY_CHARS,
@@ -107,6 +131,15 @@ object ScriptPlanner {
             if (write.body.length > maxBodyChars) {
                 add("「${write.title}」的正文太长了（${write.body.length} 字，最多 $maxBodyChars）。")
             }
+            val source = write.source?.trim().orEmpty()
+            if (source.isNotEmpty() && source !in referenceIds) {
+                add(
+                    "「${write.title}」写着它是照参考剧本「$source」填的，而库里没有这一条。" +
+                        "库里现在有：" +
+                        (if (referenceIds.isEmpty()) "（一条都没有——这一局没有参考剧本库）" else referenceIds.joinToString("、")) +
+                        "。**来源照抄清单里的 id**；这一条若是你自己想出来的，`source` 留空。",
+                )
+            }
             // **新增才受份数限制**：改写已有的那一条永远可以（那正是"线太多"的出路之一）。
             val existing = world.scripts.any { it.id == id }
             if (!existing && world.scripts.size >= maxScripts) {
@@ -123,8 +156,10 @@ object ScriptPlanner {
     /**
      * 落库。**只在校验通过之后被调用**。
      *
-     * 两条语义：**id 对得上的整张替换**（标题/摘要/正文/状态全换，而**批注保留**——§8.4 那条"批注与
-     * 正文分开存"在这里落成事实），**对不上的追加到末尾**（批注从空开始）。
+     * 三条语义：**id 对得上的整张替换**（标题/摘要/正文/状态全换，而**批注保留**——§8.4 那条"批注与
+     * 正文分开存"在这里落成事实），**对不上的追加到末尾**（批注从空开始），以及 **`source` 空着时
+     * 保留原来那条的来源**——改写一条剧本（换措辞、换走向）不该把它与参考剧本的关系一起抹掉，而
+     * "抹掉"在这条路上是静默的（下一次再也没人知道它是从哪儿来的）。
      */
     fun apply(world: World, writes: List<ScriptWrite>) {
         val out = world.scripts.toMutableList()
@@ -138,6 +173,7 @@ object ScriptPlanner {
                 body = write.body.trim(),
                 state = write.state,
                 notes = if (at >= 0) out[at].notes else emptyList(),
+                source = write.source?.trim()?.takeIf { it.isNotEmpty() } ?: out.getOrNull(at)?.source,
             )
             if (at >= 0) out[at] = fresh else out += fresh
         }

@@ -24,6 +24,8 @@ import io.github.k1midi0.infinitesimal.spatial.nearestMissing
 import io.github.k1midi0.infinitesimal.spatial.requiredChunks
 import io.github.k1midi0.infinitesimal.world.BUFFER_RADIUS_CHUNKS
 import io.github.k1midi0.infinitesimal.world.CHARACTER_KIND
+import io.github.k1midi0.infinitesimal.world.ReferenceScript
+import io.github.k1midi0.infinitesimal.world.ScriptLibrary
 import io.github.k1midi0.infinitesimal.world.ScriptState
 import io.github.k1midi0.infinitesimal.world.listing
 import io.github.k1midi0.infinitesimal.world.ChunkKey
@@ -102,6 +104,25 @@ sealed interface Wake {
         val why: List<String>,
         val was: Map<String, WorldTime>,
     ) : Wake
+
+    /**
+     * **开局那一次填充**（§14.55）：会话把**这一局挑中的那几条参考剧本**（含骨架）交给导演，让它照着
+     * 这个世界把它们填成这个世界的剧本。
+     *
+     * ## 为什么它是一条自己的唤醒，而不是并进 [Arrange]
+     *
+     * 因为它的**输入**不一样：这一次唤醒带着几张具体的骨架（[scripts]，由会话从参考剧本库里挑出来），
+     * 而 `Arrange` 只是"你排一排"。用户定的口径是「开局填一批，其余留空由导演途中补」——所以
+     * **开局这一批是要交差的**（[unmet] 要求至少填出一条），而途中补不补由它自己看（那是它每一次
+     * 思考档开工时看见【参考剧本】那一节之后的自由）。
+     *
+     * ## 为什么骨架在这一次的消息里，而不是全量常驻提示词
+     *
+     * 参考剧本的骨架不进常驻提示词（与剧本正文一条纪律：清单里只有 id + 标题 + 概括）。开局这一批是
+     * 少数几条、而且**这一次就要用**，所以它们跟着这一次的 user 消息进去；别的时候要读某一条的骨架，
+     * 用 `look_reference` 打开（§8.4 那条"正文要打开才看"）。
+     */
+    data class Opening(val scripts: List<ReferenceScript>) : Wake
 }
 
 /** 导演的两档。**同一个模型的两套参数**，不是两个模型（§8.5）。 */
@@ -192,6 +213,17 @@ class Director(
     private val maxAttempts: Int = 2,
     /** 思考档的档位。**留这个参数只为能再量，不是为了降档**（§12 第 17 项同一条理由）。 */
     val effort: ReasoningEffort = ReasoningEffort.HIGH,
+    /**
+     * **参考剧本库**（§14.55）——世界之外的那一份素材。
+     *
+     * 它与 [io.github.k1midi0.infinitesimal.world.PresetLibrary] 是同一类东西：**挂在会话上、活的、
+     * 要交给每一个看它的地方**。导演要它做三件事：开工时列出**还没填过**的那些、`look_reference` 读
+     * 骨架、以及判 `write_script` 的 `source` 是不是真的库里有的 id。
+     *
+     * 默认是一个**不含出厂包的**空库：那是给测试与探针用的兜底。真实入口（`desktopApp` 的 `Main`）
+     * 在读 `BuiltinScripts` 之后把它传进来。
+     */
+    val references: ScriptLibrary = ScriptLibrary(),
 ) {
 
     /**
@@ -205,11 +237,13 @@ class Director(
             io.github.k1midi0.infinitesimal.world.PresetLibrary(),
         maxAttempts: Int = 2,
         effort: ReasoningEffort = ReasoningEffort.HIGH,
+        references: ScriptLibrary = ScriptLibrary(),
     ) : this(
         LlmClient(config.copy(userId = SystemId.DIRECTOR)),
         TerrainGenerator(config, presetLibrary = presetLibrary),
         maxAttempts,
         effort,
+        references,
     )
 
     /** 整场跑掉的模型调用。与判定那个分开数，是为了让"哪一层烧了钱"看得出来。 */
@@ -371,6 +405,7 @@ class Director(
         DirectorTools.WRITE_CARD -> writeCard(call, world, waking)
         DirectorTools.PROMOTE_CHARACTER -> promoteCharacter(call, world, waking)
         DirectorTools.LOOK_SCRIPT -> lookScript(call, world)
+        DirectorTools.LOOK_REFERENCE -> lookReference(call)
         DirectorTools.WRITE_SCRIPT -> writeScript(call, world, waking)
         DirectorTools.ANNOTATE_SCRIPT -> annotateScript(call, world)
         else -> "没有叫「${call.name}」的工具。你现在能用的只有：" +
@@ -553,6 +588,33 @@ class Director(
     }
 
     /**
+     * **打开一条参考剧本读它的骨架**（§14.55）。
+     *
+     * 与 [lookScript] 同一个形状，而它连世界都不碰——参考剧本库是**素材**，这一层没有任何一条路会改它
+     * （改的是世界里那份照它填出来的剧本）。所以两档都能调，而驳回时把库里现在有的代号列出来（§1.5
+     * 第三条：驳回理由不撒谎）。
+     */
+    private fun lookReference(call: ToolCallRequest): String {
+        val args = decodeCall(LookReferenceArgs.serializer(), call)
+            ?: return "${call.name} 的参数不是合法 JSON：${call.arguments.take(160)}"
+        val reference = references.find(args.id)
+            ?: return "参考剧本库里没有 id 是「${args.id}」的那一条。库里现在有：" +
+            (if (references.size == 0) "（一条都没有）" else references.ids().joinToString("、"))
+
+        return buildString {
+            append("【${reference.title}】（代号是「${reference.id}」）")
+            if (reference.from.isNotBlank()) append("　出自：${reference.from}")
+            appendLine()
+            append("概括：${reference.summary}\n\n")
+            append("骨架：\n").append(reference.body).append("\n\n")
+            append(
+                "**这是世界之外的素材**：这一条里那些人、那些地方还没有名字（拆它的时候就把它们丢掉了）。" +
+                    "把它填成这个世界的剧本时，用你眼前那段清单里真的有的人、真的有的地方。",
+            )
+        }
+    }
+
+    /**
      * **写一份剧本**（新建，或者把已有的那一条整张换掉）。与 [writeCycle] 同一个形状。
      */
     private fun writeScript(call: ToolCallRequest, world: World, waking: Waking): String {
@@ -569,8 +631,11 @@ class Director(
             summary = args.summary,
             body = args.body,
             state = state,
+            source = args.source,
         )
-        val problems = ScriptPlanner.problems(world, listOf(write))
+        // **库要传进来**：`source` 非空时它就是那道门（§14.55）。忘了传的症状是一句"库里没有这一条"，
+        // 而不是一条来源悄悄指不到原典的剧本。
+        val problems = ScriptPlanner.problems(world, listOf(write), references.ids())
         if (problems.isNotEmpty()) return "这份剧本没写进去：\n" + problems.joinToString("\n")
 
         val before = world.scripts.size
@@ -578,6 +643,7 @@ class Director(
         val after = world.scripts.first { it.id == args.id.trim() }
         return "写好了：「${after.title}」（id 是「${after.id}」）现在：${after.state.label}。" +
             (if (world.scripts.size > before) "池子里现在有 ${world.scripts.size} 条线。" else "这一条替换了原来那份（批注留着）。") +
+            (after.source?.let { "\n它记着自己是照参考剧本「$it」填的。" } ?: "") +
             "\n摘要：${after.summary}"
     }
 
@@ -805,6 +871,21 @@ class Director(
 
         is Wake.Called -> emptyList()
 
+        is Wake.Opening -> {
+            // **判据是"池子里多了一条以这次给的参考剧本为来源的线"**，不是它说了什么：`source` 是落库
+            // 时写进去的事实（[ScriptPlanner.apply]），而"我填好了"只是它的一句话（§1.5 第三条）。
+            val filled = world.scripts.any { it.source != null && why.scripts.any { r -> r.id == it.source } }
+            if (filled) {
+                emptyList()
+            } else {
+                listOf(
+                    "一条都没填。这一次给你的是**这一局挑中的参考剧本**——至少把其中一条填成这个世界的" +
+                        "剧本（`${DirectorTools.WRITE_SCRIPT}`，`source` 写那个代号）：" +
+                        why.scripts.joinToString("、") { it.id } + "。",
+                )
+            }
+        }
+
         is Wake.Stuck -> {
             // **判据是"出生时刻变了没有"，不是它说了什么。** 一个人卡住时它的循环是那一份；导演给它
             // 写一份新的，`bornAt` 会变成写下去那一刻（`CyclePlanner.apply`，取的正是"当下"）——所以
@@ -915,6 +996,31 @@ class Director(
                 append(thinkingBriefing(world, waking, focus, emptyList()))
             }
 
+            is Wake.Opening -> {
+                appendLine("【为什么把你叫起来】")
+                appendLine("**开局**：这一局挑中了几条参考剧本（世界之外的素材，从别处的故事里拆出来的，")
+                appendLine("所以里面的人与地方**都没有名字**——那是故意的，名字由这个世界来给）。")
+                appendLine()
+                appendLine("你要做的事只有一件：**把它们填成这个世界的剧本**。用你眼前那段清单里真的有的人、")
+                appendLine("真的有的地方、真的摆着的东西，把每一条填成这一带真能发生的一件事——")
+                appendLine("一条调一次 `${DirectorTools.WRITE_SCRIPT}`，`source` 写它照的那条参考剧本的代号。")
+                appendLine()
+                appendLine("几条分寸：")
+                appendLine("· **状态多半写「未安排」**：舞台（地形、东西、人）还没照它搭起来，那是以后的事。")
+                appendLine("· **摘要进清单、正文要打开才看**，所以摘要写「这一条是什么」，正文写它怎么走。")
+                appendLine("· **不必每一条都填**：哪一条与这一带放不到一起，就跳过它——")
+                appendLine("  池子里留着的空格由你以后自己补（这一局最多八条线）。")
+                appendLine()
+                why.scripts.forEach { reference ->
+                    appendLine("───── ${reference.id}｜${reference.title} ─────")
+                    appendLine("概括：${reference.summary}")
+                    appendLine("骨架：")
+                    appendLine(reference.body.trim())
+                    appendLine()
+                }
+                append(thinkingBriefing(world, waking, focus, emptyList()))
+            }
+
             is Wake.Stuck -> {
                 appendLine("【为什么把你叫起来】")
                 appendLine("**两种情形都会用这一段**，理由里写得清是哪一种：")
@@ -979,6 +1085,23 @@ class Director(
 
         append(scriptPool(world))
         appendLine()
+
+        // **参考剧本**（§14.55）：只列**还没被填过**的那些。填过的已经在上面那份剧本池清单里了，
+        // 再列一遍等于同一件事占两处提示词——而这一节的存在理由正是"库里还剩什么能用"。
+        val pending = pendingReferences(world)
+        if (pending.isNotEmpty()) {
+            appendLine("【参考剧本（世界之外的素材；还没填成这个世界的线）】")
+            appendLine(pending.take(REFERENCES_IN_PROMPT).listing())
+            if (pending.size > REFERENCES_IN_PROMPT) {
+                appendLine("（还有 ${pending.size - REFERENCES_IN_PROMPT} 条没列出来）")
+            }
+            appendLine(
+                "想动手时先 `${DirectorTools.LOOK_REFERENCE}` 读它的骨架，再用 " +
+                    "`${DirectorTools.WRITE_SCRIPT}` 把它填成**这个世界的**一条线（`source` 写它的代号）。" +
+                    "不开局也随时可以填：池子里的空位就是留给这件事的。",
+            )
+            appendLine()
+        }
 
         val people = visibleTo(world, waking.focusId).mapNotNull { world.byId(it) }
             .filter { it.kind == CHARACTER_KIND }
@@ -1069,6 +1192,12 @@ class Director(
         }
     }
 
+    /**
+     * **库里还没被填成这个世界的线**的那些（§14.55）。判据只有一处（[ScriptLibrary.pendingIn]）：
+     * 世界里已经有哪一条剧本以它为自己的来源，那一条就算填过了。
+     */
+    private fun pendingReferences(world: World): List<ReferenceScript> = references.pendingIn(world)
+
     private fun timelineListing(world: World, scheduled: List<TimelineEntry>): String {
         val all = world.timeline.all()
         if (all.isEmpty() && scheduled.isEmpty()) return "（还没有排过任何事）"
@@ -1118,6 +1247,14 @@ class Director(
         const val LOOK_MAP_LIMIT = 400
 
         /**
+         * 【参考剧本】那一节最多列几条（§14.55）。
+         *
+         * 八条与剧本池的上限同一个数：一局里用得着的线本来就不会超过这个量级，而库可能是几十条（一部
+         * 小说拆出来的）。列多了，"还剩什么"这件事会开始挤掉"这个世界现在什么样"。
+         */
+        const val REFERENCES_IN_PROMPT = 8
+
+        /**
          * 导演的 system，**逐字不变**。
          *
          * 它是这一层唯一该命中缓存的那一段（[SystemId.DIRECTOR] 的注释）。所以"现在是第几天""身边有
@@ -1127,12 +1264,13 @@ class Director(
             你是一个世界的导演。
 
             你有两档，同一次工作里可能会换档：
-            · **快速档**看着。玩家每做完一个动作，你被叫起来一次，判断该不该动手。你**只有一只手**：
-              唤醒思考档。你自己不能改任何东西。
-            · **思考档**干活。你手上有七只手：排时间轴、长地形与放东西、看地图、给一个角色写它的作息、
-              放一个有名字的人出来、写一个人的人设、把一个已经活着的人升成剧情角色。
-              （**这一行要跟着手一起改**——它是模型每次开工读到的第一段，而漏改它的症状是"那只手明明
-              在，它却不知道自己有"。§14.53 才发现它从 §14.52 起就少了后面两只。）
+            · **快速档**看着。玩家每做完一个动作，你被叫起来一次，判断该不该动手。你手上有两只手：
+              唤醒思考档，以及往一份剧本上记一条批注（**只能追加**）。你自己改不了别的东西。
+            · **思考档**干活。你手上有十只手：排时间轴、长地形与放东西、看地图、给一个角色写它的作息、
+              放一个有名字的人出来、写一个人的人设、把一个已经活着的人升成剧情角色、打开一份剧本读它、
+              打开一条参考剧本读它的骨架、写一份剧本。
+              （**这两行要跟着手一起改**——它们是模型每次开工读到的第一段，而漏改的症状是"那只手明明
+              在，它却不知道自己有"。§14.53 逮到过第一次，§14.55 又发现它同时还漏了快速档那只批注手。）
 
             **换档不是换人。** 同一次工作里你从头到尾是同一个你，只是快的那一档不该做慢的那一档的判断。
 
@@ -1205,6 +1343,15 @@ class Director(
                 ——两个仇人，玩家帮其中一方，探索就有了深度。
             17. **往剧本上记批注是快速档的活**（它唯一能写的东西）。批注是**只追加、永不改写**的：
                 **改计划写正文，记发生过什么写批注**——两者别混在一个字段里（§1.5）。
+            18. **参考剧本**是世界之外的素材（有人把一部小说或者剧本拆成了这些骨架），只在你开工时列出
+                **还没填成这个世界的**那些（代号 + 标题 + 概括）。要动手就先用 `look_reference` 读它的
+                骨架，再用 `write_script` 把它填成**这个世界的**一条线：骨架里那些人、那些地方**没有
+                名字**（拆的时候就把人名地名丢掉了），所以要用你眼前那段清单里真的有的人、真的有的地方
+                去填——填出来的必须是**这一带真能发生的一件事**，不是把骨架照抄一遍。
+                **`source` 写那条参考剧本的代号**（自己想出来的线留空）。一份剧本一次只填一条参考剧本。
+                开局那一次你手上会拿到几条骨架（就在【为什么把你叫起来】那一段里），那是**要交差的**：
+                至少填出一条。以后补不补由你自己看——池子里空着的位置就是留给这件事的。
+                **库里没有一条合适的，你就自己写**：那不犯规（`source` 留空）。
         """.trimIndent()
     }
 }
@@ -1277,6 +1424,10 @@ internal data class PromoteArgs(val id: String = "")
 @Serializable
 internal data class LookScriptArgs(val id: String = "")
 
+/** [DirectorTools.LOOK_REFERENCE] 的参数。 */
+@Serializable
+internal data class LookReferenceArgs(val id: String = "")
+
 /** [DirectorTools.WRITE_SCRIPT] 的参数。**全部有默认值**，缺字段只会退化成一次看得懂的失败。 */
 @Serializable
 internal data class WriteScriptArgs(
@@ -1285,6 +1436,8 @@ internal data class WriteScriptArgs(
     val summary: String = "",
     val body: String = "",
     val state: String = "",
+    /** 照哪一条参考剧本填的（§14.55）。空着是合法的——那是它自己想出来的线。 */
+    val source: String = "",
 )
 
 /** [DirectorTools.ANNOTATE_SCRIPT] 的参数。 */
