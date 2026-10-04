@@ -21,6 +21,8 @@ import io.github.k1midi0.infinitesimal.world.World
 import io.github.k1midi0.infinitesimal.world.WorldTime
 import io.github.k1midi0.infinitesimal.world.refreshCyclesToClock
 import java.io.File
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -66,6 +68,23 @@ class SaveFileTest {
 
     /** 判定器与对话都不联网。读档那一支要用它。 */
     private val schedulerWithNothing = Scheduling { world -> CycleCatchUp(world.refreshCyclesToClock()) }
+
+    /**
+     * **整支测试的 `LastSave` 都指到 build 里**（2026-10-04 补）。
+     *
+     * 从前只有那两支专门测"记住上次那一份"的用例用了 [withOwnLastSave]，而别的用例里 `saveTo(path)`
+     * 会顺手把那个路径记进**玩家的主目录**（`~/.infinitesimal/last.json`）——症状是**主界面上的「继续」
+     * 指向了一个测试文件**。真踩到了：玩了一局之后主界面的「继续」变成 `build\savetest\session.json`。
+     */
+    @BeforeTest
+    fun keepLastSaveInBuild() {
+        LastSave.overrideDirectory = "build/savetest/lastsave"
+    }
+
+    @AfterTest
+    fun restoreLastSave() {
+        LastSave.overrideDirectory = null
+    }
 
     // ── 世界那一份 ────────────────────────────────────────────────────────────────
 
