@@ -12,8 +12,9 @@ import java.io.File
 /**
  * **出厂参考剧本库那份文件本身**（§14.55）。
  *
- * 它是**手写的**（仓库里没有"一手素材"——那是玩家自己的小说），所以它最容易悄悄写坏：字段名打错、字数
- * 超上限、两条同 id。这里把它当数据钉住，而不是等某天导演填出来一条怪东西再去查。
+ * 它一半是**手写的**（仓库里没有"一手素材"——那是玩家自己的小说），一半是**从一份真实素材里拆出来的**
+ * （用户提供的那一段《赤伶》背后的故事，原文不进仓库）。所以它最容易悄悄写坏：字段名打错、字数超上限、
+ * 两条同 id、拆出来的那两条里留了来源的专名。这里把它当数据钉住，而不是等某天导演填出来一条怪东西再去查。
  *
  * 与 [BuiltinScripts.PATH] 对上，是这一支的另一半价值：资源路径与源码树里那个位置一旦漂开，游戏读到的
  * 就是另一份（或者读不到），而症状只是"参考剧本库读不出来"。
@@ -76,6 +77,26 @@ class BuiltinScriptsFileTest {
             val text = script.summary + script.body
             forbidden.forEach { word ->
                 assertTrue(word !in text, "「${script.id}」里出现了本世界的东西「$word」——参考剧本是世界之外的")
+            }
+        }
+    }
+
+    /**
+     * **从一手素材里拆出来的那两条，来源里的专名一个都没留**（§14.55 的那一次读数）。
+     *
+     * "抛弃角色背景"那条规矩能机械判的只有这一半，而这一半恰好最容易破：真实文本里全是专名（那一段 484
+     * 字里有人名、县名、省名、年代、戏名、曲名）。所以把我们已经量到的那份来源钉住——它挡的是一次
+     * **重新跑拆分、把带名字的版本提交进来**。
+     */
+    @Test
+    fun theEntriesFromARealSourceKeptNoneOfItsNames() {
+        val names = listOf("裴宴之", "安远县", "江西", "李香君", "桃花扇", "赤伶", "1937")
+        val fromThatSource = pack().scripts.filter { it.from.contains("赤伶") }
+        assertTrue(fromThatSource.isNotEmpty(), "从那一篇里拆出来的两条不见了")
+        fromThatSource.forEach { script ->
+            val text = script.title + script.summary + script.body
+            names.forEach { name ->
+                assertTrue(name !in text, "「${script.id}」里留下了来源里的专名「$name」")
             }
         }
     }

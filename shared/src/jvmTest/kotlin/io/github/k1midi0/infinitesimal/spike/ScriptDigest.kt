@@ -4,7 +4,9 @@ import io.github.k1midi0.infinitesimal.config.SystemId
 import io.github.k1midi0.infinitesimal.director.ScriptDigester
 import io.github.k1midi0.infinitesimal.llm.LlmClient
 import io.github.k1midi0.infinitesimal.world.ReferencePack
+import io.github.k1midi0.infinitesimal.world.ReferenceScript
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.system.measureTimeMillis
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -23,6 +25,9 @@ import java.io.File
  * **增量**：那个文件里记着 `chunksDone`（拆到第几段了），重跑从那里接着走。所以中断、断电、或者只想
  * 先花一点钱看看效果，都是安全的——已经付过的那几段不会重拆。分段是**确定性的**（同一份原文 → 同一批
  * 段），`chunksDone` 因此有意义。
+ *
+ * **那一格进度只对一份原文有效**：文件名或内容指纹对不上，就从第 0 段重新开始，并打一行说清这件事
+ * （[resumeFrom]）。没有这一条的话，换一本小说接着跑会**一声不响地跳过它的前几段**。
  *
  * ## 它也**不覆盖**手写那几条出厂种子
  *
@@ -71,10 +76,11 @@ class ScriptDigest {
 
         val json = Json { prettyPrint = true; encodeDefaults = true }
         val existing = readPack(file, json)
-        val chunks = chunksOf(source.readText())
+        val text = source.readText()
+        val chunks = chunksOf(text)
 
         println("===== 参考剧本拆分 =====")
-        println("原文：${source.absolutePath}（${source.readText().length} 字，${chunks.size} 段）")
+        println("原文：${source.absolutePath}（${text.length} 字，${chunks.size} 段）")
         println("输出：${file.absolutePath}")
         println("已有 ${existing.scripts.size} 条，已拆到第 ${existing.chunksDone} 段\n")
 
@@ -83,8 +89,14 @@ class ScriptDigest {
         )
 
         val collected = existing.scripts.toMutableList()
-        var done = existing.chunksDone
-        var from = existing.from.ifBlank { source.name }
+        var done = resumeFrom(existing, source.name, text)
+        if (done != existing.chunksDone) {
+            println(
+                "（这个库里记的进度是「${existing.from}」拆到第 ${existing.chunksDone} 段，" +
+                    "不是这一份原文——从第 0 段重新开始。）\n",
+            )
+        }
+        val from = source.name
         var taken = collected.map { it.id }.toSet()
         var failures = 0
         var processed = 0
@@ -133,11 +145,11 @@ class ScriptDigest {
 
             // **拆完一段就落一次盘**：一部长篇要跑很久，中途断掉不该把已经付过的钱丢掉。
             done = index + 1
-            write(file, json, ReferencePack(from = from, chunksDone = done, scripts = collected))
+            write(file, json, pack(done, from, text, collected))
             processed++
         }
 
-        write(file, json, ReferencePack(from = from, chunksDone = done, scripts = collected))
+        write(file, json, pack(done, from, text, collected))
 
         println("\n───── 汇总 ─────")
         println("这一次拆了 $processed 段，库从 ${existing.scripts.size} 条变成 ${collected.size} 条（失败 $failures 段）")
@@ -147,6 +159,26 @@ class ScriptDigest {
             .forEach { (origin, list) ->
                 println("  出自 ${origin.ifEmpty { "（没说来源）" }}：${list.size} 条")
             }
+    }
+
+    /**
+     * 进度只在同一份原文上作数（§14.55 的坑）。**它一次请求都不花**——判据全在本地。
+     */
+    @Test
+    fun theProgressBelongsToThatOneSourceText() {
+        val a = "第一章 夜里下过雨，路上没有人。"
+        val b = "另一部小说，开头是一片海。"
+        val pack = ReferencePack(from = "a.txt", chunksDone = 3, sourceHash = a.hashCode())
+
+        assertEquals(3, resumeFrom(pack, "a.txt", a), "同一份原文接着往下拆")
+        assertEquals(0, resumeFrom(pack, "b.txt", b), "换了一本小说，从第 0 段开始")
+        assertEquals(0, resumeFrom(pack, "a.txt", a + "（改过一笔）"), "同一部作品改过，段号就对不上了")
+        assertEquals(0, resumeFrom(ReferencePack(), "a.txt", a), "空格子：这是第一次拆")
+        assertEquals(
+            0,
+            resumeFrom(ReferencePack(from = "混装：手写种子在前", chunksDone = 9), "a.txt", a),
+            "出厂那一份混装库不代表任何原文",
+        )
     }
 
     /**
@@ -169,6 +201,29 @@ class ScriptDigest {
     private companion object {
 
         const val DEFAULT_PATH = "src/commonMain/composeResources/files/builtin-scripts.json"
+
+        /**
+         * 从第几段接着拆。
+         *
+         * **进度是绑在原文上的**：库里那一格只有在"同一份原文"（同文件名 + 同内容指纹）时才作数。对不上
+         * 就从第 0 段开始——一件已经拆过的素材不会因为换了一本书而被跳过开头，代价只是同一段多花一次
+         * 请求（而那是看得见的）。
+         */
+        fun resumeFrom(existing: ReferencePack, name: String, text: String): Int =
+            if (existing.from == name && existing.sourceHash == text.hashCode()) existing.chunksDone else 0
+
+        /** 写出去的那一份：进度那三格一起更新，**每一条自己的 `from` 不动**（那才是出处）。 */
+        fun pack(
+            done: Int,
+            from: String,
+            text: String,
+            scripts: List<ReferenceScript>,
+        ): ReferencePack = ReferencePack(
+            from = from,
+            chunksDone = done,
+            sourceHash = text.hashCode(),
+            scripts = scripts,
+        )
 
         /**
          * 一段多大。

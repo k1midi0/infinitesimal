@@ -56,10 +56,28 @@ data class ReferenceScript(
 @Serializable
 data class ReferencePack(
     val version: Int = FORMAT,
-    /** 这一份文件是从哪个源文本拆出来的（工具填；手写的出厂种子写"出厂种子"）。 */
+    /**
+     * **工具那一格进度属于哪一份原文**（文件名）。它与 [sourceHash] 成对，只在判"这一次还能不能接着上次
+     * 往下拆"时用；**每一条自己的 [ReferenceScript.from] 才是出处**。
+     *
+     * 出厂那一份混装库这里写的是给人看的一句话（"混装：…"），于是任何一次真跑都会判成"进度不算数、
+     * 从第 0 段开始"——那是对的：一份手塞进去的库，它的 `chunksDone` 本来就不代表任何原文。
+     */
     val from: String = "",
-    /** 已经拆到第几段（原文本的分段序号，从 0 起）。手写的出厂种子是 0。 */
+    /**
+     * 已经拆到第几段（原文本的分段序号，从 0 起）。手写的出厂种子是 0。
+     *
+     * **它只对 [from] + [sourceHash] 那一份原文有意义**（见 [sourceHash]）。
+     */
     val chunksDone: Int = 0,
+    /**
+     * 那一份原文的指纹（`String.hashCode()`）。**与 `chunksDone` 一起才是一条完整的进度记录。**
+     *
+     * 没有它的话，换成另一本小说接着跑时，[chunksDone] 会被当成"这一本也拆到那儿了"，症状是**新小说的
+     * 开头几段一声不响地没被拆**（§14.55 的坑）。文件名单独一个也不够：同一部作品改过一次（增删了几段）
+     * 之后，段号与内容就对不上了。
+     */
+    val sourceHash: Int = 0,
     val scripts: List<ReferenceScript> = emptyList(),
 ) {
     companion object {
