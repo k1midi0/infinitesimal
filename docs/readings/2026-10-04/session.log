@@ -1,0 +1,640 @@
+===== 无限小：新的一局｜2026-10-04 14:35 =====
+模型 deepseek-flash｜端点 https://api.deepseek.com｜账与存档同目录同名前缀（.log 是账，.trace.jsonl 是原文）
+· #1｜inf-director｜84275 ms｜提示 9225（命中 5504 / 未命中 3721）｜输出 16667｜write_script、write_script、write_script、spawn_character、schedule、schedule
+· #2｜inf-director｜2507 ms｜提示 26599（命中 21888 / 未命中 4711）｜输出 323｜（没有工具调用）
+[记] （导演排下了这一局的线：3 条）
+[记] · 一笔到期的账　三年前拉琴的奥多把一只木箱押在这间酒馆的地窖里作保，借下的那笔钱这几天到期；箱子早被他一件件当空了，收账的布兰特已经在路上。玩家可能撞见矮人跟他压着嗓子吵、被他求着垫钱，也可能先被债主搭上一句。
+[记] · 不该打开的那扇门　酒馆地窖那扇门是上一任主人从外头扣上的，扣上那天留过一句：别开。这几天门后有闷响，而窖里存着矮人全部的酒。玩家可能被雇去看一眼，也可能自己撬开它——门后面不是酒窖该有的样子。
+[记] · 认得你的人　这条路上会有一个陌生人叫得出玩家的名字——一个玩家自己都不认得的名字。他不急着点破，先看玩家的手、看玩家怎么握斧子、怎么拨那盏灯的灯芯；然后他叫出那个名字，像在确认什么。
+
+── 看它一眼…｜第 1 天 傍晚（18:00） ──
+· #3｜inf-renderer｜910 ms｜提示 192（命中 0 / 未命中 192）｜输出 83｜（没有工具调用）
+[记] 看过了地窖门：4 句 （909 ms）
+（这一段：1 次调用、0.91 秒、提示 192（命中 0）、输出 83、约 0.1 厘）
+（到此刻合计：3 次调用、约 0.15 元）
+
+── 看它一眼…｜第 1 天 傍晚（18:00） ──
+· #4｜inf-renderer｜1229 ms｜提示 199（命中 0 / 未命中 199）｜输出 89｜（没有工具调用）
+[记] 看过了油灯：4 句 （1228 ms）
+（这一段：1 次调用、1.229 秒、提示 199（命中 0）、输出 89、约 0.1 厘）
+（到此刻合计：4 次调用、约 0.16 元）
+
+── 说一句…｜第 1 天 傍晚（18:00） ──
+[说] 你说：「你好」
+· #5｜inf-judge｜774 ms｜提示 2798（命中 1152 / 未命中 1646）｜输出 36｜address
+· #6｜inf-npc｜1406 ms｜提示 3920（命中 640 / 未命中 3280）｜输出 143｜say
+· #7｜inf-npc｜3408 ms｜提示 5479（命中 3968 / 未命中 1511）｜输出 609｜arrive
+· #8｜inf-npc｜909 ms｜提示 7605（命中 6016 / 未命中 1589）｜输出 77｜move
+· #9｜inf-judge｜689 ms｜提示 2639（命中 1152 / 未命中 1487）｜输出 36｜target
+· #10｜inf-judge｜36402 ms｜提示 4353（命中 3072 / 未命中 1281）｜输出 8048｜move
+· #11｜inf-npc｜1285 ms｜提示 9174（命中 7680 / 未命中 1494）｜输出 137｜move
+· #12｜inf-npc｜3878 ms｜提示 10827（命中 9216 / 未命中 1611）｜输出 682｜act
+· #13｜inf-judge｜1296 ms｜提示 2821（命中 1152 / 未命中 1669）｜输出 131｜target
+· #14｜inf-judge｜3349 ms｜提示 4382（命中 3072 / 未命中 1310）｜输出 555｜no_change
+· #15｜inf-npc｜925 ms｜提示 13117（命中 11392 / 未命中 1725）｜输出 70｜move
+· #16｜inf-npc｜1254 ms｜提示 14752（命中 13184 / 未命中 1568）｜输出 137｜move
+· #17｜inf-npc｜4776 ms｜提示 16454（命中 14848 / 未命中 1606）｜输出 761｜（没有工具调用）
+[说] 拉琴的奥多 说：「哟，这位爷。坐吧——不过先说明白，我这儿不请酒，谁坐我旁边谁自己掏钱。」
+[成] 拉琴的奥多 做了一件事——1 条后果
+[记]    · 拉琴的奥多 挪到了 (1200, 500, 12800) 厘米
+[成] 拉琴的奥多 做了一件事——没有改变世界
+· #18｜inf-director｜22646 ms｜提示 8131（命中 5376 / 未命中 2755）｜输出 4059｜write_card
+· #19｜inf-director｜1207 ms｜提示 12339（命中 12160 / 未命中 179）｜输出 185｜（没有工具调用）
+[成] （它的人设补了 「欠的账」——现在 5 张：身份（48 字）、经历（62 字）、脾气（36 字）、知道什么（43 字）、欠的账（108 字））
+（这一段：15 次调用、84.204 秒、提示 118791（命中 94080）、输出 15666、约 0.18 元）
+（到此刻合计：19 次调用、约 0.33 元）
+
+── 过一格…｜第 1 天 傍晚（18:00） ──
+[做] 你做：坐在奥多旁边
+[记] （你什么都没勾）
+· #20｜inf-judge｜857 ms｜提示 2590（命中 1280 / 未命中 1310）｜输出 63｜target、target
+[记] 对齐到：拉琴的奥多、你　← 和你勾的不一样（世界还没动）
+· #21｜inf-npc｜1589 ms｜提示 18861（命中 17152 / 未命中 1709）｜输出 158｜move
+· #22｜inf-judge｜851 ms｜提示 2641（命中 1152 / 未命中 1489）｜输出 36｜target
+· #23｜inf-judge｜6674 ms｜提示 4355（命中 3072 / 未命中 1283）｜输出 1237｜no_change
+· #24｜inf-npc｜2242 ms｜提示 20788（命中 18944 / 未命中 1844）｜输出 354｜arrive
+· #25｜inf-npc｜1784 ms｜提示 22943（命中 21120 / 未命中 1823）｜输出 275｜move
+· #26｜inf-npc｜5011 ms｜提示 24962（命中 23168 / 未命中 1794）｜输出 885｜（没有工具调用）
+[成] 拉琴的奥多 做了一件事——没有改变世界
+（这一段：7 次调用、19.008 秒、提示 97140（命中 85888）、输出 3008、约 0.05 元）
+（到此刻合计：26 次调用、约 0.38 元）
+· #27｜inf-director｜1657 ms｜提示 3255（命中 0 / 未命中 3255）｜输出 131｜wake_thinking
+
+── 算后果…｜第 1 天 傍晚（18:15） ──
+· #28｜inf-director｜26874 ms｜提示 8261（命中 5248 / 未命中 3013）｜输出 4954｜look_map
+· #29｜inf-director｜26998 ms｜提示 13342（命中 13184 / 未命中 158）｜输出 5712｜look_map、look_map
+· #30｜inf-director｜42360 ms｜提示 19168（命中 18944 / 未命中 224）｜输出 8703｜grow_terrain、look_reference
+· #31｜inf-generator｜59951 ms｜提示 5161（命中 2944 / 未命中 2217）｜输出 12632｜look_terrain、find_preset、find_preset、find_preset、find_preset、find_preset
+· #32｜inf-generator｜1846 ms｜提示 18897（命中 17792 / 未命中 1105）｜输出 386｜fill_terrain、fill_terrain
+· #33｜inf-generator｜3074 ms｜提示 19359（命中 19200 / 未命中 159）｜输出 840｜replace_terrain、replace_terrain、replace_terrain、replace_terrain
+· #34｜inf-generator｜5584 ms｜提示 20339（命中 20096 / 未命中 243）｜输出 1535｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、replace_terrain、fill_terrain、fill_terrain
+· #35｜inf-generator｜2263 ms｜提示 22132（命中 21760 / 未命中 372）｜输出 540｜dig_terrain、dig_terrain、dig_terrain
+· #36｜inf-generator｜20577 ms｜提示 22811（命中 22656 / 未命中 155）｜输出 5921｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #37｜inf-generator｜45125 ms｜提示 1281（命中 1024 / 未命中 257）｜输出 9439｜voxel_floor、voxel_floor、voxel_floor
+· #38｜inf-generator｜815 ms｜提示 10802（命中 10624 / 未命中 178）｜输出 112｜voxel_done
+· #39｜inf-generator｜50879 ms｜提示 1273（命中 1024 / 未命中 249）｜输出 13280｜voxel_floor、voxel_floor
+· #40｜inf-generator｜1791 ms｜提示 14607（命中 14464 / 未命中 143）｜输出 427｜voxel_floor、voxel_floor、voxel_floor
+· #41｜inf-generator｜2150 ms｜提示 15128（命中 14976 / 未命中 152）｜输出 558｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #42｜inf-generator｜2460 ms｜提示 15838（命中 15616 / 未命中 222）｜输出 686｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #43｜inf-generator｜1041 ms｜提示 16758（命中 16512 / 未命中 246）｜输出 114｜voxel_done
+· #44｜inf-generator｜32307 ms｜提示 1274（命中 1024 / 未命中 250）｜输出 7461｜voxel_floor
+· #45｜inf-generator｜2299 ms｜提示 8763（命中 8576 / 未命中 187）｜输出 533｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #46｜inf-generator｜808 ms｜提示 9524（命中 9216 / 未命中 308）｜输出 122｜voxel_floor
+· #47｜inf-generator｜757 ms｜提示 9690（命中 9472 / 未命中 218）｜输出 112｜voxel_done
+· #48｜inf-generator｜27541 ms｜提示 1269（命中 1024 / 未命中 245）｜输出 6328｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #49｜inf-generator｜1926 ms｜提示 8021（命中 4480 / 未命中 3541）｜输出 494｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #50｜inf-generator｜1363 ms｜提示 8959（命中 8448 / 未命中 511）｜输出 275｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #51｜inf-generator｜895 ms｜提示 9506（命中 9216 / 未命中 290）｜输出 112｜voxel_done
+· #52｜inf-generator｜40415 ms｜提示 1285（命中 1024 / 未命中 261）｜输出 9221｜voxel_floor、voxel_floor
+· #53｜inf-generator｜2380 ms｜提示 10560（命中 6912 / 未命中 3648）｜输出 709｜voxel_floor、voxel_floor
+· #54｜inf-generator｜936 ms｜提示 11331（命中 11136 / 未命中 195）｜输出 148｜voxel_done
+· #55｜inf-generator｜6856 ms｜提示 13073（命中 11392 / 未命中 1681）｜输出 1908｜voxel_floor、voxel_floor
+· #56｜inf-generator｜2012 ms｜提示 15045（命中 14848 / 未命中 197）｜输出 242｜voxel_done
+· #57｜inf-generator｜22611 ms｜提示 16881（命中 15232 / 未命中 1649）｜输出 5529｜voxel_floor、voxel_floor
+· #58｜inf-generator｜742 ms｜提示 22474（命中 22272 / 未命中 202）｜输出 115｜voxel_done
+· #59｜inf-generator｜3676 ms｜提示 29980（命中 28672 / 未命中 1308）｜输出 698｜make_object
+· #60｜inf-generator｜32825 ms｜提示 1281（命中 1024 / 未命中 257）｜输出 7444｜voxel_floor、voxel_floor
+· #61｜inf-generator｜3873 ms｜提示 8779（命中 8576 / 未命中 203）｜输出 1170｜voxel_floor
+· #62｜inf-generator｜884 ms｜提示 9981（命中 9728 / 未命中 253）｜输出 102｜voxel_done
+· #63｜inf-generator｜2342 ms｜提示 30716（命中 30464 / 未命中 252）｜输出 407｜look_terrain、look_terrain
+· #64｜inf-generator｜9524 ms｜提示 31323（命中 31104 / 未命中 219）｜输出 1837｜look_terrain、look_terrain
+· #65｜inf-generator｜5145 ms｜提示 33486（命中 33152 / 未命中 334）｜输出 941｜look_terrain
+· #66｜inf-generator｜10716 ms｜提示 34583（命中 34304 / 未命中 279）｜输出 1948｜fill_terrain
+· #67｜inf-generator｜961 ms｜提示 36571（命中 36352 / 未命中 219）｜输出 131｜look_terrain
+· #68｜inf-generator｜13723 ms｜提示 36978（命中 36608 / 未命中 370）｜输出 2545｜look_terrain
+· #69｜inf-generator｜2862 ms｜提示 39612（命中 39424 / 未命中 188）｜输出 498｜dig_terrain
+· #70｜inf-generator｜1306 ms｜提示 40159（命中 39936 / 未命中 223）｜输出 170｜replace_terrain
+· #71｜inf-generator｜2361 ms｜提示 40367（命中 40192 / 未命中 175）｜输出 355｜look_terrain
+· #72｜inf-generator｜3866 ms｜提示 40774（命中 40576 / 未命中 198）｜输出 561｜（没有工具调用）
+· #73｜inf-director｜17784 ms｜提示 28259（命中 27776 / 未命中 483）｜输出 2735｜look_script
+· #74｜inf-director｜33513 ms｜提示 31364（命中 30976 / 未命中 388）｜输出 6043｜grow_terrain
+· #75｜inf-generator｜16695 ms｜提示 5087（命中 2816 / 未命中 2271）｜输出 3319｜look_terrain、find_preset、find_preset、find_preset、find_preset
+· #76｜inf-generator｜28897 ms｜提示 8834（命中 8320 / 未命中 514）｜输出 6175｜fill_terrain
+· #77｜inf-generator｜3110 ms｜提示 15049（命中 14848 / 未命中 201）｜输出 1071｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain
+· #78｜inf-generator｜4060 ms｜提示 16412（命中 16000 / 未命中 412）｜输出 1042｜make_object、make_object、make_object
+===== 无限小：从存档接着玩｜2026-10-04 15:26 =====
+模型 deepseek-flash｜端点 https://api.deepseek.com｜账与存档同目录同名前缀（.log 是账，.trace.jsonl 是原文）
+
+── 看它一眼…｜第 1 天 傍晚（18:15） ──
+· #1｜inf-renderer｜1669 ms｜提示 201（命中 0 / 未命中 201）｜输出 70｜（没有工具调用）
+[记] 看过了你：4 句 （1672 ms）
+（这一段：1 次调用、1.669 秒、提示 201（命中 0）、输出 70、约 0.1 厘）
+（到此刻合计：1 次调用、约 0.1 厘）
+
+── 看它一眼…｜第 1 天 傍晚（18:15） ──
+· #2｜inf-renderer｜1401 ms｜提示 194（命中 0 / 未命中 194）｜输出 111｜（没有工具调用）
+[记] 看过了短柄斧：4 句 （1400 ms）
+（这一段：1 次调用、1.401 秒、提示 194（命中 0）、输出 111、约 0.1 厘）
+（到此刻合计：2 次调用、约 0.2 厘）
+
+── 看它一眼…｜第 1 天 傍晚（18:15） ──
+· #3｜inf-renderer｜1191 ms｜提示 240（命中 0 / 未命中 240）｜输出 76｜（没有工具调用）
+[记] 看过了拉琴的奥多：4 句 （1191 ms）
+（这一段：1 次调用、1.191 秒、提示 240（命中 0）、输出 76、约 0.1 厘）
+（到此刻合计：3 次调用、约 0.3 厘）
+
+── 过一格…｜第 1 天 傍晚（18:15） ──
+[做] 你做：做到奥多旁边
+[记] （你勾的是：拉琴的奥多、你）
+· #4｜inf-judge｜894 ms｜提示 2734（命中 1152 / 未命中 1582）｜输出 36｜target
+[记] 对齐到：你　← 和你勾的不一样（世界还没动）
+· #5｜inf-npc｜2128 ms｜提示 27354（命中 25600 / 未命中 1754）｜输出 229｜move
+· #6｜inf-judge｜1033 ms｜提示 2644（命中 1920 / 未命中 724）｜输出 36｜target
+· #7｜inf-judge｜16203 ms｜提示 4358（命中 3712 / 未命中 646）｜输出 3459｜move
+· #8｜inf-npc｜1308 ms｜提示 29186（命中 27520 / 未命中 1666）｜输出 137｜arrive
+· #9｜inf-npc｜1050 ms｜提示 30859（命中 29312 / 未命中 1547）｜输出 25｜（没有工具调用）
+[成] 拉琴的奥多 做了一件事——1 条后果
+[记]    · 拉琴的奥多 挪到了 (1100, 500, 12800) 厘米
+[成] （拉琴的奥多 回到了自己的日子上）
+（这一段：6 次调用、22.616 秒、提示 97135（命中 89216）、输出 3922、约 0.05 元）
+（到此刻合计：9 次调用、约 0.05 元）
+· #10｜inf-director｜1629 ms｜提示 3255（命中 2688 / 未命中 567）｜输出 65｜wake_thinking
+
+── 算后果…｜第 1 天 傍晚（18:30） ──
+· #11｜inf-director｜54151 ms｜提示 8188（命中 5248 / 未命中 2940）｜输出 10655｜look_script、look_reference、look_reference
+· #12｜inf-director｜47539 ms｜提示 20104（命中 18816 / 未命中 1288）｜输出 9247｜spawn_character、write_script、write_script、schedule
+· #13｜inf-director｜3046 ms｜提示 30038（命中 29312 / 未命中 726）｜输出 378｜（没有工具调用）
+· #14｜inf-judge｜5807 ms｜提示 4377（命中 3072 / 未命中 1305）｜输出 1037｜move
+[成] 成立——1 条后果，尝试 1 次，70354 ms
+[记]    · 你 挪到了 (1100, 400, 12800) 厘米
+[记]    你的描述作废了，下次看它才会重渲染
+（这一段：4 次调用、110.543 秒、提示 62707（命中 56448）、输出 21317、约 0.19 元）
+（到此刻合计：14 次调用、约 0.24 元）
+· #15｜inf-director｜1320 ms｜提示 3394（命中 2688 / 未命中 706）｜输出 125｜wake_thinking
+
+── 说一句…｜第 1 天 傍晚（18:30） ──
+[说] 你说：「你好」
+· #16｜inf-judge｜2643 ms｜提示 2857（命中 1152 / 未命中 1705）｜输出 65｜target、address
+· #17｜inf-director｜59646 ms｜提示 8554（命中 5376 / 未命中 3178）｜输出 11784｜look_reference、look_script、grow_terrain、spawn_character
+· #18｜inf-generator｜24595 ms｜提示 5534（命中 2816 / 未命中 2718）｜输出 4943｜look_terrain、find_preset、find_preset、find_preset、find_preset
+· #19｜inf-generator｜25486 ms｜提示 11157（命中 10368 / 未命中 789）｜输出 4595｜fill_terrain、fill_terrain、fill_terrain
+· #20｜inf-generator｜3550 ms｜提示 15864（命中 15616 / 未命中 248）｜输出 850｜fill_terrain、replace_terrain、replace_terrain、replace_terrain
+· #21｜inf-generator｜6925 ms｜提示 16857（命中 16640 / 未命中 217）｜输出 1560｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、dig_terrain
+· #22｜inf-generator｜4617 ms｜提示 18725（命中 18304 / 未命中 421）｜输出 361｜look_terrain、look_terrain
+· #23｜inf-generator｜4072 ms｜提示 19214（命中 19072 / 未命中 142）｜输出 723｜look_terrain
+· #24｜inf-generator｜2828 ms｜提示 20153（命中 19840 / 未命中 313）｜输出 482｜fill_terrain
+· #25｜inf-generator｜1339 ms｜提示 20675（命中 20480 / 未命中 195）｜输出 137｜look_terrain
+· #26｜inf-generator｜4766 ms｜提示 21508（命中 20736 / 未命中 772）｜输出 893｜fill_terrain、look_terrain
+· #27｜inf-generator｜13812 ms｜提示 22533（命中 22272 / 未命中 261）｜输出 3217｜replace_terrain、replace_terrain、replace_terrain、replace_terrain
+· #28｜inf-generator｜9898 ms｜提示 25894（命中 25728 / 未命中 166）｜输出 1506｜make_object、make_object、make_object、make_object、make_object
+· #29｜inf-generator｜53719 ms｜提示 1274（命中 1024 / 未命中 250）｜输出 12082｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #30｜inf-generator｜1717 ms｜提示 13534（命中 13312 / 未命中 222）｜输出 336｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #31｜inf-generator｜1182 ms｜提示 14120（命中 13824 / 未命中 296）｜输出 282｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #32｜inf-generator｜979 ms｜提示 14666（命中 14336 / 未命中 330）｜输出 123｜voxel_done
+· #33｜inf-generator｜132938 ms｜提示 1289（命中 1152 / 未命中 137）｜输出 33146｜voxel_floor、voxel_floor
+· #34｜inf-generator｜136841 ms｜提示 1280（命中 1024 / 未命中 256）｜输出 31974｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #35｜inf-generator｜3004 ms｜提示 33776（命中 33152 / 未命中 624）｜输出 883｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #36｜inf-generator｜3534 ms｜提示 35573（命中 34560 / 未命中 1013）｜输出 909｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #37｜inf-generator｜1734 ms｜提示 37788（命中 36480 / 未命中 1308）｜输出 190｜voxel_done
+· #38｜inf-generator｜15911 ms｜提示 34489（命中 25600 / 未命中 8889）｜输出 3932｜voxel_floor
+· #39｜inf-generator｜12669 ms｜提示 38451（命中 38272 / 未命中 179）｜输出 3031｜voxel_floor
+· #40｜inf-generator｜65254 ms｜提示 41512（命中 41344 / 未命中 168）｜输出 15357｜voxel_floor
+· #41｜inf-generator｜31451 ms｜提示 56899（命中 56704 / 未命中 195）｜输出 7435｜voxel_floor
+· #42｜inf-generator｜24433 ms｜提示 64364（命中 64128 / 未命中 236）｜输出 6374｜voxel_floor
+· #43｜inf-generator｜25954 ms｜提示 70768（命中 70528 / 未命中 240）｜输出 1231｜voxel_floor
+· #44｜inf-generator｜5066 ms｜提示 72029（命中 71808 / 未命中 221）｜输出 283｜voxel_floor
+· #45｜inf-generator｜4817 ms｜提示 72344（命中 72192 / 未命中 152）｜输出 531｜voxel_floor、voxel_floor
+· #46｜inf-generator｜2600 ms｜提示 72941（命中 72704 / 未命中 237）｜输出 485｜voxel_floor、voxel_floor
+· #47｜inf-generator｜2835 ms｜提示 73500（命中 73344 / 未命中 156）｜输出 455｜voxel_floor、voxel_floor
+· #48｜inf-generator｜2481 ms｜提示 74037（命中 73856 / 未命中 181）｜输出 463｜voxel_floor、voxel_floor
+· #49｜inf-generator｜2489 ms｜提示 74590（命中 74368 / 未命中 222）｜输出 521｜voxel_floor、voxel_floor、voxel_floor
+· #50｜inf-generator｜2205 ms｜提示 75259（命中 75008 / 未命中 251）｜输出 463｜voxel_floor、voxel_floor、voxel_floor
+· #51｜inf-generator｜2131 ms｜提示 75888（命中 75648 / 未命中 240）｜输出 463｜voxel_floor、voxel_floor、voxel_floor
+· #52｜inf-generator｜1748 ms｜提示 76535（命中 76288 / 未命中 247）｜输出 240｜voxel_floor、voxel_floor
+· #53｜inf-generator｜2081 ms｜提示 76909（命中 76672 / 未命中 237）｜输出 168｜voxel_done
+· #54｜inf-generator｜193846 ms｜提示 91855（命中 77056 / 未命中 14799）｜输出 40098｜voxel_floor
+· #55｜inf-generator｜14240 ms｜提示 132023（命中 131840 / 未命中 183）｜输出 1820｜voxel_floor
+· #56｜inf-generator｜10562 ms｜提示 133913（命中 133760 / 未命中 153）｜输出 2152｜voxel_floor、voxel_floor
+· #57｜inf-generator｜7743 ms｜提示 136201（命中 136064 / 未命中 137）｜输出 2086｜voxel_floor、voxel_floor
+· #58｜inf-generator｜15524 ms｜提示 138423（命中 138240 / 未命中 183）｜输出 3193｜voxel_floor、voxel_floor、voxel_floor
+· #59｜inf-generator｜11593 ms｜提示 141818（命中 141568 / 未命中 250）｜输出 2109｜voxel_floor、voxel_floor
+· #60｜inf-generator｜8471 ms｜提示 144063（命中 143872 / 未命中 191）｜输出 2977｜voxel_floor、voxel_floor、voxel_floor
+· #61｜inf-generator｜8005 ms｜提示 147242（命中 146944 / 未命中 298）｜输出 2920｜voxel_floor、voxel_floor、voxel_floor
+· #62｜inf-generator｜7837 ms｜提示 150364（命中 150144 / 未命中 220）｜输出 2920｜voxel_floor、voxel_floor、voxel_floor
+· #63｜inf-generator｜1879 ms｜提示 153486（命中 153216 / 未命中 270）｜输出 164｜voxel_done
+· #64｜inf-generator｜11250 ms｜提示 27578（命中 27392 / 未命中 186）｜输出 3830｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #65｜inf-generator｜24299 ms｜提示 31949（命中 31360 / 未命中 589）｜输出 6845｜dig_terrain、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #66｜inf-generator｜1484 ms｜提示 39379（命中 38784 / 未命中 595）｜输出 203｜fill_terrain
+· #67｜inf-generator｜1854 ms｜提示 39622（命中 39424 / 未命中 198）｜输出 304｜look_terrain
+· #68｜inf-generator｜13121 ms｜提示 40142（命中 39808 / 未命中 334）｜输出 3016｜make_object、make_object
+· #69｜inf-generator｜4484 ms｜提示 43231（命中 43008 / 未命中 223）｜输出 667｜（没有工具调用）
+· #70｜inf-director｜13140 ms｜提示 21860（命中 20224 / 未命中 1636）｜输出 2198｜write_script
+· #71｜inf-director｜3490 ms｜提示 24235（命中 23936 / 未命中 299）｜输出 573｜（没有工具调用）
+· #72｜inf-npc｜2512 ms｜提示 4043（命中 2432 / 未命中 1611）｜输出 390｜say
+· #73｜inf-npc｜4104 ms｜提示 5952（命中 4352 / 未命中 1600）｜输出 659｜say
+· #74｜inf-npc｜4813 ms｜提示 8175（命中 6528 / 未命中 1647）｜输出 809｜act
+· #75｜inf-judge｜957 ms｜提示 2622（命中 1152 / 未命中 1470）｜输出 37｜target
+· #76｜inf-judge｜1801 ms｜提示 4337（命中 3072 / 未命中 1265）｜输出 225｜no_change
+· #77｜inf-npc｜6036 ms｜提示 10611（命中 8960 / 未命中 1651）｜输出 990｜（没有工具调用）
+[说] 灰斗篷的柯温 说：「……你好。你腰上那把斧子，刃口卷了。」
+[成] 灰斗篷的柯温 做了一件事——没有改变世界
+· #78｜inf-director｜22625 ms｜提示 8420（命中 5376 / 未命中 3044）｜输出 4273｜write_card
+· #79｜inf-director｜1427 ms｜提示 12874（命中 12672 / 未命中 202）｜输出 72｜（没有工具调用）
+（这一段：64 次调用、1101.047 秒、提示 3107758（命中 3046912）、输出 238003、约 2.15 元）
+（到此刻合计：79 次调用、约 2.39 元）
+
+── 看它一眼…｜第 1 天 傍晚（18:30） ──
+· #80｜inf-renderer｜1240 ms｜提示 281（命中 128 / 未命中 153）｜输出 104｜（没有工具调用）
+[记] 看过了灰斗篷的柯温：4 句 （1238 ms）
+（这一段：1 次调用、1.24 秒、提示 281（命中 128）、输出 104、约 0.1 厘）
+（到此刻合计：80 次调用、约 2.39 元）
+
+── 看它一眼…｜第 1 天 傍晚（18:30） ──
+[记] 看过了你：4 句 （固化命中，没花一次请求）
+（这一段：0 次调用、0.0 秒、提示 0（命中 0）、输出 0、约 0.0 厘）
+（到此刻合计：80 次调用、约 2.39 元）
+
+── 看它一眼…｜第 1 天 傍晚（18:30） ──
+[记] 看过了你：4 句 （固化命中，没花一次请求）
+（这一段：0 次调用、0.0 秒、提示 0（命中 0）、输出 0、约 0.0 厘）
+（到此刻合计：80 次调用、约 2.39 元）
+
+── 看它一眼…｜第 1 天 傍晚（18:30） ──
+[记] 看过了你：4 句 （固化命中，没花一次请求）
+（这一段：0 次调用、0.0 秒、提示 0（命中 0）、输出 0、约 0.0 厘）
+（到此刻合计：80 次调用、约 2.39 元）
+
+── 看它一眼…｜第 1 天 傍晚（18:30） ──
+· #81｜inf-renderer｜1239 ms｜提示 186（命中 0 / 未命中 186）｜输出 95｜（没有工具调用）
+[记] 看过了三腿木凳：3 句 （1238 ms）
+（这一段：1 次调用、1.239 秒、提示 186（命中 0）、输出 95、约 0.1 厘）
+（到此刻合计：81 次调用、约 2.39 元）
+
+── 看它一眼…｜第 1 天 傍晚（18:30） ──
+· #82｜inf-renderer｜1352 ms｜提示 184（命中 0 / 未命中 184）｜输出 87｜（没有工具调用）
+[记] 看过了横躺的原木：4 句 （1351 ms）
+（这一段：1 次调用、1.352 秒、提示 184（命中 0）、输出 87、约 0.1 厘）
+（到此刻合计：82 次调用、约 2.39 元）
+
+── 看它一眼…｜第 1 天 傍晚（18:30） ──
+· #83｜inf-renderer｜1117 ms｜提示 215（命中 0 / 未命中 215）｜输出 84｜（没有工具调用）
+[记] 看过了空酒桶：4 句 （1115 ms）
+（这一段：1 次调用、1.117 秒、提示 215（命中 0）、输出 84、约 0.1 厘）
+（到此刻合计：83 次调用、约 2.4 元）
+
+── 过一格…｜第 1 天 傍晚（18:30） ──
+[做] 你做：喝一口酒
+[记] （你勾的是：灰斗篷的柯温、你、空酒桶）
+· #84｜inf-judge｜1766 ms｜提示 2936（命中 1152 / 未命中 1784）｜输出 215｜target
+[记] 对齐到：你　← 和你勾的不一样（世界还没动）
+· #85｜inf-npc｜1959 ms｜提示 13224（命中 11520 / 未命中 1704）｜输出 255｜arrive
+· #86｜inf-npc｜4236 ms｜提示 15058（命中 13440 / 未命中 1618）｜输出 739｜（没有工具调用）
+[记] （灰斗篷的柯温 没什么反应）
+[成] （灰斗篷的柯温 回到了自己的日子上）
+（这一段：3 次调用、7.961 秒、提示 31218（命中 26112）、输出 1209、约 0.02 元）
+（到此刻合计：86 次调用、约 2.42 元）
+· #87｜inf-director｜1133 ms｜提示 3544（命中 2688 / 未命中 856）｜输出 79｜annotate_script
+· #88｜inf-director｜1021 ms｜提示 3642（命中 3456 / 未命中 186）｜输出 16｜（没有工具调用）
+
+── 算后果…｜第 1 天 傍晚（18:45） ──
+· #89｜inf-judge｜8957 ms｜提示 4478（命中 3072 / 未命中 1406）｜输出 1809｜distance、distance
+· #90｜inf-judge｜12690 ms｜提示 6457（命中 6272 / 未命中 185）｜输出 2004｜move、set_attribute、set_attribute
+[成] 成立——3 条后果，尝试 1 次，21653 ms
+[记]    · 酒杯 挪到了 (1100, 400, 12800) 厘米
+[记]    · 酒杯 的「内容物」变成「半杯麦酒（被喝掉一口，剩下小半杯）」
+[记]    · 你 的「两手」变成「端着一只深色木制酒杯（剩下小半杯麦酒）」
+[记]    酒杯的描述作废了，下次看它才会重渲染
+[记]    你的描述作废了，下次看它才会重渲染
+（这一段：2 次调用、21.647 秒、提示 10935（命中 9344）、输出 3813、约 0.03 元）
+（到此刻合计：90 次调用、约 2.45 元）
+· #91｜inf-director｜1884 ms｜提示 3581（命中 2688 / 未命中 893）｜输出 68｜（没有工具调用）
+
+── 看它一眼…｜第 1 天 傍晚（18:45） ──
+· #92｜inf-renderer｜1167 ms｜提示 287（命中 128 / 未命中 159）｜输出 82｜（没有工具调用）
+[记] 看过了灰斗篷的柯温：4 句 （1167 ms）
+（这一段：1 次调用、1.167 秒、提示 287（命中 128）、输出 82、约 0.1 厘）
+（到此刻合计：92 次调用、约 2.46 元）
+
+── 说一句…｜第 1 天 傍晚（18:45） ──
+[说] 你说：「你能修吗」
+· #93｜inf-judge｜880 ms｜提示 2858（命中 1152 / 未命中 1706）｜输出 38｜address
+· #94｜inf-npc｜6095 ms｜提示 4161（命中 2432 / 未命中 1729）｜输出 1119｜say
+· #95｜inf-npc｜4481 ms｜提示 6911（命中 5248 / 未命中 1663）｜输出 814｜act
+· #96｜inf-judge｜860 ms｜提示 2995（命中 1280 / 未命中 1715）｜输出 36｜target
+· #97｜inf-judge｜13824 ms｜提示 4769（命中 3072 / 未命中 1697）｜输出 2357｜reject
+· #98｜inf-npc｜1672 ms｜提示 9409（命中 7680 / 未命中 1729）｜输出 311｜act
+· #99｜inf-judge｜1137 ms｜提示 2991（命中 2176 / 未命中 815）｜输出 64｜target
+· #100｜inf-judge｜4625 ms｜提示 4765（命中 3968 / 未命中 797）｜输出 772｜no_change
+· #101｜inf-npc｜10830 ms｜提示 11457（命中 9600 / 未命中 1857）｜输出 1959｜arrive
+· #102｜inf-npc｜4591 ms｜提示 15042（命中 13312 / 未命中 1730）｜输出 686｜（没有工具调用）
+[说] 灰斗篷的柯温 说：「我不做手艺。你要修的是什么？」
+[驳] 灰斗篷的柯温：「那张桌上没有一双手——对面那人两手正端着自己的酒杯，手不在桌面上，隔着两格远，手也没搁在桌上。柯温要打量的是「搁在桌上的那双手」，可这东西不在那儿，这一步没有落点。」
+[成] 灰斗篷的柯温 做了一件事——没有改变世界
+[成] （灰斗篷的柯温 回到了自己的日子上）
+· #103｜inf-director｜57059 ms｜提示 8513（命中 5248 / 未命中 3265）｜输出 10670｜（没有工具调用）
+（这一段：11 次调用、106.054 秒、提示 73871（命中 55168）、输出 18826、约 0.19 元）
+（到此刻合计：103 次调用、约 2.65 元）
+
+── 过一格…｜第 1 天 傍晚（18:45） ──
+[做] 你做：掀开看看
+[记] （你勾的是：酒馆的地窖门）
+· #104｜inf-judge｜1316 ms｜提示 2625（命中 1152 / 未命中 1473）｜输出 85｜reject_targets
+[驳] 「这一片里没有伸手可及的地窖门——最近的一扇在 61 格（约 63 米）外的地窖口，一臂之遥够不着；动作点名的这样东西不在这片里。」
+[记] （在第一步拦下的：**你指向的东西对不上**——改一下勾选就能重来；世界没动）
+（这一段：1 次调用、1.316 秒、提示 2625（命中 1152）、输出 85、约 0.4 厘）
+（到此刻合计：104 次调用、约 2.65 元）
+· #105｜inf-director｜1904 ms｜提示 3600（命中 2688 / 未命中 912）｜输出 184｜wake_thinking
+· #106｜inf-director｜19869 ms｜提示 9064（命中 5248 / 未命中 3816）｜输出 3879｜look_map、look_reference、look_script
+· #107｜inf-director｜52456 ms｜提示 14546（命中 12032 / 未命中 2514）｜输出 9903｜write_script、schedule、schedule、schedule、schedule、schedule、schedule、schedule
+· #108｜inf-director｜6572 ms｜提示 25078（命中 16640 / 未命中 8438）｜输出 1173｜（没有工具调用）
+
+── 过一格…｜第 1 天 傍晚（19:00） ──
+[做] 你做：走到地窖门旁，掀开地窖门
+[记] （你什么都没勾）
+· #109｜inf-judge｜1259 ms｜提示 2622（命中 1152 / 未命中 1470）｜输出 119｜reject_targets
+[驳] 「这一片里没有地窖门——x8..13、y1..6 这一片铺的全是土（,），没有门、没有木地板，也没有能掀的东西；你要掀的那个东西不在这片里。」
+[记] （在第一步拦下的：**你指向的东西对不上**——改一下勾选就能重来；世界没动）
+· #110｜inf-sentry｜990 ms｜提示 1668（命中 640 / 未命中 1028）｜输出 73｜report
+（这一段：2 次调用、2.249 秒、提示 4290（命中 1792）、输出 192、约 0.7 厘）
+（到此刻合计：110 次调用、约 2.81 元）
+· #111｜inf-director｜1156 ms｜提示 3732（命中 2688 / 未命中 1044）｜输出 72｜（没有工具调用）
+
+── 过一格…｜第 1 天 傍晚（19:15） ──
+[做] 你做：走到地窖门旁，掀开地窖门
+[记] （你勾的是：酒馆的地窖门）
+· #112｜inf-judge｜713 ms｜提示 2633（命中 1408 / 未命中 1225）｜输出 68｜target、target
+[记] 对齐到：你、酒馆的地窖门　← 和你勾的不一样（世界还没动）
+（这一段：1 次调用、0.713 秒、提示 2633（命中 1408）、输出 68、约 0.3 厘）
+（到此刻合计：112 次调用、约 2.82 元）
+· #113｜inf-director｜1019 ms｜提示 3732（命中 2688 / 未命中 1044）｜输出 57｜（没有工具调用）
+
+── 算后果…｜第 1 天 傍晚（19:30） ──
+· #114｜inf-judge｜21600 ms｜提示 4312（命中 3072 / 未命中 1240）｜输出 4623｜move、move、set_attribute
+[成] 成立——3 条后果，尝试 1 次，21601 ms
+[记]    · 你 挪到了 (7250, 1900, 12800) 厘米
+[记]    · 酒杯 挪到了 (7250, 1900, 12800) 厘米
+[记]    · 酒馆的地窖门 的「状态」变成「掀开」
+[记]    你的描述作废了，下次看它才会重渲染
+[记]    酒杯的描述作废了，下次看它才会重渲染
+[记]    酒馆的地窖门的描述作废了，下次看它才会重渲染
+· #115｜inf-director｜111525 ms｜提示 8192（命中 5248 / 未命中 2944）｜输出 23747｜grow_terrain、spawn_character、schedule
+· #116｜inf-generator｜1028 ms｜提示 6354（命中 2816 / 未命中 3538）｜输出 140｜look_terrain
+· #117｜inf-generator｜1635 ms｜提示 6558（命中 6400 / 未命中 158）｜输出 296｜look_terrain、look_terrain
+· #118｜inf-generator｜69358 ms｜提示 7306（命中 6784 / 未命中 522）｜输出 14965｜find_preset、find_preset、find_preset、find_preset、find_preset、find_preset
+· #119｜inf-generator｜2298 ms｜提示 22779（命中 22144 / 未命中 635）｜输出 420｜find_preset、find_preset、find_preset、find_preset、find_preset、find_preset
+· #120｜inf-generator｜3388 ms｜提示 24284（命中 23168 / 未命中 1116）｜输出 944｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain
+· #121｜inf-generator｜1076 ms｜提示 25450（命中 25216 / 未命中 234）｜输出 200｜replace_terrain
+· #122｜inf-generator｜21970 ms｜提示 25688（命中 25472 / 未命中 216）｜输出 5497｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain
+· #123｜inf-generator｜8398 ms｜提示 31480（命中 31104 / 未命中 376）｜输出 2472｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain
+· #124｜inf-generator｜5646 ms｜提示 34316（命中 33920 / 未命中 396）｜输出 1095｜fill_terrain
+· #125｜inf-generator｜1379 ms｜提示 35452（命中 35200 / 未命中 252）｜输出 255｜dig_terrain
+· #126｜inf-generator｜1101 ms｜提示 35757（命中 35584 / 未命中 173）｜输出 144｜fill_terrain
+· #127｜inf-generator｜2007 ms｜提示 35942（命中 35712 / 未命中 230）｜输出 368｜look_terrain、look_terrain
+· #128｜inf-generator｜9043 ms｜提示 36506（命中 36224 / 未命中 282）｜输出 1968｜look_terrain
+· #129｜inf-generator｜4302 ms｜提示 38626（命中 38400 / 未命中 226）｜输出 917｜look_terrain、look_terrain
+· #130｜inf-generator｜2117 ms｜提示 39635（命中 39424 / 未命中 211）｜输出 324｜look_terrain
+· #131｜inf-generator｜9788 ms｜提示 40851（命中 39936 / 未命中 915）｜输出 2385｜look_terrain、look_terrain
+· #132｜inf-generator｜7147 ms｜提示 43354（命中 43136 / 未命中 218）｜输出 1572｜fill_terrain
+· #133｜inf-generator｜1202 ms｜提示 44967（命中 44800 / 未命中 167）｜输出 126｜look_terrain
+· #134｜inf-generator｜5921 ms｜提示 45136（命中 44928 / 未命中 208）｜输出 1249｜look_terrain
+· #135｜inf-generator｜3963 ms｜提示 46897（命中 46336 / 未命中 561）｜输出 904｜replace_terrain
+· #136｜inf-generator｜1010 ms｜提示 47840（命中 47616 / 未命中 224）｜输出 126｜look_terrain
+· #137｜inf-generator｜17943 ms｜提示 48177（命中 47872 / 未命中 305）｜输出 4096｜fill_terrain
+· #138｜inf-generator｜2014 ms｜提示 52314（命中 52096 / 未命中 218）｜输出 242｜look_terrain、look_terrain
+· #139｜inf-generator｜15366 ms｜提示 52712（命中 52480 / 未命中 232）｜输出 3311｜look_terrain、look_terrain
+· #140｜inf-generator｜24672 ms｜提示 56988（命中 55936 / 未命中 1052）｜输出 5373｜fill_terrain
+· #141｜inf-generator｜1254 ms｜提示 62401（命中 62208 / 未命中 193）｜输出 126｜look_terrain
+· #142｜inf-generator｜12546 ms｜提示 62831（命中 62464 / 未命中 367）｜输出 2767｜look_terrain、look_terrain
+· #143｜inf-generator｜12169 ms｜提示 65690（命中 65536 / 未命中 154）｜输出 2749｜look_terrain、look_terrain
+· #144｜inf-generator｜31180 ms｜提示 68605（命中 68352 / 未命中 253）｜输出 6947｜replace_terrain、dig_terrain、dig_terrain
+· #145｜inf-generator｜1476 ms｜提示 75682（命中 75520 / 未命中 162）｜输出 278｜fill_terrain、fill_terrain
+· #146｜inf-generator｜14120 ms｜提示 76038（命中 75904 / 未命中 134）｜输出 3775｜make_object、make_object、make_object、make_object
+· #147｜inf-generator｜79573 ms｜提示 1280（命中 1024 / 未命中 256）｜输出 19423｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #148｜inf-generator｜2261 ms｜提示 21037（命中 20608 / 未命中 429）｜输出 602｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #149｜inf-generator｜2053 ms｜提示 22173（命中 21632 / 未命中 541）｜输出 593｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #150｜inf-generator｜2070 ms｜提示 23500（命中 22656 / 未命中 844）｜输出 639｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #151｜inf-generator｜623 ms｜提示 25073（命中 24064 / 未命中 1009）｜输出 79｜voxel_floor
+· #152｜inf-generator｜1012 ms｜提示 25260（命中 25088 / 未命中 172）｜输出 112｜voxel_done
+· #153｜inf-generator｜122052 ms｜提示 1310（命中 1152 / 未命中 158）｜输出 30078｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #154｜inf-generator｜3779 ms｜提示 31500（命中 23808 / 未命中 7692）｜输出 875｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #155｜inf-generator｜2617 ms｜提示 32601（命中 32256 / 未命中 345）｜输出 586｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #156｜inf-generator｜1544 ms｜提示 33379（命中 33152 / 未命中 227）｜输出 326｜voxel_floor、voxel_floor
+· #157｜inf-generator｜894 ms｜提示 33815（命中 33664 / 未命中 151）｜输出 122｜voxel_done
+· #158｜inf-generator｜135778 ms｜提示 1320（命中 1152 / 未命中 168）｜输出 31581｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #159｜inf-generator｜2381 ms｜提示 33013（命中 32768 / 未命中 245）｜输出 650｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #160｜inf-generator｜3062 ms｜提示 33807（命中 33536 / 未命中 271）｜输出 881｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #161｜inf-generator｜2175 ms｜提示 34864（命中 34688 / 未命中 176）｜输出 702｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #162｜inf-generator｜2567 ms｜提示 35774（命中 35456 / 未命中 318）｜输出 697｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #163｜inf-generator｜4025 ms｜提示 36711（命中 36352 / 未命中 359）｜输出 1088｜voxel_floor、voxel_floor、voxel_floor
+· #164｜inf-generator｜2277 ms｜提示 38001（命中 37760 / 未命中 241）｜输出 593｜voxel_floor、voxel_floor、voxel_floor
+· #165｜inf-generator｜4251 ms｜提示 38814（命中 38528 / 未命中 286）｜输出 1237｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #166｜inf-generator｜4233 ms｜提示 40371（命中 39936 / 未命中 435）｜输出 1159｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #167｜inf-generator｜13114 ms｜提示 41882（命中 41472 / 未命中 410）｜输出 3266｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #168｜inf-generator｜3181 ms｜提示 45512（命中 45056 / 未命中 456）｜输出 936｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #169｜inf-generator｜3312 ms｜提示 46832（命中 46336 / 未命中 496）｜输出 1045｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #170｜inf-generator｜1694 ms｜提示 48293（命中 47872 / 未命中 421）｜输出 364｜voxel_floor、voxel_floor
+· #171｜inf-generator｜1220 ms｜提示 48879（命中 48640 / 未命中 239）｜输出 174｜voxel_done
+· #172｜inf-generator｜5871 ms｜提示 79951（命中 79744 / 未命中 207）｜输出 1746｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #173｜inf-generator｜66625 ms｜提示 1283（命中 1024 / 未命中 259）｜输出 19299｜voxel_floor、voxel_floor
+· #174｜inf-generator｜1591 ms｜提示 20636（命中 12288 / 未命中 8348）｜输出 318｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #175｜inf-generator｜5538 ms｜提示 21209（命中 20864 / 未命中 345）｜输出 1397｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #176｜inf-generator｜1827 ms｜提示 22786（命中 22528 / 未命中 258）｜输出 483｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #177｜inf-generator｜1637 ms｜提示 23519（命中 23168 / 未命中 351）｜输出 435｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #178｜inf-generator｜1355 ms｜提示 24218（命中 23936 / 未命中 282）｜输出 213｜voxel_floor、voxel_floor、voxel_floor
+· #179｜inf-generator｜981 ms｜提示 24615（命中 24320 / 未命中 295）｜输出 113｜voxel_done
+· #180｜inf-generator｜80742 ms｜提示 1280（命中 1024 / 未命中 256）｜输出 21499｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #181｜inf-generator｜3112 ms｜提示 23113（命中 22656 / 未命中 457）｜输出 928｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #182｜inf-generator｜1255 ms｜提示 24575（命中 23936 / 未命中 639）｜输出 121｜voxel_done
+· #183｜inf-generator｜13758 ms｜提示 24850（命中 24704 / 未命中 146）｜输出 3999｜voxel_floor、voxel_floor
+· #184｜inf-generator｜7197 ms｜提示 28977（命中 28800 / 未命中 177）｜输出 1520｜voxel_done
+· #185｜inf-generator｜142801 ms｜提示 1296（命中 1152 / 未命中 144）｜输出 33847｜voxel_floor、voxel_floor
+· #186｜inf-generator｜34633 ms｜提示 35197（命中 34944 / 未命中 253）｜输出 8524｜voxel_floor、voxel_floor
+· #187｜inf-generator｜3376 ms｜提示 43777（命中 43520 / 未命中 257）｜输出 923｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #188｜inf-generator｜2765 ms｜提示 44828（命中 44672 / 未命中 156）｜输出 698｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #189｜inf-generator｜2267 ms｜提示 45686（命中 45440 / 未命中 246）｜输出 698｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #190｜inf-generator｜2478 ms｜提示 46576（命中 46336 / 未命中 240）｜输出 697｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #191｜inf-generator｜3714 ms｜提示 47497（命中 47232 / 未命中 265）｜输出 967｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #192｜inf-generator｜3114 ms｜提示 48720（命中 48384 / 未命中 336）｜输出 865｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #193｜inf-generator｜2902 ms｜提示 49873（命中 49536 / 未命中 337）｜输出 799｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #194｜inf-generator｜4101 ms｜提示 50992（命中 50560 / 未命中 432）｜输出 1067｜voxel_floor、voxel_floor
+· #195｜inf-generator｜2725 ms｜提示 52233（命中 51968 / 未命中 265）｜输出 415｜voxel_done
+· #196｜inf-generator｜6039 ms｜提示 82251（命中 81664 / 未命中 587）｜输出 1765｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #197｜inf-generator｜73337 ms｜提示 1271（命中 1024 / 未命中 247）｜输出 18534｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #198｜inf-generator｜74090 ms｜提示 1265（命中 1024 / 未命中 241）｜输出 17549｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #199｜inf-generator｜1140 ms｜提示 19917（命中 19712 / 未命中 205）｜输出 234｜voxel_floor、voxel_floor、voxel_floor
+· #200｜inf-generator｜1148 ms｜提示 19028（命中 18688 / 未命中 340）｜输出 108｜voxel_done
+· #201｜inf-generator｜1280 ms｜提示 20257（命中 20096 / 未命中 161）｜输出 189｜voxel_floor、voxel_floor
+· #202｜inf-generator｜1148 ms｜提示 20528（命中 20352 / 未命中 176）｜输出 257｜voxel_done
+· #203｜inf-generator｜80410 ms｜提示 1270（命中 1024 / 未命中 246）｜输出 21350｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #204｜inf-generator｜1375 ms｜提示 23484（命中 7424 / 未命中 16060）｜输出 130｜voxel_done
+· #205｜inf-generator｜18789 ms｜提示 21099（命中 20736 / 未命中 363）｜输出 4864｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #206｜inf-generator｜852 ms｜提示 26127（命中 25856 / 未命中 271）｜输出 102｜voxel_done
+· #207｜inf-generator｜15259 ms｜提示 26351（命中 26112 / 未命中 239）｜输出 3571｜voxel_floor
+· #208｜inf-generator｜4430 ms｜提示 29966（命中 29824 / 未命中 142）｜输出 846｜voxel_done
+· #209｜inf-generator｜5480 ms｜提示 84380（命中 83968 / 未命中 412）｜输出 1696｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #210｜inf-generator｜44512 ms｜提示 1269（命中 1024 / 未命中 245）｜输出 9676｜voxel_floor、voxel_floor、voxel_floor
+· #211｜inf-generator｜1330 ms｜提示 11027（命中 10880 / 未命中 147）｜输出 226｜voxel_floor、voxel_floor、voxel_floor
+· #212｜inf-generator｜1034 ms｜提示 11353（命中 11136 / 未命中 217）｜输出 231｜voxel_floor、voxel_floor、voxel_floor
+· #213｜inf-generator｜1791 ms｜提示 11702（命中 11520 / 未命中 182）｜输出 285｜voxel_done
+· #214｜inf-generator｜10771 ms｜提示 86378（命中 86016 / 未命中 362）｜输出 3413｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #215｜inf-generator｜11109 ms｜提示 90185（命中 89728 / 未命中 457）｜输出 4084｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #216｜inf-generator｜8668 ms｜提示 94930（命中 94208 / 未命中 722）｜输出 2506｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #217｜inf-generator｜7651 ms｜提示 97746（命中 97408 / 未命中 338）｜输出 1671｜look_terrain
+· #218｜inf-generator｜7565 ms｜提示 99497（命中 99328 / 未命中 169）｜输出 1214｜（没有工具调用）
+· #219｜inf-generator｜44030 ms｜提示 7083（命中 6272 / 未命中 811）｜输出 9359｜look_terrain、look_terrain
+· #220｜inf-generator｜5562 ms｜提示 16642（命中 16384 / 未命中 258）｜输出 1529｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain
+· #221｜inf-generator｜3210 ms｜提示 18429（命中 18048 / 未命中 381）｜输出 961｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain
+· #222｜inf-generator｜16861 ms｜提示 19648（命中 19328 / 未命中 320）｜输出 3550｜fill_terrain、fill_terrain
+· #223｜inf-generator｜5679 ms｜提示 23275（命中 23040 / 未命中 235）｜输出 1670｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、dig_terrain
+· #224｜inf-generator｜4283 ms｜提示 25285（命中 24832 / 未命中 453）｜输出 1064｜fill_terrain、fill_terrain、find_preset、find_preset
+· #225｜inf-generator｜23075 ms｜提示 26692（命中 26240 / 未命中 452）｜输出 5415｜fill_terrain、fill_terrain、fill_terrain、fill_terrain
+· #226｜inf-generator｜2270 ms｜提示 32258（命中 32000 / 未命中 258）｜输出 393｜look_terrain、look_terrain
+· #227｜inf-generator｜3276 ms｜提示 32761（命中 32512 / 未命中 249）｜输出 623｜look_terrain
+· #228｜inf-generator｜3124 ms｜提示 33534（命中 33280 / 未命中 254）｜输出 644｜look_terrain、look_terrain
+· #229｜inf-generator｜4019 ms｜提示 34270（命中 34048 / 未命中 222）｜输出 786｜fill_terrain
+· #230｜inf-generator｜894 ms｜提示 35096（命中 34944 / 未命中 152）｜输出 126｜look_terrain
+· #231｜inf-generator｜9291 ms｜提示 35288（命中 35072 / 未命中 216）｜输出 1748｜fill_terrain
+· #232｜inf-generator｜1518 ms｜提示 37077（命中 36864 / 未命中 213）｜输出 126｜look_terrain
+· #233｜inf-generator｜7854 ms｜提示 37535（命中 37120 / 未命中 415）｜输出 1550｜look_terrain、look_terrain
+· #234｜inf-generator｜12937 ms｜提示 39147（命中 38912 / 未命中 235）｜输出 2444｜fill_terrain
+· #235｜inf-generator｜1421 ms｜提示 41632（命中 41472 / 未命中 160）｜输出 126｜look_terrain
+· #236｜inf-generator｜26344 ms｜提示 41834（命中 41600 / 未命中 234）｜输出 7100｜make_object、make_object、make_object、make_object
+· #237｜inf-generator｜263463 ms｜提示 1294（命中 1152 / 未命中 142）｜输出 65536｜（没有工具调用）
+· #238｜inf-generator｜115321 ms｜提示 1343（命中 1152 / 未命中 191）｜输出 26170｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #239｜inf-generator｜7388 ms｜提示 28645（命中 6528 / 未命中 22117）｜输出 2325｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #240｜inf-generator｜22313 ms｜提示 33254（命中 30848 / 未命中 2406）｜输出 6205｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #241｜inf-generator｜30109 ms｜提示 41623（命中 34304 / 未命中 7319）｜输出 10877｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #242｜inf-generator｜21231 ms｜提示 53944（命中 52480 / 未命中 1464）｜输出 7969｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #243｜inf-generator｜16603 ms｜提示 62609（命中 61824 / 未命中 785）｜输出 5809｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #244｜inf-generator｜11861 ms｜提示 69146（命中 68352 / 未命中 794）｜输出 4136｜voxel_floor、voxel_floor、voxel_floor
+· #245｜inf-generator｜12120 ms｜提示 73850（命中 73216 / 未命中 634）｜输出 4368｜voxel_floor、voxel_floor、voxel_floor
+· #246｜inf-generator｜68104 ms｜提示 78804（命中 78208 / 未命中 596）｜输出 23873｜voxel_floor、voxel_floor、voxel_floor
+· #247｜inf-generator｜9874 ms｜提示 103269（命中 102656 / 未命中 613）｜输出 3332｜voxel_floor、voxel_floor、voxel_floor
+· #248｜inf-generator｜16238 ms｜提示 107193（命中 106496 / 未命中 697）｜输出 5859｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #249｜inf-generator｜11874 ms｜提示 113852（命中 113024 / 未命中 828）｜输出 4300｜voxel_floor、voxel_floor、voxel_floor
+· #250｜inf-generator｜12311 ms｜提示 118774（命中 118144 / 未命中 630）｜输出 4506｜voxel_floor、voxel_floor、voxel_floor
+· #251｜inf-generator｜24170 ms｜提示 123920（命中 123264 / 未命中 656）｜输出 9115｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #252｜inf-generator｜8722 ms｜提示 133915（命中 132992 / 未命中 923）｜输出 3127｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #253｜inf-generator｜9295 ms｜提示 137954（命中 136960 / 未命中 994）｜输出 3098｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #254｜inf-generator｜9645 ms｜提示 141996（命中 140928 / 未命中 1068）｜输出 3494｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #255｜inf-generator｜8497 ms｜提示 146466（命中 145408 / 未命中 1058）｜输出 3035｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #256｜inf-generator｜13198 ms｜提示 150509（命中 149376 / 未命中 1133）｜输出 4667｜voxel_floor、voxel_floor、voxel_floor
+· #257｜inf-generator｜6488 ms｜提示 155942（命中 155136 / 未命中 806）｜输出 2087｜voxel_floor、voxel_floor、voxel_floor
+· #258｜inf-generator｜16502 ms｜提示 158795（命中 157952 / 未命中 843）｜输出 6140｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #259｜inf-generator｜9693 ms｜提示 165975（命中 164864 / 未命中 1111）｜输出 3470｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #260｜inf-generator｜11415 ms｜提示 170517（命中 169344 / 未命中 1173）｜输出 3995｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #261｜inf-generator｜15714 ms｜提示 175616（命中 174464 / 未命中 1152）｜输出 5633｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #262｜inf-generator｜5497 ms｜提示 182365（命中 181248 / 未命中 1117）｜输出 1608｜voxel_floor、voxel_floor、voxel_floor
+· #263｜inf-generator｜24520 ms｜提示 184811（命中 183936 / 未命中 875）｜输出 8804｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #264｜inf-generator｜5622 ms｜提示 194751（命中 193536 / 未命中 1215）｜输出 1767｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #265｜inf-generator｜8392 ms｜提示 197686（命中 196480 / 未命中 1206）｜输出 2784｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #266｜inf-generator｜15458 ms｜提示 201974（命中 200448 / 未命中 1526）｜输出 5338｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #267｜inf-generator｜12150 ms｜提示 208532（命中 207232 / 未命中 1300）｜输出 3386｜voxel_done
+· #268｜inf-generator｜52500 ms｜提示 217916（命中 209792 / 未命中 8124）｜输出 15183｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #269｜inf-generator｜11225 ms｜提示 234319（命中 219904 / 未命中 14415）｜输出 4183｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #270｜inf-generator｜10789 ms｜提示 239722（命中 238464 / 未命中 1258）｜输出 3888｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #271｜inf-generator｜10301 ms｜提示 244830（命中 243584 / 未命中 1246）｜输出 3811｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #272｜inf-generator｜9924 ms｜提示 249861（命中 248576 / 未命中 1285）｜输出 3811｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #273｜inf-generator｜10137 ms｜提示 254892（命中 253568 / 未命中 1324）｜输出 3904｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #274｜inf-generator｜8194 ms｜提示 260016（命中 258688 / 未命中 1328）｜输出 2714｜voxel_floor、voxel_floor、voxel_floor
+· #275｜inf-generator｜9483 ms｜提示 263646（命中 262656 / 未命中 990）｜输出 3383｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #276｜inf-generator｜8371 ms｜提示 268249（命中 267008 / 未命中 1241）｜输出 3108｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #277｜inf-generator｜5886 ms｜提示 51908（命中 48896 / 未命中 3012）｜输出 1805｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #278｜inf-generator｜180574 ms｜提示 1273（命中 1024 / 未命中 249）｜输出 52982｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #279｜inf-generator｜2726 ms｜提示 54589（命中 54144 / 未命中 445）｜输出 937｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #280｜inf-generator｜2789 ms｜提示 56060（命中 55424 / 未命中 636）｜输出 931｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #281｜inf-generator｜4168 ms｜提示 57725（命中 56960 / 未命中 765）｜输出 1105｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #282｜inf-generator｜4536 ms｜提示 59764（命中 58752 / 未命中 1012）｜输出 1364｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #283｜inf-generator｜4586 ms｜提示 62262（命中 61056 / 未命中 1206）｜输出 1385｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #284｜inf-generator｜1344 ms｜提示 64981（命中 63616 / 未命中 1365）｜输出 137｜voxel_done
+· #285｜inf-generator｜43508 ms｜提示 77600（命中 65024 / 未命中 12576）｜输出 10546｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #286｜inf-generator｜3060 ms｜提示 89570（命中 88064 / 未命中 1506）｜输出 878｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #287｜inf-generator｜2798 ms｜提示 91872（命中 90368 / 未命中 1504）｜输出 878｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #288｜inf-generator｜2597 ms｜提示 94174（命中 92672 / 未命中 1502）｜输出 490｜voxel_floor、voxel_floor、voxel_floor
+· #289｜inf-generator｜1032 ms｜提示 95094（命中 94592 / 未命中 502）｜输出 125｜voxel_done
+· #290｜inf-generator｜9692 ms｜提示 53986（命中 53632 / 未命中 354）｜输出 2955｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #291｜inf-generator｜4465 ms｜提示 57203（命中 56832 / 未命中 371）｜输出 1529｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #292｜inf-generator｜3868 ms｜提示 58988（命中 58624 / 未命中 364）｜输出 1409｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #293｜inf-generator｜4618 ms｜提示 60643（命中 60288 / 未命中 355）｜输出 1387｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #294｜inf-generator｜4595 ms｜提示 62267（命中 61952 / 未命中 315）｜输出 1422｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #295｜inf-generator｜4768 ms｜提示 63932（命中 63616 / 未命中 316）｜输出 1610｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #296｜inf-generator｜7059 ms｜提示 65783（命中 65536 / 未命中 247）｜输出 2038｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #297｜inf-generator｜2317 ms｜提示 68093（命中 67712 / 未命中 381）｜输出 340｜look_terrain、look_terrain
+· #298｜inf-generator｜11349 ms｜提示 68543（命中 68352 / 未命中 191）｜输出 3056｜fill_terrain、fill_terrain、fill_terrain、make_object、make_object、make_object、make_object、make_object、make_object
+· #299｜inf-generator｜5761 ms｜提示 71885（命中 71552 / 未命中 333）｜输出 1010｜look_terrain
+· #300｜inf-generator｜4045 ms｜提示 72967（命中 72832 / 未命中 135）｜输出 681｜（没有工具调用）
+· #301｜inf-director｜5508 ms｜提示 32342（命中 14592 / 未命中 17750）｜输出 1078｜grow_terrain
+· #302｜inf-generator｜103263 ms｜提示 7037（命中 3968 / 未命中 3069）｜输出 24482｜look_terrain、look_terrain
+· #303｜inf-generator｜2925 ms｜提示 32043（命中 31488 / 未命中 555）｜输出 906｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain
+· #304｜inf-generator｜2350 ms｜提示 33171（命中 32896 / 未命中 275）｜输出 834｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain
+· #305｜inf-generator｜5414 ms｜提示 34227（命中 33920 / 未命中 307）｜输出 1461｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、dig_terrain
+· #306｜inf-generator｜3410 ms｜提示 35918（命中 35584 / 未命中 334）｜输出 618｜replace_terrain、fill_terrain
+· #307｜inf-generator｜1952 ms｜提示 36610（命中 36352 / 未命中 258）｜输出 263｜look_terrain
+· #308｜inf-generator｜2316 ms｜提示 36983（命中 36736 / 未命中 247）｜输出 399｜look_terrain
+· #309｜inf-generator｜2404 ms｜提示 37702（命中 37376 / 未命中 326）｜输出 545｜fill_terrain、look_terrain
+· #310｜inf-generator｜4181 ms｜提示 38335（命中 38144 / 未命中 191）｜输出 822｜look_terrain
+· #311｜inf-generator｜2254 ms｜提示 39305（命中 39040 / 未命中 265）｜输出 405｜look_terrain
+· #312｜inf-generator｜15851 ms｜提示 40106（命中 39680 / 未命中 426）｜输出 3306｜look_terrain
+· #313｜inf-generator｜4066 ms｜提示 43628（命中 43392 / 未命中 236）｜输出 799｜fill_terrain、look_terrain
+· #314｜inf-generator｜19352 ms｜提示 44499（命中 44288 / 未命中 211）｜输出 4806｜fill_terrain、find_preset、find_preset、find_preset、find_preset
+· #315｜inf-generator｜5413 ms｜提示 50901（命中 49280 / 未命中 1621）｜输出 1636｜make_object、make_object、make_object、make_object、make_object
+· #316｜inf-generator｜6155 ms｜提示 52710（命中 52480 / 未命中 230）｜输出 1826｜make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #317｜inf-generator｜14885 ms｜提示 54785（命中 54528 / 未命中 257）｜输出 5074｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #318｜inf-generator｜19587 ms｜提示 60454（命中 59776 / 未命中 678）｜输出 7601｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #319｜inf-generator｜1785 ms｜提示 69082（命中 67968 / 未命中 1114）｜输出 293｜look_terrain
+· #320｜inf-generator｜5417 ms｜提示 69455（命中 69248 / 未命中 207）｜输出 974｜（没有工具调用）
+· #321｜inf-generator｜170012 ms｜提示 7067（命中 6912 / 未命中 155）｜输出 43460｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、find_preset、find_preset、find_preset、find_preset、find_preset、find_preset
+· #322｜inf-generator｜3434 ms｜提示 52586（命中 50432 / 未命中 2154）｜输出 898｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain
+· #323｜inf-generator｜4345 ms｜提示 53706（命中 53376 / 未命中 330）｜输出 1352｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、dig_terrain
+· #324｜inf-generator｜1040 ms｜提示 55362（命中 55040 / 未命中 322）｜输出 159｜fill_terrain
+· #325｜inf-generator｜2081 ms｜提示 55562（命中 55424 / 未命中 138）｜输出 353｜look_terrain
+· #326｜inf-generator｜5501 ms｜提示 55999（命中 55808 / 未命中 191）｜输出 984｜look_terrain
+· #327｜inf-generator｜3389 ms｜提示 57251（命中 56960 / 未命中 291）｜输出 761｜look_terrain、look_terrain
+· #328｜inf-generator｜2928 ms｜提示 58128（命中 57984 / 未命中 144）｜输出 523｜fill_terrain
+· #329｜inf-generator｜1215 ms｜提示 58691（命中 58496 / 未命中 195）｜输出 133｜look_terrain
+· #330｜inf-generator｜5122 ms｜提示 58844（命中 58624 / 未命中 220）｜输出 1088｜look_terrain、look_terrain
+· #331｜inf-generator｜12345 ms｜提示 60148（命中 59904 / 未命中 244）｜输出 2682｜look_terrain、look_terrain
+· #332｜inf-generator｜5508 ms｜提示 62890（命中 62720 / 未命中 170）｜输出 1127｜look_terrain、look_terrain
+· #333｜inf-generator｜5119 ms｜提示 64181（命中 64000 / 未命中 181）｜输出 1064｜look_terrain
+· #334｜inf-generator｜6168 ms｜提示 65293（命中 65152 / 未命中 141）｜输出 1389｜look_terrain、look_terrain、look_terrain
+· #335｜inf-generator｜9094 ms｜提示 66978（命中 66560 / 未命中 418）｜输出 1974｜fill_terrain
+· #336｜inf-generator｜1707 ms｜提示 68992（命中 68736 / 未命中 256）｜输出 482｜look_terrain、look_terrain、look_terrain、look_terrain
+· #337｜inf-generator｜3936 ms｜提示 69550（命中 69376 / 未命中 174）｜输出 623｜fill_terrain
+· #338｜inf-generator｜1711 ms｜提示 70213（命中 70016 / 未命中 197）｜输出 126｜look_terrain
+· #339｜inf-generator｜5430 ms｜提示 70379（命中 70144 / 未命中 235）｜输出 1095｜fill_terrain
+· #340｜inf-generator｜1210 ms｜提示 71514（命中 71296 / 未命中 218）｜输出 126｜look_terrain
+· #341｜inf-generator｜10743 ms｜提示 71796（命中 71552 / 未命中 244）｜输出 3566｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #342｜inf-generator｜13900 ms｜提示 75793（命中 75264 / 未命中 529）｜输出 5290｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #343｜inf-generator｜8813 ms｜提示 81891（命中 81024 / 未命中 867）｜输出 3281｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #344｜inf-generator｜4743 ms｜提示 85719（命中 85120 / 未命中 599）｜输出 707｜look_terrain
+· #345｜inf-generator｜2367 ms｜提示 86510（命中 86272 / 未命中 238）｜输出 324｜look_terrain
+· #346｜inf-generator｜6875 ms｜提示 86910（命中 86656 / 未命中 254）｜输出 1292｜（没有工具调用）
+· #347｜inf-director｜3523 ms｜提示 33544（命中 33408 / 未命中 136）｜输出 534｜（没有工具调用）
+[记] （这一带还缺 25 块地，长出来了 25 块）
+（这一段：234 次调用、3590.211 秒、提示 14359302（命中 14125824）、输出 942814、约 8.57 元）
+（到此刻合计：347 次调用、约 11.39 元）
+· #348｜inf-director｜1139 ms｜提示 3721（命中 2816 / 未命中 905）｜输出 132｜wake_thinking
+· #349｜inf-director｜41299 ms｜提示 9280（命中 5376 / 未命中 3904）｜输出 8500｜look_map、look_map
+· #350｜inf-director｜79007 ms｜提示 17987（命中 17664 / 未命中 323）｜输出 16770｜grow_terrain、spawn_character、schedule
+· #351｜inf-generator｜121065 ms｜提示 9173（命中 2816 / 未命中 6357）｜输出 26126｜look_terrain、find_preset、find_preset、find_preset
+· #352｜inf-generator｜8181 ms｜提示 36015（命中 35200 / 未命中 815）｜输出 1548｜look_terrain、fill_terrain
+· #353｜inf-generator｜1934 ms｜提示 38051（命中 37504 / 未命中 547）｜输出 410｜dig_terrain、dig_terrain
+· #354｜inf-generator｜5885 ms｜提示 38555（命中 38400 / 未命中 155）｜输出 1794｜replace_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、replace_terrain
+· #355｜inf-generator｜2168 ms｜提示 40754（命中 40320 / 未命中 434）｜输出 441｜look_terrain、look_terrain
+· #356｜inf-generator｜6669 ms｜提示 41705（命中 41088 / 未命中 617）｜输出 1274｜look_terrain、look_terrain
+· #357｜inf-generator｜9837 ms｜提示 43075（命中 42880 / 未命中 195）｜输出 1882｜look_terrain、look_terrain
+· #358｜inf-generator｜16188 ms｜提示 45097（命中 44928 / 未命中 169）｜输出 3049｜dig_terrain、fill_terrain
+· #359｜inf-generator｜1621 ms｜提示 48232（命中 48000 / 未命中 232）｜输出 249｜look_terrain、look_terrain
+· #360｜inf-generator｜10495 ms｜提示 48693（命中 48384 / 未命中 309）｜输出 2209｜fill_terrain、fill_terrain、fill_terrain
+· #361｜inf-generator｜1198 ms｜提示 51014（命中 50816 / 未命中 198）｜输出 144｜look_terrain
+· #362｜inf-generator｜11706 ms｜提示 51346（命中 51072 / 未命中 274）｜输出 2480｜look_terrain、look_terrain
+· #363｜inf-generator｜8007 ms｜提示 54002（命中 53760 / 未命中 242）｜输出 1487｜fill_terrain
+· #364｜inf-generator｜1191 ms｜提示 55529（命中 55296 / 未命中 233）｜输出 132｜look_terrain
+· #365｜inf-generator｜18507 ms｜提示 55695（命中 55552 / 未命中 143）｜输出 4050｜fill_terrain、fill_terrain、fill_terrain、fill_terrain
+· #366｜inf-generator｜2075 ms｜提示 59893（命中 59648 / 未命中 245）｜输出 364｜dig_terrain、dig_terrain、dig_terrain
+· #367｜inf-generator｜2548 ms｜提示 60396（命中 60160 / 未命中 236）｜输出 653｜replace_terrain、fill_terrain、fill_terrain
+· #368｜inf-generator｜3757 ms｜提示 61160（命中 60928 / 未命中 232）｜输出 1334｜fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、fill_terrain、replace_terrain
+· #369｜inf-generator｜18457 ms｜提示 62828（命中 62464 / 未命中 364）｜输出 6523｜make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object、make_object
+· #370｜inf-generator｜42268 ms｜提示 1268（命中 1024 / 未命中 244）｜输出 10348｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #371｜inf-generator｜3168 ms｜提示 12033（命中 11520 / 未命中 513）｜输出 960｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #372｜inf-generator｜922 ms｜提示 13247（命中 12928 / 未命中 319）｜输出 123｜voxel_done
+· #373｜inf-generator｜51446 ms｜提示 1281（命中 1024 / 未命中 257）｜输出 13572｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #374｜inf-generator｜1960 ms｜提示 15105（命中 14848 / 未命中 257）｜输出 515｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #375｜inf-generator｜2459 ms｜提示 16000（命中 15616 / 未命中 384）｜输出 751｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #376｜inf-generator｜2722 ms｜提示 17259（命中 16640 / 未命中 619）｜输出 801｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #377｜inf-generator｜2794 ms｜提示 18696（命中 18048 / 未命中 648）｜输出 871｜voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #378｜inf-generator｜1856 ms｜提示 20331（命中 19456 / 未命中 875）｜输出 473｜voxel_floor、voxel_floor、voxel_floor、voxel_floor
+· #379｜inf-generator｜1530 ms｜提示 21236（命中 20736 / 未命中 500）｜输出 176｜voxel_done
+· #380｜inf-generator｜115497 ms｜提示 1288（命中 1152 / 未命中 136）｜输出 28997｜voxel_floor、voxel_floor、voxel_floor
+· #381｜inf-generator｜1216 ms｜提示 30367（命中 30208 / 未命中 159）｜输出 112｜voxel_done
+· #382｜inf-generator｜4531 ms｜提示 70127（命中 69248 / 未命中 879）｜输出 897｜look_terrain、look_terrain
