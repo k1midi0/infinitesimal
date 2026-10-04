@@ -115,6 +115,34 @@ class LlmTraceTest {
         assertTrue(one.elapsedMs >= 0)
     }
 
+    /**
+     * **递进来的那张表是活的**：调用方常常一轮一轮往同一个 `mutableListOf` 里加（`ShapeModeler` 就是），
+     * 而这份记录是在另一个线程上、稍后才序列化的。所以要的是**发出去那一刻的快照**——不拍这一下，症状
+     * 是账里那一行被 `ConcurrentModificationException` 吃掉（§14.56 真踩到过：五趟建模调用只剩一句报错）。
+     */
+    @Test
+    fun theRecordedMessagesAreASnapshotNotALiveList() = runBlocking {
+        val body = sse(
+            """{"choices":[{"delta":{"content":"好"}}]}""",
+            """{"choices":[{"delta":{},"finish_reason":"stop"}]}""",
+        )
+
+        val live = mutableListOf(ChatMessage.user("第一轮"))
+        val copied = mutableListOf<Exchange>()
+
+        withSink({ copied += it }) {
+            LlmClient(config, clientReturning(body = body)).streamChat(live).toList()
+            // 请求发完之后调用方接着往同一张表里加——记录里**不该**看得见这一条。
+            live += ChatMessage.user("第二轮")
+        }
+
+        assertEquals(
+            listOf("第一轮"),
+            copied.single().messages.map { it.content },
+            "记录要的是「发出去那一刻」的那一份，而不是一个会跟着变的引用",
+        )
+    }
+
     @Test
     fun aCallThatFailsIsStillCopied() = runBlocking {
         val copied = mutableListOf<Exchange>()

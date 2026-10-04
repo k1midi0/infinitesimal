@@ -116,6 +116,12 @@ class LlmClient(
         val startedAt = System.currentTimeMillis()
         val config = configuration()
 
+        // **在这一刻把这一趟发出去的消息拍成快照**（§14.56）。调用方常常把**活的**可变表递进来
+        // （`judge/ShapeModeler.kt` 那一处就是 `mutableListOf` 一轮一轮往里加），而这份记录是在别的
+        // 线程上、稍后才序列化的——不拍这一下，就是"它一边加、账一边读"，症状是账里那一行被
+        // `ConcurrentModificationException` 吃掉（真踩到过：五趟建模调用只剩一句报错）。
+        val sent = messages.toList()
+
         val content = StringBuilder()
         val reasoning = StringBuilder()
         val drafts = LinkedHashMap<Int, CallDraft>()
@@ -164,7 +170,7 @@ class LlmClient(
                 model = config.model,
                 thinking = thinking?.options?.type.orEmpty(),
                 effort = thinking?.effort,
-                messages = messages,
+                messages = sent,
                 tools = tools.orEmpty().map { it.function.name },
                 content = content.toString(),
                 reasoning = reasoning.toString(),
